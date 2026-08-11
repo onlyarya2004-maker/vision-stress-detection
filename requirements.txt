@@ -1,0 +1,27 @@
+# Runtime dependencies for the live system.
+#
+# These pins are load-bearing and interlocked — do not bump one in isolation:
+#   - mediapipe 0.10.14 requires protobuf 4.25.x (newer protobuf breaks it)
+#   - tensorflow 2.15 requires numpy < 2
+#   - streamlit 1.30 is the version the dashboard's placeholder API was built against
+#
+# NOTE: TensorFlow dropped native-Windows GPU support after 2.10, so this stack is
+# CPU-only on Windows regardless of the GPU present. New model work in PP2 uses
+# PyTorch instead — see requirements-train.txt.
+
+streamlit==1.30
+tensorflow==2.15.0
+mediapipe==0.10.14
+protobuf==4.25.3
+numpy==1.26.4
+
+# Unpinned by the original team; pin these to your working versions with
+# `pip freeze` once the environment is confirmed good.
+opencv-python
+scikit-learn
+pandas
+scipy
+
+# Evaluation / reporting
+statsmodels        # Wilson confidence intervals in the evaluation harness
+pytest             # unit test suite
