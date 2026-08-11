@@ -1,0 +1,89 @@
+{
+  "metadata": {
+    "subjects_used": [
+      "S10",
+      "S11",
+      "S13",
+      "S14",
+      "S15",
+      "S16",
+      "S17",
+      "S2",
+      "S3",
+      "S4",
+      "S5",
+      "S6",
+      "S7",
+      "S8",
+      "S9"
+    ],
+    "n_baseline_windows": 566,
+    "n_stress_windows": 311,
+    "window_seconds": 60
+  },
+  "classifier_loso": {
+    "accuracy_mean": 0.9185772176766726,
+    "f1_mean": 0.8738040115723984
+  },
+  "feature_stats": {
+    "hr_bpm": {
+      "baseline_mean": 72.41110318710702,
+      "baseline_std": 11.0495926606695,
+      "stress_mean": 97.48849209218874,
+      "stress_std": 19.11670308604204,
+      "effect_size_d": 1.6061694797544774
+    },
+    "hrv_rmssd": {
+      "baseline_mean": 53.54860919097021,
+      "baseline_std": 30.07963678092879,
+      "stress_mean": 41.69175614083567,
+      "stress_std": 32.8499163725328,
+      "effect_size_d": -0.3764648009447511
+    },
+    "eda_mean": {
+      "baseline_mean": 3.9018885346968766,
+      "baseline_std": 2.913888123471406,
+      "stress_mean": 5.915221441259385,
+      "stress_std": 4.086465745066571,
+      "effect_size_d": 0.5673054672762545
+    },
+    "eda_std": {
+      "baseline_mean": 0.024175352811535666,
+      "baseline_std": 0.04388670577162169,
+      "stress_mean": 0.1087678550160996,
+      "stress_std": 0.15969969761524228,
+      "effect_size_d": 0.7223267152305934
+    },
+    "scr_per_min": {
+      "baseline_mean": 35.74911660777385,
+      "baseline_std": 5.44682655977031,
+      "stress_mean": 24.09646302250804,
+      "stress_std": 7.545369464291362,
+      "effect_size_d": -1.770841062472265
+    },
+    "resp_rate": {
+      "baseline_mean": 12.526501766784452,
+      "baseline_std": 0.4997388229338555,
+      "stress_mean": 12.42443729903537,
+      "stress_std": 0.49505384694847865,
+      "effect_size_d": -0.20519519090543936
+    },
+    "temp_mean": {
+      "baseline_mean": 33.4441164542424,
+      "baseline_std": 1.5041727381613854,
+      "stress_mean": 34.16310856196658,
+      "stress_std": 1.0233160773116878,
+      "effect_size_d": 0.5589128013201136
+    }
+  },
+  "vision_system_cutoffs": {
+    "low_to_moderate": 0.028622843910397672,
+    "moderate_to_high": 0.6827244666203318,
+    "comment": "These cutoffs are derived from the 33rd / 67th percentiles of physiological stress probabilities in WESAD. The vision system reads these to set its LOW/MODERATE/HIGH boundaries."
+  },
+  "temporal_smoothing": {
+    "median_stress_block_seconds": 664.0,
+    "recommended_window_seconds": 11.066666666666666,
+    "comment": "Stress events in WESAD last on the order of minutes. Real-time vision smoothing of 1-3 seconds is fast enough to respond, while not being so jittery that it flips on transient facial expressions."
+  }
+}

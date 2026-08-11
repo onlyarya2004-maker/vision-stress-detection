@@ -1,0 +1,54 @@
+{
+  // IMPORTANT: every config below sets "cwd" to ${workspaceFolder}/code.
+  // The project uses relative paths throughout ('../models/*.h5',
+  // Path('../data/sessions.db'), '../datasets/...'), so running from
+  // anywhere except code/ silently fails to find models and the DB.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Streamlit: app.py (live system)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "streamlit",
+      "args": ["run", "app.py"],
+      "cwd": "${workspaceFolder}/code",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "OpenCV runner: stress_detector.py",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/code/stress_detector.py",
+      "cwd": "${workspaceFolder}/code",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Evaluate: analyze_sessions.py (Default mode)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/code/analyze_sessions.py",
+      "args": ["--dir", "../evaluation_data"],
+      "cwd": "${workspaceFolder}/code",
+      "console": "integratedTerminal",
+      "env": { "PYTHONIOENCODING": "utf-8" }
+    },
+    {
+      "name": "WESAD calibration",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/code/wesad_calibration.py",
+      "cwd": "${workspaceFolder}/code",
+      "console": "integratedTerminal",
+      "env": { "PYTHONIOENCODING": "utf-8" }
+    },
+    {
+      "name": "Python: current file (cwd=code/)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${file}",
+      "cwd": "${workspaceFolder}/code",
+      "console": "integratedTerminal"
+    }
+  ]
+}

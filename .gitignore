@@ -1,0 +1,55 @@
+# ---------------------------------------------------------------------------
+# Datasets — 33 GB, and BOTH are licensed research datasets that may not be
+# redistributed. DaiSEE and WESAD each require the user to agree to their own
+# licence and download them from the original authors. Never commit these.
+#   DaiSEE: https://people.iith.ac.in/vineethnb/resources/daisee/
+#   WESAD:  https://ubicomp.eti.uni-siegen.de/home/datasets/icmi18/
+# ---------------------------------------------------------------------------
+datasets/
+
+# ---------------------------------------------------------------------------
+# Trained model binaries (21 MB + 29 MB). Under GitHub's 100 MB hard limit but
+# over its 50 MB warning threshold, and binary blobs bloat git history forever
+# since every future version is stored in full. Distribute via GitHub Releases
+# or Git LFS instead. Regenerate with: python train_daisee_stress.py
+# ---------------------------------------------------------------------------
+models/*.h5
+models/*.keras
+models/*.tflite
+
+# ---------------------------------------------------------------------------
+# Personal session data — real recordings of a named individual's stress
+# levels over time. Keep out of any shared repo.
+# ---------------------------------------------------------------------------
+data/sessions.db
+**/sessions.db
+*.db-journal
+*.db-wal
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# OS / editor noise
+Thumbs.db
+desktop.ini
+.DS_Store
+*.swp
+
+# Scratch
+*.log
+tmp/
+scratch/

@@ -1,0 +1,21 @@
+============================================================
+LSTM STRESS CLASSIFIER - TEST EVALUATION
+============================================================
+
+Test set size: 1784 sequences
+Test accuracy: 71.13%
+Test loss: 0.6059
+
+Classification Report:
+              precision    recall  f1-score   support
+
+not_stressed      0.875     0.777     0.823      1545
+    stressed      0.165     0.285     0.209       239
+
+    accuracy                          0.711      1784
+   macro avg      0.520     0.531     0.516      1784
+weighted avg      0.780     0.711     0.741      1784
+
+Confusion matrix (rows=true, cols=pred):
+[[1201  344]
+ [ 171   68]]

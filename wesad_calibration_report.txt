@@ -1,0 +1,38 @@
+WESAD CALIBRATION REPORT
+============================================================
+Subjects used: 15 (S10, S11, S13, S14, S15, S16, S17, S2, S3, S4, S5, S6, S7, S8, S9)
+Total baseline windows: 566
+Total stress windows:   311
+Window length:          60 s, 50% overlap
+
+Leave-One-Subject-Out classifier (binary baseline vs stress):
+  Mean accuracy:  91.86%
+  Mean F1 score:  0.874
+
+Per-feature baseline vs stress (Cohen's d):
+  hr_bpm         baseline=  72.41 stress=  97.49  d=+1.61
+  hrv_rmssd      baseline=  53.55 stress=  41.69  d=-0.38
+  eda_mean       baseline=   3.90 stress=   5.92  d=+0.57
+  eda_std        baseline=   0.02 stress=   0.11  d=+0.72
+  scr_per_min    baseline=  35.75 stress=  24.10  d=-1.77
+  resp_rate      baseline=  12.53 stress=  12.42  d=-0.21
+  temp_mean      baseline=  33.44 stress=  34.16  d=+0.56
+
+Vision-system stress level cutoffs (calibrated):
+  LOW < 0.03
+  MODERATE between 0.03 and 0.68
+  HIGH ≥ 0.68
+
+Temporal smoothing recommendation:
+  Median stress block duration: 664.0 s
+  Recommended window:           11.1 s
+
+Classification report (overall, pooled):
+              precision    recall  f1-score   support
+
+    baseline       0.94      0.93      0.94       566
+      stress       0.87      0.90      0.89       311
+
+    accuracy                           0.92       877
+   macro avg       0.91      0.91      0.91       877
+weighted avg       0.92      0.92      0.92       877

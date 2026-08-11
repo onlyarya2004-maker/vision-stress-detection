@@ -1,0 +1,45 @@
+{
+  // ---------------------------------------------------------------
+  // CRITICAL for this project: datasets/ holds ~137k face crops,
+  // 9k DaiSEE videos and 15 WESAD .pkl/.zip subjects. If VS Code
+  // indexes it, search and the file-watcher crawl and the editor
+  // becomes unusably slow. These excludes are not optional here.
+  // ---------------------------------------------------------------
+  "files.watcherExclude": {
+    "**/datasets/**": true,
+    "**/__pycache__/**": true,
+    "**/.git/objects/**": true
+  },
+  "search.exclude": {
+    "**/datasets": true,
+    "**/__pycache__": true,
+    "**/BACKUP_DEMO_FINAL": true
+  },
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/*.pyc": true
+  },
+
+  // Python
+  "python.analysis.typeCheckingMode": "basic",
+  "python.analysis.autoImportCompletions": true,
+  "python.terminal.activateEnvironment": true,
+
+  // Tests (Phase 0 creates code/tests/)
+  "python.testing.pytestEnabled": true,
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestArgs": ["code/tests"],
+
+  // Editor
+  "editor.rulers": [88],
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true,
+  "[python]": {
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true
+  },
+
+  // Git (Phase 0 runs git init)
+  "git.autofetch": false,
+  "git.confirmSync": false
+}
