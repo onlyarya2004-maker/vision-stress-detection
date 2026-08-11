@@ -4,3 +4,4 @@
 *.h5 binary
 *.pkl binary
 *.db binary
+models/*.h5 filter=lfs diff=lfs merge=lfs -text

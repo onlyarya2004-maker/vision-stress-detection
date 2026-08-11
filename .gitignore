@@ -8,12 +8,12 @@
 datasets/
 
 # ---------------------------------------------------------------------------
-# Trained model binaries (21 MB + 29 MB). Under GitHub's 100 MB hard limit but
-# over its 50 MB warning threshold, and binary blobs bloat git history forever
-# since every future version is stored in full. Distribute via GitHub Releases
-# or Git LFS instead. Regenerate with: python train_daisee_stress.py
+# Trained model binaries (21 MB + 29 MB) ARE tracked, but via Git LFS — see
+# .gitattributes. LFS stores them outside normal git history, so cloning does
+# not drag every past version along. They represent hours of training and can
+# only be regenerated with the full 33 GB dataset, so they must be backed up.
+#   Regenerate with: cd code && python train_daisee_stress.py
 # ---------------------------------------------------------------------------
-models/*.h5
 models/*.keras
 models/*.tflite
 
