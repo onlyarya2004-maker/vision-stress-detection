@@ -31,6 +31,7 @@ from stress_fusion import (
     VALID_TASK_MODES,
 )
 from lstm_temporal import LSTMTemporalInference
+from app_naming import export_filename
 import session_history
 import config
 
@@ -402,6 +403,8 @@ def init_state():
     if 'viewing_session_id' not in st.session_state: st.session_state.viewing_session_id = None
     if 'viewing_session_label' not in st.session_state: st.session_state.viewing_session_label = None
     if 'task_mode' not in st.session_state: st.session_state.task_mode = 'Default'
+    if 'subject_id' not in st.session_state: st.session_state.subject_id = ''
+    if 'condition' not in st.session_state: st.session_state.condition = 'unlabeled'
     if 'db_initialized' not in st.session_state:
         session_history.init_db()
         st.session_state.db_initialized = True
@@ -458,6 +461,31 @@ def main():
         )
         if _selected_task != st.session_state.task_mode:
             st.session_state.task_mode = _selected_task
+
+        # ---------- Recording labels ----------
+        # Set BEFORE recording; these are baked into the export filename so
+        # provenance cannot be lost afterwards. See RECORDING_PROTOCOL.md.
+        with st.expander("🏷️ Recording labels", expanded=False):
+            st.text_input(
+                "Subject ID", key="subject_id", placeholder="S01",
+                disabled=st.session_state.running or st.session_state.calibrating,
+                help="Stable anonymous ID, e.g. S01. Never a real name.",
+            )
+            st.selectbox(
+                "Condition", options=['unlabeled', 'relaxed', 'stressed'],
+                key="condition",
+                disabled=st.session_state.running or st.session_state.calibrating,
+                help="Ground-truth label for this recording. Relaxed should "
+                     "read LOW; stressed should read MODERATE or HIGH.",
+            )
+            _preview = export_filename(
+                st.session_state.subject_id, st.session_state.condition,
+                st.session_state.task_mode,
+            )
+            st.caption(f"Export filename: `{_preview}`")
+            if _preview.startswith("stress_session_"):
+                st.caption("⚠️ Unlabelled — set both fields or this recording "
+                           "will not be picked up by the evaluation harness.")
 
         col_a, col_b = st.columns(2)
         with col_a:
@@ -893,11 +921,16 @@ def main():
                 pct = (counts[lvl] / len(history)) * 100 if history else 0
                 cols[i].metric(f"{lvl}", f"{pct:.0f}%")
             csv_text = history_to_csv(history)
-            st.download_button(
-                "📥 Download session as CSV",
-                csv_text, file_name=f"stress_session_{int(time.time())}.csv",
-                mime="text/csv",
+            _fname = export_filename(
+                st.session_state.subject_id, st.session_state.condition,
+                st.session_state.task_mode, when=history[0]['ts'],
             )
+            st.download_button(
+                f"📥 Download session as CSV",
+                csv_text, file_name=_fname, mime="text/csv",
+            )
+            st.caption(f"Saves as `{_fname}` — move it into `evaluation_data/`, "
+                       f"then re-run `python run_all_evaluations.py`.")
         else:
             st.info("Press **🎯 Calibrate** first, then **▶ Start** to begin a session.")
 

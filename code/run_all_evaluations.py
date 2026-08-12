@@ -229,7 +229,45 @@ def render_config(title, folder, relaxed_glob, stressed_glob, out):
         out.append(f"  Discrimination gap: {fr['gap']:+.3f}   "
                    f"(relaxed mean {fr['relaxed_mean']:.3f}, "
                    f"stressed mean {fr['stressed_mean']:.3f})")
+
+    render_per_subject(relaxed_files, stressed_files, out)
     return fr
+
+
+def render_per_subject(relaxed_files, stressed_files, out):
+    """
+    Break results down per subject, when filenames follow the canonical
+    scheme (see RECORDING_PROTOCOL.md). Silent for PP1's single-subject
+    data; becomes the headline table once Phase 1 multi-subject recordings
+    land, which is the gap the papers admit to.
+    """
+    try:
+        from app_naming import parse_filename
+    except ImportError:
+        return
+
+    by_subject = {}
+    for name, rows in relaxed_files + stressed_files:
+        meta = parse_filename(name)
+        if not meta or not rows:
+            continue
+        entry = by_subject.setdefault(meta["subject"], {"relaxed": [], "stressed": []})
+        entry[meta["condition"]].append((name, rows))
+
+    if len(by_subject) < 2:
+        return          # nothing to compare against
+
+    out.append("")
+    out.append("  PER-SUBJECT breakdown:")
+    out.append(f"    {'subject':10s}{'n':>6}{'accuracy':>11}{'95% CI':>20}")
+    for subject in sorted(by_subject):
+        e = by_subject[subject]
+        fr = frame_scores(e["relaxed"], e["stressed"])
+        if fr["n"] == 0:
+            continue
+        out.append(f"    {subject:10s}{fr['n']:>6}{pct(fr['accuracy']):>11}"
+                   f"{ci_str(fr['ci']):>20}")
+    out.append("    NOTE: cross-subject spread is the real generalisation test.")
 
 
 def render_artifacts(root, out):

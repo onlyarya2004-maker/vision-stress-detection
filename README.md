@@ -175,8 +175,28 @@ VS Code, the committed `.vscode/launch.json` handles this — just press F5.
 ### Regenerating the evaluation numbers
 
 ```bash
-cd code && python analyze_sessions.py --dir ../evaluation_data
+cd code && python run_all_evaluations.py
 ```
+
+This regenerates **every** number in this README into a timestamped file under
+`evaluation_data/`. Nothing is transcribed by hand. (`analyze_sessions.py` still exists
+for a quick single-folder check.)
+
+### Running the tests
+
+```bash
+python -m pytest code/tests -v
+```
+
+41 tests covering session persistence, fusion maths, the behavioral heuristics, and
+export naming. The key one compares Default-mode fusion output against the archived
+pre-task-aware implementation in `code/_archive/` — the difference is exactly zero.
+
+### Recording new evaluation sessions
+
+Follow [`RECORDING_PROTOCOL.md`](RECORDING_PROTOCOL.md). Set the Subject ID and
+Condition in the app's sidebar **before** recording; the export filename is generated
+from them, so provenance cannot be lost afterwards.
 
 ---
 
