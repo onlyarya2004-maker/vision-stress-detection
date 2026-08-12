@@ -1,0 +1,41 @@
+# PP2 training dependencies — PyTorch stack.
+#
+# INSTALL INTO A SEPARATE VENV. Do not install these alongside
+# requirements.txt: that stack pins numpy==1.26.4 for TensorFlow 2.15, while
+# torch pulls numpy 2.x. Mixing them breaks the live system.
+#
+#   python -m venv .venv-train
+#   .venv-train\Scripts\python -m pip install -r requirements-train.txt
+#
+# WHY PYTORCH RATHER THAN TENSORFLOW
+# TensorFlow dropped native-Windows GPU support after 2.10, so the pinned
+# TF 2.15 runs CPU-only here no matter what GPU is present — that is why the
+# original CNN+LSTM took 18-25 hours per run. PyTorch's cu128 build includes
+# sm_120 kernels, which the RTX 5070 Ti (Blackwell) requires.
+#
+# VERIFIED ON THIS MACHINE (2026-08-12):
+#   torch 2.11.0+cu128 | CUDA 12.8 | RTX 5070 Ti Laptop, sm_120, 11.9 GB
+#   arch list includes sm_120  -> kernels actually execute
+#   matmul benchmark: 14.8x faster than CPU
+#   50 GRU steps at Phase 2 shape (32, 16, 10): 0.216s, 200 MB VRAM
+#
+# The existing .h5 CNNs are NOT ported — they stay in TensorFlow and are used
+# only for inference. New models (Phase 2 temporal, Phase 3 meta-learner) are
+# built here.
+
+--index-url https://download.pytorch.org/whl/cu128
+
+torch==2.11.0
+torchvision==0.26.0
+
+# Phase 2/3 support. scikit-learn provides the gradient-boosted-trees
+# baseline the temporal model is benchmarked against, and the Phase 3
+# meta-learner (logistic regression / SGDClassifier.partial_fit for
+# incremental adaptation).
+--extra-index-url https://pypi.org/simple
+scikit-learn
+numpy
+pandas
+scipy
+statsmodels
+pytest
