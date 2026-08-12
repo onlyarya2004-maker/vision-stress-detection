@@ -28,6 +28,8 @@ from statistics import mean
 import numpy as np
 import mediapipe as mp
 
+import config
+
 # ----- FaceMesh landmark indices -----
 LEFT_EYE  = [33, 160, 158, 133, 153, 144]
 RIGHT_EYE = [362, 385, 387, 263, 373, 380]
@@ -51,7 +53,7 @@ RIGHT_WRIST    = 16
 LEFT_ELBOW     = 13
 RIGHT_ELBOW    = 14
 
-POSE_VISIBILITY_THRESHOLD = 0.7   # below this we ignore the pose entirely
+POSE_VISIBILITY_THRESHOLD = config.POSE_VISIBILITY_THRESHOLD  # below this we ignore the pose
 
 
 def _p(lm, idx, w, h):
@@ -73,12 +75,12 @@ def eye_aspect_ratio(eye_pts):
 
 @dataclass
 class BehavioralBaseline:
-    ear_baseline:        float = 0.28
-    brow_distance_norm:  float = 0.18
-    lip_gap_norm:        float = 0.012
-    lip_width_norm:      float = 0.42
-    head_tilt_baseline:  float = 0.0
-    blink_rate_baseline: float = 12.0
+    ear_baseline:        float = config.DEFAULT_EAR_BASELINE
+    brow_distance_norm:  float = config.DEFAULT_BROW_DISTANCE_NORM
+    lip_gap_norm:        float = config.DEFAULT_LIP_GAP_NORM
+    lip_width_norm:      float = config.DEFAULT_LIP_WIDTH_NORM
+    head_tilt_baseline:  float = config.DEFAULT_HEAD_TILT_BASELINE
+    blink_rate_baseline: float = config.DEFAULT_BLINK_RATE_BASELINE
     calibrated: bool = False
 
 
@@ -87,13 +89,15 @@ class BehavioralState:
     blink_times:        deque = field(default_factory=lambda: deque(maxlen=300))
     eye_closed:         bool = False
     last_ear:           float = 0.3
-    ear_history:        deque = field(default_factory=lambda: deque(maxlen=30))
-    head_tilt_history:  deque = field(default_factory=lambda: deque(maxlen=30))
+    ear_history:        deque = field(
+        default_factory=lambda: deque(maxlen=config.EAR_HISTORY_FRAMES))
+    head_tilt_history:  deque = field(
+        default_factory=lambda: deque(maxlen=config.HEAD_TILT_HISTORY_FRAMES))
 
 
 class BehavioralFeatureEngine:
-    EAR_BLINK_THRESHOLD     = 0.21
-    BLINK_WINDOW_SECONDS    = 60
+    EAR_BLINK_THRESHOLD     = config.EAR_BLINK_THRESHOLD
+    BLINK_WINDOW_SECONDS    = config.BLINK_WINDOW_SECONDS
 
     def __init__(self):
         self.face_mesh = mp.solutions.face_mesh.FaceMesh(
@@ -125,7 +129,7 @@ class BehavioralFeatureEngine:
 
     def finish_calibration(self):
         self._calibrating = False
-        if len(self._calib_buffer) < 30:
+        if len(self._calib_buffer) < config.MIN_CALIBRATION_SAMPLES:
             return False
         ears        = [s['ear'] for s in self._calib_buffer]
         brows       = [s['brow_distance_norm'] for s in self._calib_buffer]
@@ -226,13 +230,16 @@ class BehavioralFeatureEngine:
 
         b = self.baseline
         ear_mean = float(np.mean(self.state.ear_history)) if self.state.ear_history else ear
-        eye_strain = float(np.clip(abs(ear_mean - b.ear_baseline) / 0.10, 0.0, 1.0))
+        eye_strain = float(np.clip(
+            abs(ear_mean - b.ear_baseline) / config.EYE_STRAIN_SCALE, 0.0, 1.0))
 
         blink_excess = blinks_per_minute - b.blink_rate_baseline
-        blink_stress = float(np.clip(blink_excess / 15.0, 0.0, 1.0))
+        blink_stress = float(np.clip(
+            blink_excess / config.BLINK_EXCESS_SCALE, 0.0, 1.0))
 
         brow_drop = (b.brow_distance_norm - brow_distance_norm) / max(b.brow_distance_norm, 1e-6)
-        brow_tension = float(np.clip(brow_drop / 0.15, 0.0, 1.0))
+        brow_tension = float(np.clip(
+            brow_drop / config.BROW_DROP_SCALE, 0.0, 1.0))
 
         # Jaw tension fix: a smile makes lips WIDER, which the old formula
         # confused with a grimace/clench. Now we treat narrower lips
@@ -245,7 +252,8 @@ class BehavioralFeatureEngine:
         width_change = (lip_width_norm   - b.lip_width_norm) / max(b.lip_width_norm, 1e-6)
         # Smile heuristic: if lips are wider AND lip_gap is roughly normal-or-bigger,
         # this is a smile - skip jaw tension entirely.
-        is_smile = (width_change > 0.05) and (gap_change < 0.15)
+        is_smile = ((width_change > config.SMILE_WIDTH_INCREASE)
+                    and (gap_change < config.SMILE_MAX_GAP_REDUCTION))
         if is_smile:
             jaw_tension = 0.0
         else:
@@ -253,9 +261,11 @@ class BehavioralFeatureEngine:
             compression = max(0.0, -width_change)
             # Reduced gap: lips pressed together
             press = max(0.0, gap_change)
-            jaw_tension = float(np.clip((compression + press) / 0.50, 0.0, 1.0))
+            jaw_tension = float(np.clip(
+                (compression + press) / config.JAW_TENSION_SCALE, 0.0, 1.0))
 
-        head_instability = float(np.clip(head_tilt_instability / 4.0, 0.0, 1.0))
+        head_instability = float(np.clip(
+            head_tilt_instability / config.HEAD_INSTABILITY_SCALE, 0.0, 1.0))
 
         return ({
             'ear': ear, 'ear_asymmetry': ear_asymmetry,
@@ -274,12 +284,12 @@ class BehavioralFeatureEngine:
             return False
         x1, y1, x2, y2 = face_bbox
         # Expand bbox slightly so a hand near the face still triggers
-        pad = 0.25 * max(x2 - x1, y2 - y1)
+        pad = config.HAND_NEAR_FACE_PADDING * max(x2 - x1, y2 - y1)
         x1 -= pad; y1 -= pad; x2 += pad; y2 += pad
 
         for wrist_idx in (LEFT_WRIST, RIGHT_WRIST):
             wrist_lm = lm[wrist_idx]
-            if wrist_lm.visibility < 0.5:
+            if wrist_lm.visibility < config.WRIST_VISIBILITY_THRESHOLD:
                 continue
             wx, wy = wrist_lm.x * w, wrist_lm.y * h
             if x1 <= wx <= x2 and y1 <= wy <= y2:
@@ -324,8 +334,8 @@ class BehavioralFeatureEngine:
 
         # Fix 2: damp pose stress when hand is near face
         if self._hand_near_face(lm, w, h, face_bbox):
-            neck_strain *= 0.3
-            slouch      *= 0.3
+            neck_strain *= config.HAND_NEAR_FACE_DAMPING
+            slouch      *= config.HAND_NEAR_FACE_DAMPING
 
         return {
             'neck_strain': neck_strain,

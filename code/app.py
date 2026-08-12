@@ -32,17 +32,20 @@ from stress_fusion import (
 )
 from lstm_temporal import LSTMTemporalInference
 import session_history
+import config
 
 # ---------------- CONFIG ----------------
-DAISEE_MOBILENET_PATH    = '../models/daisee_mobilenet_stress.h5'
-DAISEE_EFFICIENTNET_PATH = '../models/daisee_efficientnet_stress.h5'
+# All values now live in config.py; these aliases keep the rest of the file
+# readable and preserve the previous names.
+DAISEE_MOBILENET_PATH    = config.DAISEE_MOBILENET_PATH
+DAISEE_EFFICIENTNET_PATH = config.DAISEE_EFFICIENTNET_PATH
 
-MOBILENET_SIZE      = 160
-EFFICIENTNET_SIZE   = 224
-SMOOTHING_WINDOW    = 60
-CNN_EVERY_N_FRAMES  = 3
-LIVE_GRAPH_WINDOW   = 60
-CALIBRATION_SECONDS = 6
+MOBILENET_SIZE      = config.MOBILENET_INPUT_SIZE
+EFFICIENTNET_SIZE   = config.EFFICIENTNET_INPUT_SIZE
+SMOOTHING_WINDOW    = config.SMOOTHING_WINDOW_FRAMES
+CNN_EVERY_N_FRAMES  = config.CNN_EVERY_N_FRAMES
+LIVE_GRAPH_WINDOW   = config.LIVE_GRAPH_WINDOW
+CALIBRATION_SECONDS = config.CALIBRATION_SECONDS
 
 GUIDANCE_TIPS = {
     'LOW': [
@@ -208,7 +211,7 @@ def crop_face(frame_bgr, face_mesh_results):
     ys = np.array([p.y for p in lm]) * h
     x1, x2 = int(xs.min()), int(xs.max())
     y1, y2 = int(ys.min()), int(ys.max())
-    pad = int(0.15 * max(x2 - x1, y2 - y1))
+    pad = int(config.FACE_CROP_PADDING * max(x2 - x1, y2 - y1))
     x1 = max(0, x1 - pad); y1 = max(0, y1 - pad)
     x2 = min(w, x2 + pad); y2 = min(h, y2 + pad)
     if x2 <= x1 or y2 <= y1:
@@ -661,8 +664,8 @@ def main():
     # ---------- CALIBRATION ----------
     if st.session_state.calibrating:
         cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.FRAME_WIDTH)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.FRAME_HEIGHT)
         if not cap.isOpened():
             st.error("Could not open webcam.")
             st.session_state.calibrating = False
@@ -711,7 +714,7 @@ def main():
                 if elapsed >= CALIBRATION_SECONDS:
                     face_ok = engine.finish_calibration()
                     daisee_ok = False
-                    if len(daisee_calib_samples) >= 5:
+                    if len(daisee_calib_samples) >= config.MIN_DAISEE_CALIB_SAMPLES:
                         set_daisee_baseline(float(np.median(daisee_calib_samples)))
                         daisee_ok = True
                     st.session_state.calibrating = False
@@ -734,15 +737,15 @@ def main():
             st.warning("⚠️ Personal baseline not set. Click ⏸ Stop then 🎯 Calibrate.")
 
         cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.FRAME_WIDTH)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.FRAME_HEIGHT)
         if not cap.isOpened():
             st.error("Could not open webcam.")
             st.session_state.running = False
             return
 
         smoother = TemporalSmoother(window_size=SMOOTHING_WINDOW)
-        hyst = HysteresisLevel(confirm_frames=3)
+        hyst = HysteresisLevel(confirm_frames=config.HYSTERESIS_CONFIRM_FRAMES)
 
         # LSTM gets a fresh buffer per session (clears stale frames from previous session)
         if lstm_inf.is_available():

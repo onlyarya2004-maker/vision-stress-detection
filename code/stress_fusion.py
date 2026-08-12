@@ -15,102 +15,91 @@ from collections import deque
 from pathlib import Path
 import numpy as np
 
+import config
+
 # ---------------- THRESHOLDS ----------------
-DEFAULT_LOW_TO_MODERATE_CUTOFF  = 0.36   
-                                          
-DEFAULT_MODERATE_TO_HIGH_CUTOFF = 0.55
-DEFAULT_TEMPORAL_WINDOW_SECONDS = 2.0
+# Sourced from config.py. These are empirically tuned values; the WESAD
+# JSON's own 'vision_system_cutoffs' are deliberately NOT used - see the
+# WESAD_CALIBRATION note in config.py for why (scale mismatch between a
+# physiological classifier's probabilities and the vision stress index).
+DEFAULT_LOW_TO_MODERATE_CUTOFF  = config.LOW_TO_MODERATE_CUTOFF
+DEFAULT_MODERATE_TO_HIGH_CUTOFF = config.MODERATE_TO_HIGH_CUTOFF
 
 
-def _load_calibration():
-    candidates = [
-        Path('../models/calibrated_thresholds.json'),
-        Path('models/calibrated_thresholds.json'),
-        Path(__file__).parent.parent / 'models' / 'calibrated_thresholds.json',
-    ]
+def load_wesad_provenance():
+    """
+    Read calibrated_thresholds.json for REPORTING only.
+
+    This used to be _load_calibration(), which read the file, threw away its
+    cutoffs, kept a smoothing window that both runners then overrode, and
+    printed a message implying the thresholds came from WESAD. Nothing about
+    the live decision boundaries depends on this function; it exists so the
+    startup banner and the evaluation harness can state what calibration
+    artifact is present.
+
+    Returns a dict with the WESAD LOSO figures, or None if absent.
+    """
+    candidates = [Path(p) for p in config.CALIBRATION_JSON_CANDIDATES]
+    candidates.append(Path(__file__).parent.parent / 'models'
+                      / 'calibrated_thresholds.json')
     for p in candidates:
         if p.exists():
             try:
                 with open(p, 'r') as f:
                     cfg = json.load(f)
-                temp = cfg.get('temporal_smoothing', {})
+                loso = cfg.get('classifier_loso', {})
                 return {
-                    'low_to_mod':  DEFAULT_LOW_TO_MODERATE_CUTOFF,
-                    'mod_to_high': DEFAULT_MODERATE_TO_HIGH_CUTOFF,
-                    'window_s':    float(temp.get('recommended_window_seconds',
-                                                  DEFAULT_TEMPORAL_WINDOW_SECONDS)),
-                    'source':      f'tuned defaults (WESAD JSON loaded from {p})',
+                    'path':      str(p),
+                    'accuracy':  loso.get('accuracy_mean'),
+                    'f1':        loso.get('f1_mean'),
+                    'subjects':  len(cfg.get('metadata', {})
+                                     .get('subjects_used', [])),
                 }
             except Exception:
                 pass
-    return {
-        'low_to_mod':  DEFAULT_LOW_TO_MODERATE_CUTOFF,
-        'mod_to_high': DEFAULT_MODERATE_TO_HIGH_CUTOFF,
-        'window_s':    DEFAULT_TEMPORAL_WINDOW_SECONDS,
-        'source':      'tuned defaults (no WESAD calibration found)',
-    }
+    return None
 
 
-_CAL = _load_calibration()
+_WESAD = load_wesad_provenance()
+
+# Kept for backward compatibility with any code reading _CAL directly.
+_CAL = {
+    'low_to_mod':  config.LOW_TO_MODERATE_CUTOFF,
+    'mod_to_high': config.MODERATE_TO_HIGH_CUTOFF,
+}
 
 
 # ---------------- BRANCH WEIGHTS ----------------
-W_DAISEE   = 0.20
-W_BEHAVIOR = 0.80
-W_LSTM     = 0.0     
+W_DAISEE   = config.W_DAISEE
+W_BEHAVIOR = config.W_BEHAVIOR
+W_LSTM     = config.W_LSTM
 
 
 # ---------------- STARTUP STATUS ----------------
-print(f"[stress_fusion] threshold source: {_CAL['source']}")
+print(f"[stress_fusion] {config.summary()}")
 print(f"  LOW < {_CAL['low_to_mod']:.2f}  |  "
       f"MODERATE [{_CAL['low_to_mod']:.2f} - {_CAL['mod_to_high']:.2f}]  |  "
       f"HIGH >= {_CAL['mod_to_high']:.2f}")
-print(f"[stress_fusion] Branch weights: DaiSEE={W_DAISEE:.2f}, "
-      f"Behavior={W_BEHAVIOR:.2f}, LSTM={W_LSTM:.2f}"
-      f"{' (LSTM disabled)' if W_LSTM == 0.0 else ''}")
+if _WESAD and _WESAD.get('accuracy') is not None:
+    print(f"[stress_fusion] WESAD reference present: "
+          f"{_WESAD['accuracy']*100:.2f}% LOSO over {_WESAD['subjects']} "
+          f"subjects (provenance only - does NOT set the cutoffs above)")
+else:
+    print("[stress_fusion] no WESAD calibration artifact found "
+          "(cutoffs are unaffected either way)")
+if W_LSTM == 0.0:
+    print("[stress_fusion] LSTM branch disabled (W_LSTM = 0.0)")
 
 
-BEHAVIOR_WEIGHTS = {
-    'eye_strain':       0.10,
-    'blink_stress':     0.15,
-    'brow_tension':     0.30,
-    'jaw_tension':      0.25,
-    'head_instability': 0.05,
-    'neck_strain':      0.05,
-    'slouch':           0.10,
-}
+BEHAVIOR_WEIGHTS = config.BEHAVIOR_WEIGHTS
 
 # ---------------- TASK-AWARE CONTEXT ----------------
 # Per-task multipliers applied to BEHAVIOR_WEIGHTS, then re-normalized so
 # the weighted average still divides by 1.0 of effective weight. With
 # task_mode='Default', all multipliers are 1.0 -> math is bit-for-bit
-# identical to the un-modal 89.6% baseline. Other modes redistribute the
-# weight toward signals most diagnostic of stress in that context.
-#
-# These multipliers are not retraining; they are evidence-weighted
-# emphasis. The signals themselves are unchanged.
-TASK_MODES = {
-    'Default': {  # neutral - baseline behavior preserved
-        'eye_strain': 1.0, 'blink_stress': 1.0, 'brow_tension': 1.0,
-        'jaw_tension': 1.0, 'head_instability': 1.0, 'neck_strain': 1.0,
-        'slouch': 1.0,
-    },
-    'Studying': {  # cognitive fatigue at a screen + desk posture
-        'eye_strain': 1.5, 'blink_stress': 1.5, 'brow_tension': 1.2,
-        'jaw_tension': 1.0, 'head_instability': 1.0, 'neck_strain': 1.4,
-        'slouch': 1.4,
-    },
-    'Hospital': {  # patient distress: micro-expressions + restlessness
-        'eye_strain': 1.0, 'blink_stress': 1.4, 'brow_tension': 1.5,
-        'jaw_tension': 1.5, 'head_instability': 1.4, 'neck_strain': 1.0,
-        'slouch': 1.0,
-    },
-    'Driving': {  # drowsiness + road safety
-        'eye_strain': 1.7, 'blink_stress': 1.0, 'brow_tension': 1.0,
-        'jaw_tension': 1.2, 'head_instability': 1.5, 'neck_strain': 1.4,
-        'slouch': 1.4,
-    },
-}
+# identical to the un-modal baseline (verified in tests/test_stress_fusion.py
+# against the archived pre-task-aware implementation).
+TASK_MODES = config.TASK_MODES
 
 VALID_TASK_MODES = list(TASK_MODES.keys())
 
@@ -118,10 +107,10 @@ VALID_TASK_MODES = list(TASK_MODES.keys())
 def is_valid_task_mode(mode):
     return mode in TASK_MODES
 
-ACTIVE_SIGNAL_THRESHOLD = 0.5
-RULE_BOOST_MIN_COUNT    = 4
-RULE_BOOST_AMOUNT       = 0.12
-DAISEE_ACTIVE_THRESHOLD = 0.20
+ACTIVE_SIGNAL_THRESHOLD = config.ACTIVE_SIGNAL_THRESHOLD
+RULE_BOOST_MIN_COUNT    = config.RULE_BOOST_MIN_COUNT
+RULE_BOOST_AMOUNT       = config.RULE_BOOST_AMOUNT
+DAISEE_ACTIVE_THRESHOLD = config.DAISEE_ACTIVE_THRESHOLD
 
 
 # ---------------- DAISEE RE-CENTERING ----------------
@@ -151,8 +140,11 @@ class _Baseline:
         return float(np.clip(delta / self.deviation_scale, 0.0, 1.0))
 
 
-# Reverted to 0.15 - the 0.10 attempt didn't help in real testing.
-_DAISEE_BASELINE = _Baseline(default_baseline=0.46, deviation_scale=0.15, name='DaiSEE')
+_DAISEE_BASELINE = _Baseline(
+    default_baseline=config.DAISEE_DEFAULT_BASELINE,
+    deviation_scale=config.DAISEE_DEVIATION_SCALE,
+    name='DaiSEE',
+)
 
 
 def set_daisee_baseline(value):  _DAISEE_BASELINE.set(value)
@@ -175,11 +167,7 @@ def daisee_raw_score(daisee_probs):
     return float(np.clip(daisee_probs[1], 0.0, 1.0))
 
 
-BEHAVIOR_AMPLIFICATION = 1.2   # Multiplier on aggregate behavior score.
-                                # Tested 1.0x→1.2x: stressed accuracy 52%→68%
-                                # in simulation (~65%→78% real-world), with
-                                # relaxed dropping 99%→93% (acceptable).
-                                # 1.4x+ over-amplifies, breaks relaxed accuracy.
+BEHAVIOR_AMPLIFICATION = config.BEHAVIOR_AMPLIFICATION
 
 
 def behavioral_stress_score(features, task_mode='Default'):
@@ -280,9 +268,12 @@ def compute_stress_index(daisee_probs, behavioral_features,
 # ---------------- TEMPORAL SMOOTHER ----------------
 class TemporalSmoother:
     def __init__(self, window_size=None, fps=30):
+        # Previously defaulted to a window read from the WESAD JSON, which
+        # both runners then overrode - dead code. The default is now the
+        # value the evaluated path actually uses.
         if window_size is None:
-            window_size = max(5, int(_CAL['window_s'] * fps))
-        self.window = deque(maxlen=window_size)
+            window_size = config.SMOOTHING_WINDOW_FRAMES
+        self.window = deque(maxlen=max(1, int(window_size)))
 
     def update(self, stress_index):
         self.window.append(stress_index)
@@ -294,7 +285,7 @@ class TemporalSmoother:
 
 # ---------------- HYSTERESIS LEVEL ----------------
 class HysteresisLevel:
-    def __init__(self, confirm_frames=3):
+    def __init__(self, confirm_frames=config.HYSTERESIS_CONFIRM_FRAMES):
         self.confirm_frames = confirm_frames
         self.current_level = "LOW"
         self._candidate = None

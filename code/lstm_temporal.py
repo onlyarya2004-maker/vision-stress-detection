@@ -25,15 +25,17 @@ from pathlib import Path
 import numpy as np
 import cv2
 
+import config
+
 # Lazy import - only loaded if model exists, so app.py doesn't pay startup cost
 # when LSTM isn't trained yet.
 
-LSTM_MODEL_PATH = Path('../models/lstm_stress.h5')
+LSTM_MODEL_PATH = Path(config.LSTM_MODEL_PATH)
 
 # Must match training values
-SEQ_LEN = 16
-IMG_SIZE = 96
-PREDICT_EVERY_N_FRAMES = 8   # Re-run LSTM every 8 frames of new data,
+SEQ_LEN = config.LSTM_SEQ_LEN
+IMG_SIZE = config.LSTM_IMG_SIZE
+PREDICT_EVERY_N_FRAMES = config.LSTM_PREDICT_EVERY_N_FRAMES   # Re-run LSTM every 8 frames of new data,
                               # not every frame (too slow for live use)
 
 

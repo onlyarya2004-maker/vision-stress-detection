@@ -39,23 +39,24 @@ from tensorflow.keras.applications.mobilenet_v2  import preprocess_input as mobi
 from tensorflow.keras.applications.efficientnet import preprocess_input as efficientnet_preprocess
 
 from behavioral_features import BehavioralFeatureEngine
+import config
 from stress_fusion import (
     compute_stress_index, TemporalSmoother, stress_level,
     set_daisee_baseline, reset_daisee_baseline, is_daisee_calibrated,
 )
 
 # ---------------- MODEL PATHS ----------------
-DAISEE_MOBILENET_PATH    = '../models/daisee_mobilenet_stress.h5'
-DAISEE_EFFICIENTNET_PATH = '../models/daisee_efficientnet_stress.h5'
+DAISEE_MOBILENET_PATH    = config.DAISEE_MOBILENET_PATH
+DAISEE_EFFICIENTNET_PATH = config.DAISEE_EFFICIENTNET_PATH
 
 # ---------------- INPUT SIZES (must match training) ----------------
-MOBILENET_SIZE    = 160
-EFFICIENTNET_SIZE = 224
+MOBILENET_SIZE    = config.MOBILENET_INPUT_SIZE
+EFFICIENTNET_SIZE = config.EFFICIENTNET_INPUT_SIZE
 
 # ---------------- CONFIG ----------------
-SMOOTHING_WINDOW    = 30
-CALIBRATION_SECONDS = 6
-CNN_EVERY_N_FRAMES  = 3
+SMOOTHING_WINDOW    = config.SMOOTHING_WINDOW_FRAMES_OPENCV
+CALIBRATION_SECONDS = config.CALIBRATION_SECONDS
+CNN_EVERY_N_FRAMES  = config.CNN_EVERY_N_FRAMES
 DAISEE_CLASS_NAMES  = ['not_stressed', 'stressed']
 
 

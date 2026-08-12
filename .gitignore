@@ -53,3 +53,6 @@ desktop.ini
 *.log
 tmp/
 scratch/
+
+# Training venv (PyTorch, kept separate from the TF stack)
+.venv-train/

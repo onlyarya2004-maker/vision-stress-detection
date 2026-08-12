@@ -42,7 +42,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Optional
 
-DB_PATH = Path('../data/sessions.db')
+import config
+
+DB_PATH = Path(config.DB_PATH)
 
 
 def _get_conn():
