@@ -344,6 +344,18 @@ def main():
                   eval_dir / "baseline_v1",
                   "relaxed_*.csv", "stressed_*.csv", out)
 
+    out.append("\n" + "=" * 78)
+    out.append("EXTERNAL VALIDATION — UBFC-PHYS")
+    out.append("=" * 78)
+    out.append("Independent subjects with synchronised physiological ground")
+    out.append("truth. Kept in its own folder so it can never pool with the")
+    out.append("single-subject recordings above - mixing them would silently")
+    out.append("corrupt both numbers.")
+    out.append("  T1 rest -> relaxed | T2 speech, T3 arithmetic -> stressed")
+    render_config("UBFC-Phys (cross-subject)",
+                  eval_dir / "ubfc_phys",
+                  "relaxed_*.csv", "stressed_*.csv", out)
+
     render_artifacts(root, out)
 
     out.append("\n" + "=" * 78)
