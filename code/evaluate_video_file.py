@@ -189,6 +189,53 @@ def extract_rppg_rgb(frame_bgr, mesh_result):
     }
 
 
+# Full per-frame diagnostic record. This is what makes a video disposable:
+# with these columns the fusion can be re-run, re-weighted, re-thresholded and
+# used to TRAIN a learned decision layer, none of which needs the pixels again.
+# The first UBFC-Phys run saved only the fused index, which turned out to be
+# useless for diagnosis - relaxed and stressed both averaged ~0.44 and there
+# was no way to see which signal had failed.
+FEATURE_COLUMNS = [
+    't',
+    # raw measurements
+    'ear', 'ear_asymmetry', 'blinks_per_minute',
+    # the seven behavioural signals, i.e. the fusion's actual inputs
+    'eye_strain', 'blink_stress', 'brow_tension', 'jaw_tension',
+    'head_instability', 'neck_strain', 'slouch',
+    # gating: posture is zeroed when shoulders are not clearly visible, so a
+    # zero here means "unavailable", not "good posture"
+    'posture_detected',
+    # branch outputs
+    'daisee_raw', 'daisee_stress', 'behavior_stress',
+    # fusion stages
+    'raw_index', 'stress_index_frame', 'stress_index_smoothed', 'level',
+    'active_signals', 'boost_applied',
+]
+
+
+def write_features_csv(rows, out_path):
+    """Per-frame features. A few MB replaces gigabytes of video."""
+    if not rows:
+        return
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, 'w', newline='') as f:
+        w = csv.DictWriter(f, fieldnames=FEATURE_COLUMNS)
+        w.writeheader()
+        for r in rows:
+            out = {}
+            for c in FEATURE_COLUMNS:
+                v = r.get(c)
+                if isinstance(v, bool):
+                    out[c] = int(v)
+                elif isinstance(v, float):
+                    out[c] = f"{v:.5f}"
+                elif v is None:
+                    out[c] = ''
+                else:
+                    out[c] = v
+            w.writerow(out)
+
+
 def write_rppg_csv(samples, out_path):
     """Save the RGB traces. A few hundred KB replaces a ~5 GB video."""
     if not samples:
@@ -287,6 +334,7 @@ def process_video(video_path, calib_seconds=None, sample_every=1,
     daisee_calib = []
 
     records = []
+    feature_rows = []
     frame_idx = 0
     processed = 0
     no_face = 0
@@ -365,6 +413,32 @@ def process_video(video_path, calib_seconds=None, sample_every=1,
             'behavior': result['behavior_stress'],
         })
 
+        # Everything needed to re-run or re-learn the decision layer offline.
+        contribs = result['contributions']
+        feature_rows.append({
+            't': clock['t'],
+            'ear': feats.get('ear'),
+            'ear_asymmetry': feats.get('ear_asymmetry'),
+            'blinks_per_minute': feats.get('blinks_per_minute'),
+            'eye_strain': contribs.get('eye_strain'),
+            'blink_stress': contribs.get('blink_stress'),
+            'brow_tension': contribs.get('brow_tension'),
+            'jaw_tension': contribs.get('jaw_tension'),
+            'head_instability': contribs.get('head_instability'),
+            'neck_strain': contribs.get('neck_strain'),
+            'slouch': contribs.get('slouch'),
+            'posture_detected': bool(feats.get('posture_detected', False)),
+            'daisee_raw': result.get('daisee_raw'),
+            'daisee_stress': result.get('daisee_stress'),
+            'behavior_stress': result['behavior_stress'],
+            'raw_index': result['raw_index'],
+            'stress_index_frame': result['stress_index'],
+            'stress_index_smoothed': smoothed,
+            'level': level,
+            'active_signals': result['active_signals'],
+            'boost_applied': bool(result['boost_applied']),
+        })
+
     cap.release()
     engine.close()
 
@@ -373,6 +447,7 @@ def process_video(video_path, calib_seconds=None, sample_every=1,
         'video': str(video_path), 'fps': fps, 'frames': frame_idx,
         'processed': processed, 'no_face': no_face,
         'records': len(records), 'rppg_samples': len(rppg_samples),
+        'feature_rows': len(feature_rows),
         'seconds': clock['t'], 'wall_seconds': elapsed,
         'smoothing_window': window,
         'realtime_factor': (clock['t'] / elapsed) if elapsed else 0.0,
@@ -381,7 +456,7 @@ def process_video(video_path, calib_seconds=None, sample_every=1,
         print(f"    -> {len(records)} samples, {len(rppg_samples)} rPPG "
               f"frames, {no_face} without a face, {elapsed:.1f}s wall "
               f"({meta['realtime_factor']:.2f}x realtime)")
-    return records, rppg_samples, meta
+    return records, rppg_samples, feature_rows, meta
 
 
 def write_csv(records, out_path):
@@ -449,6 +524,9 @@ def main():
     ap.add_argument('--rppg-dir', default='../datasets/rppg_traces',
                     help='where per-frame face RGB traces are written '
                          '(Phase 2 input; lets the raw video be deleted)')
+    ap.add_argument('--features-dir', default='../datasets/feature_traces',
+                    help='where per-frame behavioural signals are written '
+                         '(diagnosis + Phase 3 training input)')
     ap.add_argument('--no-rppg', action='store_true',
                     help='skip rPPG extraction (NOT recommended - you would '
                          'have to re-download the video for Phase 2)')
@@ -485,7 +563,7 @@ def main():
             subject, condition = args.subject, args.condition
 
         try:
-            records, rppg_samples, info = process_video(
+            records, rppg_samples, feature_rows, info = process_video(
                 v, calib_seconds=args.calib_seconds,
                 sample_every=args.sample_every, task_mode=args.mode,
                 skip_cnn=args.skip_cnn, max_seconds=args.max_seconds,
@@ -508,14 +586,25 @@ def main():
         written.append(out)
         print(f"    written: {out.name}")
 
-        # rPPG trace goes beside the dataset, not into evaluation_data/ -
-        # it is Phase 2 input, not an evaluation result.
+        # rPPG trace and per-frame features go beside the dataset, not into
+        # evaluation_data/ - they are inputs for later phases, not results.
+        extracted_kb = 0.0
         if rppg_samples:
             rp = Path(args.rppg_dir) / f"rppg_{v.stem}.csv"
             write_rppg_csv(rppg_samples, rp)
-            size_kb = rp.stat().st_size / 1024
-            print(f"    written: {rp.name}  ({size_kb:.0f} KB - this replaces "
-                  f"the {v.stat().st_size / 1024**3:.1f} GB video for Phase 2)")
+            extracted_kb += rp.stat().st_size / 1024
+            print(f"    written: {rp.name}")
+
+        if feature_rows:
+            fp = Path(args.features_dir) / f"features_{v.stem}.csv"
+            write_features_csv(feature_rows, fp)
+            extracted_kb += fp.stat().st_size / 1024
+            print(f"    written: {fp.name}  ({len(FEATURE_COLUMNS)} columns)")
+
+        if extracted_kb:
+            gb = v.stat().st_size / 1024**3
+            print(f"    {extracted_kb/1024:.1f} MB extracted - the {gb:.1f} GB "
+                  f"video is now disposable")
         print()
 
     print(f"\n{len(written)} CSV(s) written to {Path(args.out_dir).resolve()}")

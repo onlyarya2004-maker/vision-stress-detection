@@ -150,7 +150,16 @@ HYSTERESIS_CONFIRM_FRAMES = 3         # consecutive frames before a level flips
 # ===========================================================================
 # BEHAVIORAL FEATURE ENGINE
 # ===========================================================================
-EAR_BLINK_THRESHOLD = 0.21       # EAR below this starts a blink
+# --- Blink detection -------------------------------------------------------
+# The blink threshold is now RELATIVE to the user's calibrated eye openness.
+# An absolute 0.21 does not transfer: on UBFC-Phys subject 1 the measured EAR
+# was 0.159, i.e. permanently "blinking", so blink detection fired constantly
+# (30.6% of frames pinned blink_stress at its ceiling).
+#
+# 0.75 x the default 0.28 baseline == 0.21, so an uncalibrated engine behaves
+# exactly as before; calibration is what personalises it.
+BLINK_THRESHOLD_RATIO = 0.75
+EAR_BLINK_THRESHOLD = 0.21       # fallback only; see BLINK_THRESHOLD_RATIO
 BLINK_WINDOW_SECONDS = 60        # sliding window for blinks-per-minute
 POSE_VISIBILITY_THRESHOLD = 0.7  # both shoulders must exceed this, else
                                  # posture features report 0 rather than noise
@@ -173,6 +182,27 @@ EAR_HISTORY_FRAMES = 30
 # every smile scored as jaw tension.
 SMILE_WIDTH_INCREASE = 0.05      # lips >5% wider than baseline, AND
 SMILE_MAX_GAP_REDUCTION = 0.15   # gap not reduced by more than 15% => smile
+
+# --- Posture, now calibrated per user --------------------------------------
+# Posture used to be scored on an ABSOLUTE geometric scale with no personal
+# baseline at all - the one branch calibration never touched. That made it a
+# measure of camera placement rather than posture: on UBFC-Phys (1024x1024
+# camera, different framing) `slouch` sat at exactly 1.000 for 100% of frames
+# of a RESTING subject, and neck_strain never left 0.317-0.397.
+#
+# The defaults below reproduce the previous formulas exactly
+#   slouch       = clip((1.0 - vertical_gap) / 0.6)
+#   head_forward = clip((head_forward - 0.1) / 0.25)
+# so an uncalibrated engine is unchanged; calibration re-centres them on the
+# individual's own resting posture.
+DEFAULT_VERTICAL_GAP_BASELINE = 1.0
+DEFAULT_HEAD_FORWARD_BASELINE = 0.1
+DEFAULT_SHOULDER_TILT_BASELINE = 0.0
+
+SLOUCH_SCALE = 0.6               # how far below resting gap counts as full slouch
+HEAD_FORWARD_SCALE = 0.25
+SHOULDER_TILT_SCALE = 0.15
+MIN_POSTURE_CALIB_SAMPLES = 15   # below this, keep the generic defaults
 
 # Default personal baselines, replaced by calibration.
 DEFAULT_EAR_BASELINE = 0.28

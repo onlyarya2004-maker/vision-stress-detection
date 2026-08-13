@@ -81,6 +81,12 @@ class BehavioralBaseline:
     lip_width_norm:      float = config.DEFAULT_LIP_WIDTH_NORM
     head_tilt_baseline:  float = config.DEFAULT_HEAD_TILT_BASELINE
     blink_rate_baseline: float = config.DEFAULT_BLINK_RATE_BASELINE
+    # Posture baselines. Previously absent entirely, which made slouch and
+    # neck_strain absolute measures of camera geometry rather than posture.
+    vertical_gap_baseline:  float = config.DEFAULT_VERTICAL_GAP_BASELINE
+    head_forward_baseline:  float = config.DEFAULT_HEAD_FORWARD_BASELINE
+    shoulder_tilt_baseline: float = config.DEFAULT_SHOULDER_TILT_BASELINE
+    posture_calibrated: bool = False
     calibrated: bool = False
 
 
@@ -123,7 +129,20 @@ class BehavioralFeatureEngine:
         self.baseline = BehavioralBaseline()
         self._calibrating = False
         self._calib_buffer = []
+        self._posture_calib_buffer = []
         self._time = time_source if time_source is not None else time
+
+    @property
+    def blink_threshold(self):
+        """
+        Blink cutoff, relative to the user's calibrated eye openness.
+
+        A fixed 0.21 does not survive a change of camera or subject: measured
+        EAR on UBFC-Phys subject 1 was 0.159, so every frame read as a blink.
+        With the default 0.28 baseline this returns exactly 0.21, so an
+        uncalibrated engine behaves as it always did.
+        """
+        return config.BLINK_THRESHOLD_RATIO * self.baseline.ear_baseline
 
     def close(self):
         self.face_mesh.close()
@@ -132,6 +151,7 @@ class BehavioralFeatureEngine:
     def start_calibration(self):
         self._calibrating = True
         self._calib_buffer = []
+        self._posture_calib_buffer = []
 
     def is_calibrating(self):
         return self._calibrating
@@ -154,6 +174,19 @@ class BehavioralFeatureEngine:
         self.baseline.lip_width_norm     = float(mean(lip_widths))
         self.baseline.head_tilt_baseline = float(mean(head_tilts))
         self.baseline.calibrated = True
+
+        # Posture baselines, when enough usable posture frames were seen.
+        # Kept separate from `calibrated` because the shoulders can be out of
+        # frame for the whole window while the face calibrates perfectly well.
+        if len(self._posture_calib_buffer) >= config.MIN_POSTURE_CALIB_SAMPLES:
+            self.baseline.vertical_gap_baseline = float(
+                mean(s['vertical_gap'] for s in self._posture_calib_buffer))
+            self.baseline.head_forward_baseline = float(
+                mean(s['head_forward'] for s in self._posture_calib_buffer))
+            self.baseline.shoulder_tilt_baseline = float(
+                mean(s['shoulder_tilt'] for s in self._posture_calib_buffer))
+            self.baseline.posture_calibrated = True
+
         self.state.blink_times.clear()
         self.state.ear_history.clear()
         self.state.head_tilt_history.clear()
@@ -187,10 +220,11 @@ class BehavioralFeatureEngine:
         ear_asymmetry = abs(left_ear - right_ear)
 
         now = self._time()
-        if ear < self.EAR_BLINK_THRESHOLD and not self.state.eye_closed:
+        blink_cutoff = self.blink_threshold
+        if ear < blink_cutoff and not self.state.eye_closed:
             self.state.eye_closed = True
             self.state.blink_times.append(now)
-        elif ear >= self.EAR_BLINK_THRESHOLD:
+        elif ear >= blink_cutoff:
             self.state.eye_closed = False
 
         cutoff = now - self.BLINK_WINDOW_SECONDS
@@ -333,14 +367,38 @@ class BehavioralFeatureEngine:
         shoulder_mid   = (ls + rs) / 2.0
         shoulder_width = _dist(ls, rs) + 1e-6
 
-        head_forward = abs(nose[0] - shoulder_mid[0]) / shoulder_width
-        head_forward_stress = float(np.clip((head_forward - 0.1) / 0.25, 0.0, 1.0))
-
-        vertical_gap = (shoulder_mid[1] - nose[1]) / shoulder_width
-        slouch = float(np.clip((1.0 - vertical_gap) / 0.6, 0.0, 1.0))
-
+        # --- raw geometry (camera-dependent) ---
+        head_forward  = abs(nose[0] - shoulder_mid[0]) / shoulder_width
+        vertical_gap  = (shoulder_mid[1] - nose[1]) / shoulder_width
         shoulder_tilt = abs(ls[1] - rs[1]) / shoulder_width
-        shoulder_tilt_stress = float(np.clip(shoulder_tilt / 0.15, 0.0, 1.0))
+
+        # During calibration, record the geometry and report nothing. This is
+        # the branch that previously had no baseline at all.
+        if self._calibrating:
+            self._posture_calib_buffer.append({
+                'head_forward': head_forward,
+                'vertical_gap': vertical_gap,
+                'shoulder_tilt': shoulder_tilt,
+            })
+            return {'neck_strain': 0.0, 'slouch': 0.0,
+                    'posture_detected': False, 'pose_visibility_low': False,
+                    'calibrating_posture': True}
+
+        # --- scored as DEVIATION from this user's resting posture ---
+        # With the default baselines these reduce to the original absolute
+        # formulas, so uncalibrated behaviour is unchanged.
+        b = self.baseline
+        head_forward_stress = float(np.clip(
+            (head_forward - b.head_forward_baseline) / config.HEAD_FORWARD_SCALE,
+            0.0, 1.0))
+        # Slouching lowers the head relative to the shoulders, i.e. shrinks
+        # the vertical gap below its resting value.
+        slouch = float(np.clip(
+            (b.vertical_gap_baseline - vertical_gap) / config.SLOUCH_SCALE,
+            0.0, 1.0))
+        shoulder_tilt_stress = float(np.clip(
+            (shoulder_tilt - b.shoulder_tilt_baseline) / config.SHOULDER_TILT_SCALE,
+            0.0, 1.0))
 
         neck_strain = max(head_forward_stress, shoulder_tilt_stress)
 
@@ -354,6 +412,7 @@ class BehavioralFeatureEngine:
             'slouch': slouch,
             'posture_detected': True,
             'pose_visibility_low': False,
+            'posture_calibrated': self.baseline.posture_calibrated,
         }
 
     def extract(self, rgb_frame):
