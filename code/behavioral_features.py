@@ -99,7 +99,18 @@ class BehavioralFeatureEngine:
     EAR_BLINK_THRESHOLD     = config.EAR_BLINK_THRESHOLD
     BLINK_WINDOW_SECONDS    = config.BLINK_WINDOW_SECONDS
 
-    def __init__(self):
+    def __init__(self, time_source=None):
+        """
+        time_source: callable returning the current time in seconds. Defaults
+            to wall-clock time, which is correct for live webcam use.
+
+            Offline video MUST override this. Blink rate is derived from
+            timestamps, and processing a file consumes frames far faster than
+            real time - with a wall clock, every blink in a clip appears to
+            happen within a fraction of a second and blinks_per_minute becomes
+            meaningless (it feeds blink_stress, weight 0.15). Pass a callable
+            returning frame_index / fps to get media time instead.
+        """
         self.face_mesh = mp.solutions.face_mesh.FaceMesh(
             static_image_mode=False, max_num_faces=1, refine_landmarks=True,
             min_detection_confidence=0.5, min_tracking_confidence=0.5,
@@ -112,6 +123,7 @@ class BehavioralFeatureEngine:
         self.baseline = BehavioralBaseline()
         self._calibrating = False
         self._calib_buffer = []
+        self._time = time_source if time_source is not None else time
 
     def close(self):
         self.face_mesh.close()
@@ -174,7 +186,7 @@ class BehavioralFeatureEngine:
         ear = (left_ear + right_ear) / 2.0
         ear_asymmetry = abs(left_ear - right_ear)
 
-        now = time()
+        now = self._time()
         if ear < self.EAR_BLINK_THRESHOLD and not self.state.eye_closed:
             self.state.eye_closed = True
             self.state.blink_times.append(now)
