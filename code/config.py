@@ -211,6 +211,13 @@ DEFAULT_LIP_GAP_NORM = 0.012
 DEFAULT_LIP_WIDTH_NORM = 0.42
 DEFAULT_HEAD_TILT_BASELINE = 0.0
 DEFAULT_BLINK_RATE_BASELINE = 12.0
+# Blink RATE is also personal, and was the other half of the blink problem.
+# Fixing the blink threshold exposed subject 1's true rate (~26/min, normal
+# for them) being scored against this hardcoded 12/min, which pinned
+# blink_stress at 0.95 during REST. A rate baseline needs a longer window
+# than the 6s face calibration - you cannot estimate blinks/min from 6
+# seconds - so it is only adopted when the window is long enough.
+MIN_BLINK_CALIB_SECONDS = 20.0
 MIN_CALIBRATION_SAMPLES = 30     # fewer than this and calibration fails
 
 # ===========================================================================

@@ -87,6 +87,7 @@ class BehavioralBaseline:
     head_forward_baseline:  float = config.DEFAULT_HEAD_FORWARD_BASELINE
     shoulder_tilt_baseline: float = config.DEFAULT_SHOULDER_TILT_BASELINE
     posture_calibrated: bool = False
+    blink_rate_calibrated: bool = False
     calibrated: bool = False
 
 
@@ -130,6 +131,7 @@ class BehavioralFeatureEngine:
         self._calibrating = False
         self._calib_buffer = []
         self._posture_calib_buffer = []
+        self._calib_started_at = None
         self._time = time_source if time_source is not None else time
 
     @property
@@ -152,6 +154,8 @@ class BehavioralFeatureEngine:
         self._calibrating = True
         self._calib_buffer = []
         self._posture_calib_buffer = []
+        self._calib_started_at = self._time()
+        self.state.blink_times.clear()
 
     def is_calibrating(self):
         return self._calibrating
@@ -186,6 +190,19 @@ class BehavioralFeatureEngine:
             self.baseline.shoulder_tilt_baseline = float(
                 mean(s['shoulder_tilt'] for s in self._posture_calib_buffer))
             self.baseline.posture_calibrated = True
+
+        # Blink RATE baseline, when the window was long enough to estimate
+        # one. Six seconds cannot yield a blinks-per-minute figure, so short
+        # windows keep the generic 12/min default rather than inventing a
+        # number from one or two blinks.
+        if self._calib_started_at is not None:
+            elapsed = self._time() - self._calib_started_at
+            if elapsed >= config.MIN_BLINK_CALIB_SECONDS:
+                observed = len(self.state.blink_times) * (60.0 / elapsed)
+                # Guard against a detector stuck open or shut.
+                if 2.0 <= observed <= 60.0:
+                    self.baseline.blink_rate_baseline = float(observed)
+                    self.baseline.blink_rate_calibrated = True
 
         self.state.blink_times.clear()
         self.state.ear_history.clear()
