@@ -103,6 +103,107 @@ def load_cnn_models(skip=False):
     return _TF_MODELS
 
 
+# ---------------------------------------------------------------------------
+# rPPG signal extraction
+# ---------------------------------------------------------------------------
+# Phase 2 adds a remote-photoplethysmography branch: heart rate recovered from
+# the tiny colour changes blood flow causes in facial skin. That needs raw
+# pixels, so it must be captured on the SAME pass as everything else -
+# otherwise each 14 GB video has to be downloaded and decoded a second time.
+#
+# What we save is a per-frame mean-RGB trace for a few skin regions. That is
+# the input every rPPG algorithm (POS, CHROM, GREEN) starts from, and it
+# compresses ~14 GB of video down to a few hundred KB.
+#
+# Region choice follows the rPPG literature: forehead and cheeks have strong
+# perfusion and little movement relative to the skull. The whole-face mean is
+# kept as a fallback and as a signal-quality reference.
+FOREHEAD_ANCHOR_BROWS = (55, 285)   # inner brows - forehead sits above these
+NOSE_TIP_IDX = 1
+CHIN_IDX = 152
+FACE_LEFT_IDX, FACE_RIGHT_IDX = 234, 454
+
+
+def _patch_mean_rgb(frame_bgr, cx, cy, half):
+    """Mean RGB of a square patch, clipped to the frame. None if degenerate."""
+    h, w = frame_bgr.shape[:2]
+    x1, x2 = int(max(0, cx - half)), int(min(w, cx + half))
+    y1, y2 = int(max(0, cy - half)), int(min(h, cy + half))
+    if x2 - x1 < 2 or y2 - y1 < 2:
+        return None
+    patch = frame_bgr[y1:y2, x1:x2]
+    b, g, r = patch[:, :, 0].mean(), patch[:, :, 1].mean(), patch[:, :, 2].mean()
+    return float(r), float(g), float(b)
+
+
+def extract_rppg_rgb(frame_bgr, mesh_result):
+    """
+    Per-frame mean RGB for forehead, cheeks and whole face.
+
+    ROIs are anchored to landmarks rather than to fixed image coordinates, so
+    they track the face as it moves - important, because motion is the main
+    thing that corrupts an rPPG trace.
+    """
+    if not mesh_result.multi_face_landmarks:
+        return None
+    h, w = frame_bgr.shape[:2]
+    lm = mesh_result.multi_face_landmarks[0].landmark
+
+    def pt(i):
+        return np.array([lm[i].x * w, lm[i].y * h])
+
+    brow_mid = (pt(FOREHEAD_ANCHOR_BROWS[0]) + pt(FOREHEAD_ANCHOR_BROWS[1])) / 2
+    chin = pt(CHIN_IDX)
+    nose = pt(NOSE_TIP_IDX)
+    face_l, face_r = pt(FACE_LEFT_IDX), pt(FACE_RIGHT_IDX)
+    face_w = float(np.linalg.norm(face_r - face_l)) + 1e-6
+    face_h = float(np.linalg.norm(chin - brow_mid)) + 1e-6
+
+    # Forehead: above the brow midpoint, by a quarter of brow->chin distance.
+    fh = brow_mid + np.array([0.0, -0.35 * face_h])
+    forehead = _patch_mean_rgb(frame_bgr, fh[0], fh[1], 0.14 * face_w)
+
+    # Cheeks: midway between the face edge and the nose tip.
+    cl = (face_l + nose) / 2
+    cr = (face_r + nose) / 2
+    cheek_l = _patch_mean_rgb(frame_bgr, cl[0], cl[1], 0.09 * face_w)
+    cheek_r = _patch_mean_rgb(frame_bgr, cr[0], cr[1], 0.09 * face_w)
+
+    xs = np.array([p.x for p in lm]) * w
+    ys = np.array([p.y for p in lm]) * h
+    face = _patch_mean_rgb(frame_bgr, xs.mean(), ys.mean(),
+                           0.30 * face_w)
+
+    if forehead is None or face is None:
+        return None
+    # Average the cheeks when both are usable; fall back to whichever exists.
+    cheeks = [c for c in (cheek_l, cheek_r) if c is not None]
+    cheek = tuple(float(np.mean([c[i] for c in cheeks])) for i in range(3)) \
+        if cheeks else forehead
+
+    return {
+        'forehead_r': forehead[0], 'forehead_g': forehead[1],
+        'forehead_b': forehead[2],
+        'cheek_r': cheek[0], 'cheek_g': cheek[1], 'cheek_b': cheek[2],
+        'face_r': face[0], 'face_g': face[1], 'face_b': face[2],
+    }
+
+
+def write_rppg_csv(samples, out_path):
+    """Save the RGB traces. A few hundred KB replaces a ~5 GB video."""
+    if not samples:
+        return
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    cols = ['t', 'forehead_r', 'forehead_g', 'forehead_b',
+            'cheek_r', 'cheek_g', 'cheek_b', 'face_r', 'face_g', 'face_b']
+    with open(out_path, 'w', newline='') as f:
+        w = csv.DictWriter(f, fieldnames=cols)
+        w.writeheader()
+        for s in samples:
+            w.writerow({c: (f"{s[c]:.4f}" if c != 't' else f"{s['t']:.5f}")
+                        for c in cols})
+
+
 def crop_face(frame_bgr, mesh_result):
     if not mesh_result.multi_face_landmarks:
         return None
@@ -134,12 +235,20 @@ def ensemble_predict(face_bgr, pairs):
 
 def process_video(video_path, calib_seconds=None, sample_every=1,
                   task_mode='Default', skip_cnn=False, max_seconds=None,
-                  verbose=True):
+                  rppg=True, verbose=True):
     """
     Run the pipeline over one video.
 
-    Returns (records, meta). records match the live history format, so
-    history_to_csv-style output drops straight into the harness.
+    Returns (records, rppg_samples, meta). records match the live history
+    format, so they drop straight into the harness.
+
+    Note on smoothing: the live system uses a fixed 60-frame window, which is
+    ~2s at its ~30fps. Video is a different frame rate (UBFC-Phys is 35.1fps)
+    and may be subsampled, so a fixed frame count would smooth over a
+    different amount of TIME - at --sample-every 3 on 35fps footage, 60
+    samples is 5.1s rather than 2s, which visibly over-smooths and would make
+    offline results incomparable with live ones. The window is therefore
+    derived from the effective sample rate to hold the ~2s span constant.
     """
     calib_seconds = (config.CALIBRATION_SECONDS if calib_seconds is None
                      else calib_seconds)
@@ -160,9 +269,18 @@ def process_video(video_path, calib_seconds=None, sample_every=1,
     models = load_cnn_models(skip=skip_cnn)
     pairs = models.get('pairs', [])
 
-    smoother = TemporalSmoother(window_size=config.SMOOTHING_WINDOW_FRAMES)
+    # Hold the smoothing SPAN constant (~2s) rather than the frame count.
+    live_span_s = config.SMOOTHING_WINDOW_FRAMES / 30.0
+    effective_fps = fps / max(1, sample_every)
+    window = max(1, int(round(live_span_s * effective_fps)))
+    if verbose:
+        print(f"    smoothing: {window} samples @ {effective_fps:.1f}eff-fps "
+              f"= {window / effective_fps:.2f}s (live is {live_span_s:.2f}s)")
+
+    smoother = TemporalSmoother(window_size=window)
     hyst = HysteresisLevel()
     reset_daisee_baseline()
+    rppg_samples = []
 
     engine.start_calibration()
     calibrating = True
@@ -193,6 +311,15 @@ def process_video(video_path, calib_seconds=None, sample_every=1,
         if face is None:
             no_face += 1
             continue
+
+        # rPPG trace, captured on this same pass so the video need never be
+        # decoded again. Recorded during calibration too - the resting-state
+        # segment is exactly where a baseline heart rate comes from.
+        if rppg:
+            rgb_means = extract_rppg_rgb(frame, mesh)
+            if rgb_means is not None:
+                rgb_means['t'] = clock['t']
+                rppg_samples.append(rgb_means)
 
         daisee_probs = None
         if pairs and processed % config.CNN_EVERY_N_FRAMES == 0:
@@ -245,15 +372,16 @@ def process_video(video_path, calib_seconds=None, sample_every=1,
     meta = {
         'video': str(video_path), 'fps': fps, 'frames': frame_idx,
         'processed': processed, 'no_face': no_face,
-        'records': len(records), 'seconds': clock['t'],
-        'wall_seconds': elapsed,
+        'records': len(records), 'rppg_samples': len(rppg_samples),
+        'seconds': clock['t'], 'wall_seconds': elapsed,
+        'smoothing_window': window,
         'realtime_factor': (clock['t'] / elapsed) if elapsed else 0.0,
     }
     if verbose:
-        print(f"    -> {len(records)} samples, {no_face} frames without a "
-              f"face, {elapsed:.1f}s wall ({meta['realtime_factor']:.1f}x "
-              f"realtime)")
-    return records, meta
+        print(f"    -> {len(records)} samples, {len(rppg_samples)} rPPG "
+              f"frames, {no_face} without a face, {elapsed:.1f}s wall "
+              f"({meta['realtime_factor']:.2f}x realtime)")
+    return records, rppg_samples, meta
 
 
 def write_csv(records, out_path):
@@ -317,7 +445,13 @@ def main():
     ap.add_argument('--skip-cnn', action='store_true',
                     help='behavioural branch only; skips loading TensorFlow')
     ap.add_argument('--out-dir', default='../evaluation_data',
-                    help='where CSVs are written')
+                    help='where stress-index CSVs are written')
+    ap.add_argument('--rppg-dir', default='../datasets/rppg_traces',
+                    help='where per-frame face RGB traces are written '
+                         '(Phase 2 input; lets the raw video be deleted)')
+    ap.add_argument('--no-rppg', action='store_true',
+                    help='skip rPPG extraction (NOT recommended - you would '
+                         'have to re-download the video for Phase 2)')
     args = ap.parse_args()
 
     videos = []
@@ -351,10 +485,11 @@ def main():
             subject, condition = args.subject, args.condition
 
         try:
-            records, info = process_video(
+            records, rppg_samples, info = process_video(
                 v, calib_seconds=args.calib_seconds,
                 sample_every=args.sample_every, task_mode=args.mode,
                 skip_cnn=args.skip_cnn, max_seconds=args.max_seconds,
+                rppg=not args.no_rppg,
             )
         except Exception as e:
             print(f"  [error] {v.name}: {e}")
@@ -371,7 +506,17 @@ def main():
         out = Path(args.out_dir) / f"{Path(name).stem}_{v.stem}.csv"
         write_csv(records, out)
         written.append(out)
-        print(f"    written: {out.name}\n")
+        print(f"    written: {out.name}")
+
+        # rPPG trace goes beside the dataset, not into evaluation_data/ -
+        # it is Phase 2 input, not an evaluation result.
+        if rppg_samples:
+            rp = Path(args.rppg_dir) / f"rppg_{v.stem}.csv"
+            write_rppg_csv(rppg_samples, rp)
+            size_kb = rp.stat().st_size / 1024
+            print(f"    written: {rp.name}  ({size_kb:.0f} KB - this replaces "
+                  f"the {v.stat().st_size / 1024**3:.1f} GB video for Phase 2)")
+        print()
 
     print(f"\n{len(written)} CSV(s) written to {Path(args.out_dir).resolve()}")
     if written:
