@@ -46,6 +46,11 @@ import config
 
 DB_PATH = Path(config.DB_PATH)
 
+# The seven behavioural signals, stored per frame so the self-retraining loop
+# has real inputs to learn from (the fused index alone is not trainable data).
+SIGNAL_COLUMNS = ['eye_strain', 'blink_stress', 'brow_tension', 'jaw_tension',
+                  'head_instability', 'neck_strain', 'slouch']
+
 
 def _get_conn():
     """Open a fresh connection. Caller is responsible for closing it."""
@@ -114,6 +119,33 @@ def init_db():
                 "ALTER TABLE sessions ADD COLUMN self_report INTEGER"
             )
 
+        # Migration v4 -> v5, part 1: per-signal columns on samples. Without
+        # these, live sessions store only the FUSED index and there is nothing
+        # for the self-retraining loop to learn from. NULL on legacy rows.
+        sample_cols = {row[1] for row in
+                       conn.execute("PRAGMA table_info(samples)").fetchall()}
+        for col in SIGNAL_COLUMNS:
+            if col not in sample_cols:
+                conn.execute(f"ALTER TABLE samples ADD COLUMN {col} REAL")
+
+        # Migration v4 -> v5, part 2: the intervention agent's action log.
+        # One row per intervention shown; outcome is filled in once the
+        # evaluation window has elapsed (did the index actually drop?).
+        # This table is what lets the agent LEARN which interventions work.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS interventions (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id      INTEGER,
+                ts              TEXT NOT NULL,
+                kind            TEXT NOT NULL,
+                trigger_signal  TEXT,
+                index_before    REAL NOT NULL,
+                index_after     REAL,
+                outcome         TEXT NOT NULL DEFAULT 'pending',
+                FOREIGN KEY (session_id) REFERENCES sessions(id)
+            )
+        """)
+
         conn.commit()
     finally:
         conn.close()
@@ -172,7 +204,10 @@ def save_session(history: List[Dict], task_mode: str = 'Default') -> Optional[in
         ))
         session_id = cursor.lastrowid
 
-        # Insert all samples in one batch
+        # Insert all samples in one batch, per-signal values included when
+        # the record carries them (live sessions do; legacy replays may not).
+        sig_cols = ", ".join(SIGNAL_COLUMNS)
+        sig_marks = ", ".join("?" for _ in SIGNAL_COLUMNS)
         sample_rows = [
             (
                 session_id,
@@ -181,13 +216,16 @@ def save_session(history: List[Dict], task_mode: str = 'Default') -> Optional[in
                 str(r.get('level', 'LOW')),
                 float(r.get('daisee', 0.0)),
                 float(r.get('behavior', 0.0)),
+                *[None if r.get(c) is None else float(r[c])
+                  for c in SIGNAL_COLUMNS],
             )
             for r in history
         ]
-        conn.executemany("""
+        conn.executemany(f"""
             INSERT INTO samples
-                (session_id, ts, stress_index, level, daisee, behavior)
-            VALUES (?, ?, ?, ?, ?, ?)
+                (session_id, ts, stress_index, level, daisee, behavior,
+                 {sig_cols})
+            VALUES (?, ?, ?, ?, ?, ?, {sig_marks})
         """, sample_rows)
 
         conn.commit()
@@ -228,6 +266,55 @@ def labeled_sessions(min_samples: int = 10) -> List[Dict]:
         return [dict(r) for r in rows]
     finally:
         conn.close()
+
+
+def log_interventions(session_id: Optional[int], records: List[Dict]):
+    """
+    Persist the intervention agent's action log for a session.
+    Each record: {'ts': datetime, 'kind', 'trigger_signal',
+                  'index_before', 'index_after' (or None), 'outcome'}.
+    """
+    if not records:
+        return
+    conn = _get_conn()
+    try:
+        conn.executemany("""
+            INSERT INTO interventions
+                (session_id, ts, kind, trigger_signal,
+                 index_before, index_after, outcome)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, [
+            (session_id, r['ts'].isoformat(), str(r['kind']),
+             r.get('trigger_signal'),
+             float(r['index_before']),
+             None if r.get('index_after') is None else float(r['index_after']),
+             str(r.get('outcome', 'pending')))
+            for r in records
+        ])
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def intervention_stats() -> Dict[str, Dict[str, int]]:
+    """
+    Per-kind helped/failed counts across all history. This is the agent's
+    memory: what has actually worked on this install, learned from measured
+    outcomes rather than assumed.
+    """
+    conn = _get_conn()
+    try:
+        rows = conn.execute("""
+            SELECT kind, outcome, COUNT(*) FROM interventions
+            WHERE outcome IN ('helped', 'no_effect')
+            GROUP BY kind, outcome
+        """).fetchall()
+    finally:
+        conn.close()
+    stats: Dict[str, Dict[str, int]] = {}
+    for kind, outcome, n in rows:
+        stats.setdefault(kind, {'helped': 0, 'no_effect': 0})[outcome] = n
+    return stats
 
 
 def load_recent_sessions(n: int = 10) -> List[Dict]:

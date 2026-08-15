@@ -33,6 +33,7 @@ from stress_fusion import (
 from lstm_temporal import LSTMTemporalInference
 from app_naming import export_filename
 from rppg_live import get_live_rppg, reset_live_rppg
+from intervention_agent import InterventionAgent
 import session_history
 import config
 
@@ -529,6 +530,9 @@ def main():
                     # user's answer - not the system's prediction - is the
                     # ground-truth label the adaptation loop trains on.
                     st.session_state.pending_self_report = _sid
+                    _ivlog = st.session_state.pop('pending_interventions', [])
+                    if _ivlog:
+                        session_history.log_interventions(_sid, _ivlog)
                 except Exception as e:
                     st.warning(f"Could not save session to history DB: {e}")
             st.rerun()
@@ -792,6 +796,17 @@ def main():
         rppg = get_live_rppg()
         rppg.reset()
 
+        # The agentic core: decides when to interrupt, targets the driving
+        # signal, then measures whether the intervention worked. Seeded with
+        # what has historically worked on this install.
+        try:
+            _known = session_history.intervention_stats()
+        except Exception:
+            _known = {}
+        agent = InterventionAgent(stats=_known)
+        agent.start_session(time.time())
+        intervention_placeholder = st.empty()
+
         last_daisee_probs = None
         frame_idx = 0
         last_timeline_update = 0.0
@@ -852,6 +867,22 @@ def main():
                 level = hyst.update(smoothed)
                 advice = stress_level_advice(level)
 
+                # ---- intervention agent: decide / act / measure ----
+                _iv = agent.update(time.time(), smoothed,
+                                   result['contributions'])
+                if _iv is not None and (time.time() - _iv.t_shown) <= config.INTERVENTION_SHOW_SECONDS:
+                    intervention_placeholder.markdown(
+                        f'<div style="background:#3b1f0f;border:1px solid #f59e0b;'
+                        f'border-radius:10px;padding:12px 16px;margin:6px 0;">'
+                        f'<div style="color:#fbbf24;font-weight:700;font-size:14px;">'
+                        f'🤖 {_iv.title}</div>'
+                        f'<div style="color:#fde68a;font-size:12px;margin-top:4px;">'
+                        f'{_iv.body}</div></div>',
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    intervention_placeholder.empty()
+
                 annotate_frame(frame, bbox, level, smoothed)
                 video_placeholder.image(
                     cv2.cvtColor(frame, cv2.COLOR_BGR2RGB),
@@ -895,13 +926,17 @@ def main():
                 if (not st.session_state.history or
                     (now - st.session_state.history[-1]['ts']).total_seconds() >= 0.5):
                     daisee_record = result.get('daisee_raw') or 0.0
-                    st.session_state.history.append({
+                    _rec = {
                         'ts': now,
                         'stress_index': smoothed,
                         'level': level,
                         'daisee':   daisee_record,
                         'behavior': result['behavior_stress'],
-                    })
+                    }
+                    # Per-signal values: without these the self-retraining
+                    # loop has nothing to learn from.
+                    _rec.update(result['contributions'])
+                    st.session_state.history.append(_rec)
 
                 now_ts = time.time()
                 if now_ts - last_sidebar_update > 0.5 and st.session_state.history:
@@ -923,6 +958,15 @@ def main():
                 time.sleep(0.01)
         finally:
             cap.release()
+            # Hand the agent's measured outcomes to the Stop handler, which
+            # persists them alongside the session row.
+            try:
+                _final_idx = (st.session_state.history[-1]['stress_index']
+                              if st.session_state.history else 0.0)
+                st.session_state.pending_interventions = agent.finish_session(
+                    time.time(), _final_idx)
+            except Exception:
+                pass
     else:
         # ---------- SELF-REPORT PROMPT (Phase 3 labeling loop) ----------
         if st.session_state.pending_self_report is not None:

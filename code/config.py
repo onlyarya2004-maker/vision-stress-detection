@@ -144,6 +144,30 @@ RPPG_RESTING_SAMPLES = 5         # usable readings before a resting rate is set
 RPPG_STRESS_SCALE_BPM = 25.0
 
 # ===========================================================================
+# INTERVENTION AGENT (Phase 3 - the product's agentic core)
+# ===========================================================================
+# perceive -> decide -> act (targeted intervention) -> measure -> learn.
+# All on-device; the learning is helped/failed counts per intervention kind,
+# persisted in the interventions table.
+INTERVENTION_MIN_INDEX = 0.45          # below this, never interrupt the user
+INTERVENTION_SIGNAL_THRESHOLD = 0.5    # a signal must be at least this to be
+                                       # blamed as the trigger
+INTERVENTION_WARMUP_SECONDS = 45.0     # let the smoother fill and the user
+                                       # settle before the first interruption
+INTERVENTION_COOLDOWN_SECONDS = 180.0  # minimum gap between interventions -
+                                       # a nagging agent gets ignored, which
+                                       # poisons its own outcome data
+INTERVENTION_SHOW_SECONDS = 20.0       # how long the card stays prominent
+INTERVENTION_EVAL_SECONDS = 150.0      # outcome window: did the index drop?
+INTERVENTION_MIN_EVAL_SECONDS = 60.0   # session ends earlier than this after
+                                       # firing -> outcome recorded as unknown
+INTERVENTION_HELPED_DROP = 0.06        # smoothed-index drop that counts as
+                                       # "helped" (vs. drift/noise)
+INTERVENTION_RETIRE_BELOW = 0.25       # success estimate below this...
+INTERVENTION_RETIRE_MIN_TRIALS = 4     # ...after this many measured outcomes
+                                       # -> stop suggesting it to this user
+
+# ===========================================================================
 # LEARNED FUSION (Phase 3)
 # ===========================================================================
 # Weights fitted from data rather than chosen. Measured on 5 UBFC-Phys
