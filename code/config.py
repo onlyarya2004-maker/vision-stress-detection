@@ -111,6 +111,24 @@ TASK_MODES = {
 }
 
 # ===========================================================================
+# LEARNED FUSION (Phase 3)
+# ===========================================================================
+# Weights fitted from data rather than chosen. Measured on 5 UBFC-Phys
+# subjects, leave-one-subject-out:
+#     hand-tuned 57.73%  |  logistic 68.22%  |  gradient boosting 75.19%
+#
+# OFF BY DEFAULT, and that is not timidity. The current model was trained
+# entirely on UBFC-Phys: a 1024x1024 industrial camera, a French university
+# cohort, a speech-and-arithmetic stress protocol. Switching it on for a
+# laptop webcam would repeat precisely the error this investigation exposed -
+# assuming a constant fitted elsewhere transfers.
+#
+# Flip to True only after retraining on recordings made under
+# RECORDING_PROTOCOL.md and beating hand-tuned on those SAME recordings.
+USE_LEARNED_FUSION = False
+LEARNED_FUSION_MODEL_PATH = '../models/meta_learner.joblib'
+
+# ===========================================================================
 # FUSION TUNING
 # ===========================================================================
 # Aggregate behaviour multiplier. PP1 testing: 1.0x -> 1.2x moved stressed

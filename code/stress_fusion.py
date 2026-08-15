@@ -177,7 +177,21 @@ def behavioral_stress_score(features, task_mode='Default'):
     then renormalized so the result is on the same 0-1 scale regardless
     of mode.
     """
-    contributions = {}
+    contributions = {name: float(features.get(name, 0.0))
+                     for name in BEHAVIOR_WEIGHTS}
+
+    # Learned path, when enabled AND a model is present. Falls through to the
+    # hand-tuned weighting otherwise, so behaviour is unchanged by default.
+    # Contributions are still reported from the raw signals, so the UI and the
+    # feature dumps look identical either way.
+    if config.USE_LEARNED_FUSION:
+        from learned_fusion import get_learned_fusion
+        learned = get_learned_fusion()
+        if learned.is_available():
+            score = learned.score(features)
+            if score is not None:
+                return float(np.clip(score, 0.0, 1.0)), contributions
+
     boost_map = TASK_MODES.get(task_mode, TASK_MODES['Default'])
 
     # Apply task multipliers to base weights, then renormalize sum -> 1.0
