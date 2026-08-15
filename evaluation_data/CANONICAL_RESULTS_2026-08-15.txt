@@ -1,0 +1,178 @@
+==============================================================================
+CANONICAL EVALUATION RESULTS
+==============================================================================
+generated : 2026-08-15T23:13:42
+root      : C:\Users\Arya\Desktop\stress_project
+
+Every number this project reports must come from this file.
+Regenerate with:  cd code && python run_all_evaluations.py
+
+==============================================================================
+LIVE SYSTEM — END-TO-END EVALUATION
+==============================================================================
+
+### Default mode (current evaluation_data/)
+  source: C:\Users\Arya\Desktop\stress_project\evaluation_data  (relaxed_*.csv / stressed_*.csv)
+
+  Per-file:
+    relaxed_1.csv                n=  52  mean_index=0.262  L/M/H=52/0/0
+    relaxed_2.csv                n=  48  mean_index=0.205  L/M/H=48/0/0
+    stressed_1.csv               n=  62  mean_index=0.543  L/M/H=1/35/26
+    stressed_2.csv               n=  62  mean_index=0.566  L/M/H=1/19/42
+
+  FRAME-level   n=224
+    overall accuracy   99.11%  95% CI [96.8%, 99.8%]
+    relaxed  -> LOW    100/100 = 100.00%  CI [96.3%, 100.0%]
+    stressed -> M/H    122/124 = 98.39%  CI [94.3%, 99.6%]
+
+  SESSION-level n=4   (majority vote per recording)
+    accuracy           4/4 = 100.00%  95% CI [51.0%, 100.0%]
+    NOTE: the wide interval here is the honest one - frames within a recording
+          are autocorrelated, so frame-level n overstates the evidence.
+
+  Confusion (frame-level):
+                   LOW  MODERATE    HIGH
+    relaxed        100         0       0
+    stressed         2        54      68
+
+  Discrimination gap: +0.320   (relaxed mean 0.235, stressed mean 0.554)
+
+### Studying mode (baseline_v1/study*)
+  source: C:\Users\Arya\Desktop\stress_project\evaluation_data\baseline_v1  (studyrelaxed_*.csv / studystressed_*.csv)
+
+  Per-file:
+    studyrelaxed_1.csv           n=  58  mean_index=0.223  L/M/H=58/0/0
+    studyrelaxed_2.csv           n=  89  mean_index=0.299  L/M/H=83/6/0
+    studystressed_1.csv          n=  61  mean_index=0.543  L/M/H=8/26/27
+    studystressed_2.csv          n=  85  mean_index=0.502  L/M/H=2/60/23
+
+  FRAME-level   n=293
+    overall accuracy   94.54%  95% CI [91.3%, 96.6%]
+    relaxed  -> LOW    141/147 = 95.92%  CI [91.4%, 98.1%]
+    stressed -> M/H    136/146 = 93.15%  CI [87.9%, 96.2%]
+
+  SESSION-level n=4   (majority vote per recording)
+    accuracy           4/4 = 100.00%  95% CI [51.0%, 100.0%]
+    NOTE: the wide interval here is the honest one - frames within a recording
+          are autocorrelated, so frame-level n overstates the evidence.
+
+  Confusion (frame-level):
+                   LOW  MODERATE    HIGH
+    relaxed        141         6       0
+    stressed        10        86      50
+
+  Discrimination gap: +0.250   (relaxed mean 0.269, stressed mean 0.519)
+
+### Archived baseline_v1 non-study recordings
+  source: C:\Users\Arya\Desktop\stress_project\evaluation_data\baseline_v1  (relaxed_*.csv / stressed_*.csv)
+
+  Per-file:
+    relaxed_1.csv                n= 106  mean_index=0.356  L/M/H=80/26/0
+    relaxed_2.csv                n=  76  mean_index=0.361  L/M/H=46/30/0
+    stressed_1.csv               n= 115  mean_index=0.514  L/M/H=6/74/35
+    stressed_2.csv               n= 171  mean_index=0.552  L/M/H=14/83/74
+
+  FRAME-level   n=468
+    overall accuracy   83.76%  95% CI [80.1%, 86.8%]
+    relaxed  -> LOW    126/182 = 69.23%  CI [62.2%, 75.5%]
+    stressed -> M/H    266/286 = 93.01%  CI [89.4%, 95.4%]
+
+  SESSION-level n=4   (majority vote per recording)
+    accuracy           4/4 = 100.00%  95% CI [51.0%, 100.0%]
+    NOTE: the wide interval here is the honest one - frames within a recording
+          are autocorrelated, so frame-level n overstates the evidence.
+
+  Confusion (frame-level):
+                   LOW  MODERATE    HIGH
+    relaxed        126        56       0
+    stressed        20       157     109
+
+  Discrimination gap: +0.178   (relaxed mean 0.358, stressed mean 0.537)
+
+==============================================================================
+EXTERNAL VALIDATION — UBFC-PHYS
+==============================================================================
+Independent subjects with synchronised physiological ground
+truth. Kept in its own folder so it can never pool with the
+single-subject recordings above - mixing them would silently
+corrupt both numbers.
+  T1 rest -> relaxed | T2 speech, T3 arithmetic -> stressed
+
+### UBFC-Phys (cross-subject)
+  source: C:\Users\Arya\Desktop\stress_project\evaluation_data\ubfc_phys  (relaxed_*.csv / stressed_*.csv)
+
+  Per-file:
+    relaxed_U01_default_2026-08-15_vid_s1_T1.csv n=2634  mean_index=0.306  L/M/H=1674/863/97
+    relaxed_U02_default_2026-08-15_vid_s2_T1.csv n=2634  mean_index=0.244  L/M/H=2244/390/0
+    relaxed_U03_default_2026-08-15_vid_s3_T1.csv n=2634  mean_index=0.350  L/M/H=1268/1351/15
+    relaxed_U04_default_2026-08-15_vid_s4_T1.csv n=2634  mean_index=0.243  L/M/H=2178/416/40
+    relaxed_U05_default_2026-08-15_vid_s5_T1.csv n=2634  mean_index=0.136  L/M/H=2605/29/0
+    stressed_U01_default_2026-08-15_vid_s1_T2.csv n=2634  mean_index=0.209  L/M/H=2338/296/0
+    stressed_U01_default_2026-08-15_vid_s1_T3.csv n=2634  mean_index=0.253  L/M/H=2307/327/0
+    stressed_U02_default_2026-08-15_vid_s2_T2.csv n=2634  mean_index=0.417  L/M/H=789/1457/388
+    stressed_U02_default_2026-08-15_vid_s2_T3.csv n=2595  mean_index=0.510  L/M/H=144/1654/797
+    stressed_U03_default_2026-08-15_vid_s3_T2.csv n=2634  mean_index=0.493  L/M/H=489/1315/830
+    stressed_U03_default_2026-08-15_vid_s3_T3.csv n=2634  mean_index=0.374  L/M/H=1303/1150/181
+    stressed_U04_default_2026-08-15_vid_s4_T2.csv n=2634  mean_index=0.376  L/M/H=1244/1262/128
+    stressed_U04_default_2026-08-15_vid_s4_T3.csv n=2599  mean_index=0.326  L/M/H=1652/867/80
+    stressed_U05_default_2026-08-15_vid_s5_T2.csv n=2634  mean_index=0.315  L/M/H=1965/651/18
+    stressed_U05_default_2026-08-15_vid_s5_T3.csv n=2634  mean_index=0.225  L/M/H=2570/64/0
+
+  FRAME-level   n=39436
+    overall accuracy   54.35%  95% CI [53.9%, 54.8%]
+    relaxed  -> LOW    9969/13170 = 75.69%  CI [75.0%, 76.4%]
+    stressed -> M/H    11465/26266 = 43.65%  CI [43.1%, 44.3%]
+
+  SESSION-level n=15   (majority vote per recording)
+    accuracy           9/15 = 60.00%  95% CI [35.7%, 80.2%]
+    NOTE: the wide interval here is the honest one - frames within a recording
+          are autocorrelated, so frame-level n overstates the evidence.
+
+  Confusion (frame-level):
+                   LOW  MODERATE    HIGH
+    relaxed       9969      3049     152
+    stressed     14801      9043    2422
+
+  Discrimination gap: +0.094   (relaxed mean 0.256, stressed mean 0.349)
+
+  PER-SUBJECT breakdown:
+    subject        n   accuracy              95% CI
+    U01         7902     29.07%      [28.1%, 30.1%]
+    U02         7863     83.17%      [82.3%, 84.0%]
+    U03         7902     60.04%      [59.0%, 61.1%]
+    U04         7867     57.39%      [56.3%, 58.5%]
+    U05         7902     42.24%      [41.2%, 43.3%]
+    NOTE: cross-subject spread is the real generalisation test.
+
+==============================================================================
+OFFLINE STAGE ARTIFACTS (read from generated files, not retyped)
+==============================================================================
+
+### WESAD physiological calibration
+  source: models\calibrated_thresholds.json
+  LOSO mean accuracy : 91.86%
+  LOSO mean F1       : 0.874
+  subjects           : 15
+  windows            : 566 baseline / 311 stress
+  JSON cutoffs       : 0.029 / 0.683
+  WARNING: those JSON cutoffs are NOT what the live system uses.
+           stress_fusion.py hardcodes 0.36 / 0.55. See PLAN_FOR_PP2.md.
+
+### CNN+LSTM temporal branch (DISABLED in the live system)
+  source: models\lstm_test_report.txt
+  Test set size: 1784 sequences
+  Test accuracy: 71.13%
+  Test loss: 0.6059
+  Majority-class floor for DaiSEE (~6.4:1) is 86.6% - the model
+  is BELOW it, which is why W_LSTM = 0.0.
+
+==============================================================================
+READING THESE NUMBERS
+==============================================================================
+* Frame-level accuracy is the familiar figure but its n is inflated:
+  frames within one recording are highly autocorrelated.
+* Session-level accuracy uses the honest denominator (recordings),
+  which is why its confidence interval is much wider.
+* All live recordings to date are SINGLE-SUBJECT. These measure
+  within-subject behaviour, not cross-user generalisation.
+  Multi-subject evaluation is Phase 1 of PLAN_FOR_PP2.md.
