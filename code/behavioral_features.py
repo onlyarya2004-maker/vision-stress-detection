@@ -191,15 +191,31 @@ class BehavioralFeatureEngine:
                 mean(s['shoulder_tilt'] for s in self._posture_calib_buffer))
             self.baseline.posture_calibrated = True
 
-        # Blink RATE baseline, when the window was long enough to estimate
-        # one. Six seconds cannot yield a blinks-per-minute figure, so short
-        # windows keep the generic 12/min default rather than inventing a
-        # number from one or two blinks.
+        # Blink RATE baseline, when the window was long enough to estimate one.
+        #
+        # The blinks counted DURING calibration are unusable: they were
+        # detected with the pre-calibration threshold (0.75 x the generic 0.28
+        # default = 0.21). For a subject whose real EAR is 0.159 that latches
+        # the eyes shut permanently, yielding ~2 blinks/min - which then
+        # becomes the baseline that the post-calibration threshold's true
+        # ~26/min is scored against, pinning blink_stress at 1.0 instantly.
+        #
+        # So re-count blinks over the stored calibration EAR sequence using
+        # the threshold we just derived. Same latch logic as the live path.
         if self._calib_started_at is not None:
             elapsed = self._time() - self._calib_started_at
             if elapsed >= config.MIN_BLINK_CALIB_SECONDS:
-                observed = len(self.state.blink_times) * (60.0 / elapsed)
-                # Guard against a detector stuck open or shut.
+                cutoff = config.BLINK_THRESHOLD_RATIO * self.baseline.ear_baseline
+                closed, count = False, 0
+                for sample in self._calib_buffer:
+                    e = sample['ear']
+                    if e < cutoff and not closed:
+                        closed = True
+                        count += 1
+                    elif e >= cutoff:
+                        closed = False
+                observed = count * (60.0 / elapsed)
+                # Guard against a detector stuck fully open or fully shut.
                 if 2.0 <= observed <= 60.0:
                     self.baseline.blink_rate_baseline = float(observed)
                     self.baseline.blink_rate_calibrated = True

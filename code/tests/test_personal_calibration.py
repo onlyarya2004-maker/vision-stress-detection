@@ -218,3 +218,64 @@ def test_posture_not_calibrated_when_shoulders_never_visible(
     assert engine.baseline.posture_calibrated is False
     assert engine.baseline.vertical_gap_baseline == pytest.approx(
         config.DEFAULT_VERTICAL_GAP_BASELINE)
+
+
+# ===========================================================================
+# Blink RATE baseline
+# ===========================================================================
+
+def test_blink_rate_baseline_uses_the_corrected_threshold(
+        engine, monkeypatch, blank_frame):
+    """
+    Regression for a chicken-and-egg bug: blinks counted DURING calibration
+    used the pre-calibration threshold, so a narrow-eyed subject registered
+    ~2 blinks/min, and their true ~26/min was then scored against that -
+    saturating blink_stress at rest. The rate must be re-derived from the
+    stored EAR sequence using the threshold calibration just produced.
+    """
+    fps = 30.0
+    frame = {'i': 0}
+    eng_time = lambda: frame['i'] / fps
+    monkeypatch.setattr(engine, '_time', eng_time)
+
+    open_lms = make_face_landmarks(ear=0.159)   # narrow eyes, but OPEN
+    shut_lms = make_face_landmarks(ear=0.05)
+
+    engine.start_calibration()
+    # 30s at 30fps, blinking twice per second-ish: 1 blink every 30 frames
+    for i in range(int(30 * fps)):
+        frame['i'] = i
+        lms = shut_lms if (i % 30) == 0 else open_lms
+        monkeypatch.setattr(engine.face_mesh, "process",
+                            lambda _f, l=lms: face_mesh_result(l))
+        engine._extract_face(blank_frame)
+    frame['i'] = int(30 * fps)
+    engine.finish_calibration()
+
+    assert engine.baseline.blink_rate_calibrated is True
+    # ~60 blinks/min were simulated; the guard caps at 60.
+    assert 20.0 <= engine.baseline.blink_rate_baseline <= 60.0, (
+        f"baseline {engine.baseline.blink_rate_baseline:.1f} - the old bug "
+        f"produced ~2/min here")
+
+
+def test_short_calibration_keeps_the_default_blink_rate(engine, monkeypatch,
+                                                        blank_frame):
+    """6 seconds cannot yield a blinks/min figure; do not invent one."""
+    fps = 30.0
+    frame = {'i': 0}
+    monkeypatch.setattr(engine, '_time', lambda: frame['i'] / fps)
+    lms = make_face_landmarks()
+    monkeypatch.setattr(engine.face_mesh, "process",
+                        lambda _f: face_mesh_result(lms))
+
+    engine.start_calibration()
+    for i in range(int(6 * fps)):
+        frame['i'] = i
+        engine._extract_face(blank_frame)
+    frame['i'] = int(6 * fps)
+    engine.finish_calibration()
+
+    assert engine.baseline.blink_rate_calibrated is False
+    assert engine.baseline.blink_rate_baseline == pytest.approx(
+        config.DEFAULT_BLINK_RATE_BASELINE)
