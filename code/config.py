@@ -301,7 +301,12 @@ MIN_CALIBRATION_SAMPLES = 30     # fewer than this and calibration fails
 MOBILENET_INPUT_SIZE = 160
 EFFICIENTNET_INPUT_SIZE = 224
 CNN_EVERY_N_FRAMES = 3           # CNN inference cadence (~10/s at 30fps)
-CALIBRATION_SECONDS = 6
+CALIBRATION_SECONDS = 20   # was 6. Blink-RATE calibration needs >=20s
+                           # (MIN_BLINK_CALIB_SECONDS); at 6s the rate
+                           # baseline stayed at the generic 12/min and the
+                           # first live session measured blink_stress pinned
+                           # at 0.79 mean during normal sitting. 20s also
+                           # yields a steadier posture/EAR baseline.
 LIVE_GRAPH_WINDOW = 60
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480

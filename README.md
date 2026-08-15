@@ -28,7 +28,7 @@ Webcam (640x480, ~30fps)
    +-- MediaPipe FaceMesh (468 landmarks) + Pose (33 landmarks)
          |
          +--> DaiSEE CNN ensemble (MobileNetV2 + EfficientNetB0)     weight 0.20
-         |      re-centered against a 6-second personal baseline
+         |      re-centered against a 20-second personal baseline
          |
          +--> Behavioral feature engine                              weight 0.80
                 EAR, blink rate, brow tension, jaw tension,
@@ -45,7 +45,7 @@ Webcam (640x480, ~30fps)
 ```
 
 Two offline stages produce reusable artifacts: CNN training on DaiSEE, and WESAD
-leave-one-subject-out calibration. One online stage runs per session: a 6-second personal
+leave-one-subject-out calibration. One online stage runs per session: a 20-second personal
 baseline calibration that re-centers both branches against the individual user.
 
 ---
@@ -181,7 +181,7 @@ redistributes the DaiSEE branch weight to the behavioral branch if the models ar
 cd code && streamlit run app.py
 ```
 
-Then: pick a context mode → **Calibrate** (sit relaxed, 6 seconds) → **Start** → **Stop**
+Then: pick a context mode → **Calibrate** (sit relaxed, 20 seconds) → **Start** → **Stop**
 (auto-saves to the session history database).
 
 All paths in the code are relative, so commands **must** be run from `code/`. If you use

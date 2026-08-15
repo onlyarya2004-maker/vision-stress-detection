@@ -44,7 +44,7 @@ For each recording:
    *Subject ID* (e.g. `S01`) and *Condition* (`relaxed` or `stressed`).
    These are baked into the export filename; getting them right here is the whole point.
 2. **Pick the context mode** — Default / Studying / Hospital / Driving.
-3. **🎯 Calibrate** — sit still, relaxed, neutral expression, 6 seconds.
+3. **🎯 Calibrate** — sit still, relaxed, neutral expression, 20 seconds.
    Do not pose, do not smile, breathe normally. Confirm the sidebar shows **✅ Calibrated**.
 4. **▶ Start**, then perform the condition (below) for at least 60 seconds.
 5. **⏸ Stop** — this auto-saves to the session database.
