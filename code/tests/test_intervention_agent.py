@@ -166,3 +166,30 @@ def test_intervention_log_roundtrips_through_db(temp_db):
     }])
     stats = session_history.intervention_stats()
     assert stats['unclench_jaw'] == {'helped': 1, 'no_effect': 1}
+
+
+# ---------------------------------------------------------------------------
+# Visibility (the UI's window into the agent)
+# ---------------------------------------------------------------------------
+
+def test_status_reports_each_phase():
+    a = _agent()
+    assert a.status(5.0)['phase'] == 'warming'
+    assert a.status(warmed())['phase'] == 'watching'
+
+    stressed = dict(CALM, jaw_tension=0.9)
+    t = warmed()
+    a.update(t, 0.80, stressed)
+    assert a.status(t + 1)['phase'] == 'showing'
+    assert a.status(t + config.INTERVENTION_SHOW_SECONDS + 5)['phase'] == 'evaluating'
+
+    a.update(t + config.INTERVENTION_EVAL_SECONDS + 1, 0.80, stressed)
+    assert a.status(t + config.INTERVENTION_EVAL_SECONDS + 2)['phase'] == 'cooldown'
+
+
+def test_learned_summary_is_honest_when_empty_and_when_not():
+    a = _agent()
+    assert 'no measured outcomes' in a.learned_summary()
+    a2 = _agent(stats={'unclench_jaw': {'helped': 3, 'no_effect': 1}})
+    s = a2.learned_summary()
+    assert 'unclench jaw' in s and '3/4' in s

@@ -412,6 +412,7 @@ def init_state():
     if 'subject_id' not in st.session_state: st.session_state.subject_id = ''
     if 'condition' not in st.session_state: st.session_state.condition = 'unlabeled'
     if 'pending_self_report' not in st.session_state: st.session_state.pending_self_report = None
+    if 'agent_enabled' not in st.session_state: st.session_state.agent_enabled = True
     if 'db_initialized' not in st.session_state:
         session_history.init_db()
         st.session_state.db_initialized = True
@@ -468,6 +469,26 @@ def main():
         )
         if _selected_task != st.session_state.task_mode:
             st.session_state.task_mode = _selected_task
+
+        # ---------- AI Intervention Agent ----------
+        # A real switch: when off, the agent's decision loop does not run at
+        # all. Disabled mid-session (like every other control) so the
+        # capture loop is not interrupted.
+        st.toggle(
+            "🤖 AI Intervention Agent",
+            key="agent_enabled",
+            disabled=st.session_state.running or st.session_state.calibrating,
+            help="The agent watches the seven stress signals, decides when "
+                 "interrupting you is worth it, targets the signal driving "
+                 "the stress, then measures whether its intervention worked "
+                 "and learns which ones help you. All on-device.",
+        )
+        try:
+            from intervention_agent import InterventionAgent as _IA
+            _peek = _IA(stats=session_history.intervention_stats())
+            st.caption(f"🧠 {_peek.learned_summary()}")
+        except Exception:
+            pass
 
         # ---------- Recording labels ----------
         # Set BEFORE recording; these are baked into the export filename so
@@ -806,6 +827,8 @@ def main():
         agent = InterventionAgent(stats=_known)
         agent.start_session(time.time())
         intervention_placeholder = st.empty()
+        agent_status_placeholder = st.empty()
+        last_agent_status_update = 0.0
 
         last_daisee_probs = None
         frame_idx = 0
@@ -868,8 +891,10 @@ def main():
                 advice = stress_level_advice(level)
 
                 # ---- intervention agent: decide / act / measure ----
-                _iv = agent.update(time.time(), smoothed,
-                                   result['contributions'])
+                _iv = None
+                if st.session_state.agent_enabled:
+                    _iv = agent.update(time.time(), smoothed,
+                                       result['contributions'])
                 if _iv is not None and (time.time() - _iv.t_shown) <= config.INTERVENTION_SHOW_SECONDS:
                     intervention_placeholder.markdown(
                         f'<div style="background:#3b1f0f;border:1px solid #f59e0b;'
@@ -939,6 +964,39 @@ def main():
                     st.session_state.history.append(_rec)
 
                 now_ts = time.time()
+                if now_ts - last_agent_status_update > 1.0:
+                    if st.session_state.agent_enabled:
+                        _st = agent.status(now_ts)
+                        _colors = {'watching': ('#10b981', '#064e3b'),
+                                   'warming': ('#93c5fd', '#1e3a8a'),
+                                   'showing': ('#fbbf24', '#3b1f0f'),
+                                   'evaluating': ('#fbbf24', '#3b1f0f'),
+                                   'cooldown': ('#a5b4fc', '#1e1b4b')}
+                        _fg, _bg = _colors.get(_st['phase'], ('#94a3b8', '#1a1f2e'))
+                        agent_status_placeholder.markdown(
+                            f'<div style="background:{_bg};border-radius:8px;'
+                            f'padding:8px 12px;margin:4px 0;display:flex;'
+                            f'align-items:center;gap:8px;">'
+                            f'<span style="width:8px;height:8px;border-radius:50%;'
+                            f'background:{_fg};animation:pulse 2s infinite;"></span>'
+                            f'<span style="color:{_fg};font-size:12px;font-weight:700;">'
+                            f'AI AGENT · {_st["phase"].upper()}</span>'
+                            f'<span style="color:{_fg};font-size:11px;opacity:0.85;">'
+                            f'{_st["detail"]}</span></div>',
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        agent_status_placeholder.markdown(
+                            '<div style="background:#1a1f2e;border-radius:8px;'
+                            'padding:8px 12px;margin:4px 0;">'
+                            '<span style="color:#64748b;font-size:12px;font-weight:700;">'
+                            'AI AGENT · OFF</span>'
+                            '<span style="color:#64748b;font-size:11px;"> — '
+                            'monitoring only, no interventions, no learning</span></div>',
+                            unsafe_allow_html=True,
+                        )
+                    last_agent_status_update = now_ts
+
                 if now_ts - last_sidebar_update > 0.5 and st.session_state.history:
                     recent = [h['stress_index']
                               for h in st.session_state.history[-LIVE_GRAPH_WINDOW:]]

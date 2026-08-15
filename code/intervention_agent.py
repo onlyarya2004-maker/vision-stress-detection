@@ -204,6 +204,53 @@ class InterventionAgent:
         a.resolved = True
         self._active = None
 
+    # -- visibility ---------------------------------------------------------
+    def status(self, t: float) -> Dict[str, str]:
+        """
+        Live state for the UI, so the agent is VISIBLY working even while it
+        correctly decides to do nothing. Phases:
+          warming    - settling in, will not interrupt yet
+          watching   - monitoring, ready to act
+          showing    - an intervention card is up
+          evaluating - measuring whether the intervention worked
+          cooldown   - deliberately holding back to avoid nagging
+        """
+        if self._active and not self._active.resolved:
+            since = t - self._active.t_shown
+            if since < config.INTERVENTION_SHOW_SECONDS:
+                return {'phase': 'showing',
+                        'detail': f"intervening: {self._active.title}"}
+            left = max(0, config.INTERVENTION_EVAL_SECONDS - since)
+            return {'phase': 'evaluating',
+                    'detail': f"measuring effect of "
+                              f"“{self._active.title}” "
+                              f"({left:.0f}s left)"}
+        if t - self._session_start < config.INTERVENTION_WARMUP_SECONDS:
+            left = config.INTERVENTION_WARMUP_SECONDS - (t - self._session_start)
+            return {'phase': 'warming',
+                    'detail': f"settling in ({left:.0f}s)"}
+        since_fire = t - self._last_fired_at
+        if since_fire < config.INTERVENTION_COOLDOWN_SECONDS:
+            left = config.INTERVENTION_COOLDOWN_SECONDS - since_fire
+            return {'phase': 'cooldown',
+                    'detail': f"holding back ({left:.0f}s) - "
+                              f"nagging poisons outcome data"}
+        return {'phase': 'watching',
+                'detail': 'monitoring all seven signals'}
+
+    def learned_summary(self) -> str:
+        """One line of what the agent has learned, for the UI."""
+        measured = [(k, v.get('helped', 0), v.get('no_effect', 0))
+                    for k, v in self.stats.items()
+                    if v.get('helped', 0) + v.get('no_effect', 0) > 0]
+        if not measured:
+            return "no measured outcomes yet - it learns as you use it"
+        measured.sort(key=lambda kv: -self.success_rate(kv[0]))
+        k, h, f = measured[0]
+        total = sum(h + f for _, h, f in measured)
+        return (f"{total} outcome(s) measured; most effective so far: "
+                f"{k.replace('_', ' ')} ({h}/{h + f} helped)")
+
     # -- session end --------------------------------------------------------
     def finish_session(self, t: float, smoothed_index: float) -> List[Dict]:
         """
