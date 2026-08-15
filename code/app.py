@@ -410,6 +410,7 @@ def init_state():
     if 'task_mode' not in st.session_state: st.session_state.task_mode = 'Default'
     if 'subject_id' not in st.session_state: st.session_state.subject_id = ''
     if 'condition' not in st.session_state: st.session_state.condition = 'unlabeled'
+    if 'pending_self_report' not in st.session_state: st.session_state.pending_self_report = None
     if 'db_initialized' not in st.session_state:
         session_history.init_db()
         st.session_state.db_initialized = True
@@ -520,10 +521,14 @@ def main():
             # Persist the just-ended session to the local DB
             if st.session_state.history:
                 try:
-                    session_history.save_session(
+                    _sid = session_history.save_session(
                         st.session_state.history,
                         task_mode=st.session_state.task_mode,
                     )
+                    # Queue the self-report prompt for this session. The
+                    # user's answer - not the system's prediction - is the
+                    # ground-truth label the adaptation loop trains on.
+                    st.session_state.pending_self_report = _sid
                 except Exception as e:
                     st.warning(f"Could not save session to history DB: {e}")
             st.rerun()
@@ -919,6 +924,28 @@ def main():
         finally:
             cap.release()
     else:
+        # ---------- SELF-REPORT PROMPT (Phase 3 labeling loop) ----------
+        if st.session_state.pending_self_report is not None:
+            _sid = st.session_state.pending_self_report
+            with st.container(border=True):
+                st.markdown("**How stressed did you actually feel during that "
+                            "session?** Your answer is stored with the session "
+                            "and is what the system learns from - be honest, "
+                            "not agreeable.")
+                _cols = st.columns(6)
+                _labels = ["1 · calm", "2", "3 · neutral", "4", "5 · very stressed"]
+                for _i, _lab in enumerate(_labels, start=1):
+                    if _cols[_i - 1].button(_lab, key=f"selfrep_{_i}"):
+                        try:
+                            session_history.set_self_report(_sid, _i)
+                        except Exception as e:
+                            st.warning(f"Could not save rating: {e}")
+                        st.session_state.pending_self_report = None
+                        st.rerun()
+                if _cols[5].button("skip", key="selfrep_skip"):
+                    st.session_state.pending_self_report = None
+                    st.rerun()
+
         if st.session_state.history:
             timeline_placeholder.markdown(
                 render_full_timeline(st.session_state.history),

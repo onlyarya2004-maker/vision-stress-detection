@@ -170,3 +170,39 @@ def test_v2_to_v3_migration_adds_task_mode(temp_db):
     rows = session_history.load_recent_sessions(10)
     assert len(rows) == 1                        # legacy row preserved
     assert rows[0]["task_mode"] == "Default"     # backfilled
+
+
+def test_v4_migration_adds_self_report(temp_db):
+    """v3 DBs (task_mode but no self_report) gain the column in place."""
+    session_history.init_db()
+    conn = sqlite3.connect(str(temp_db))
+    try:
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(sessions)")]
+    finally:
+        conn.close()
+    assert "self_report" in cols
+
+
+def test_self_report_roundtrip(temp_db):
+    """Rating persists, is bounded 1-5, and None clears it."""
+    session_history.init_db()
+    sid = session_history.save_session(_history(20), task_mode="Default")
+
+    session_history.set_self_report(sid, 4)
+    labeled = session_history.labeled_sessions()
+    assert len(labeled) == 1 and labeled[0]["self_report"] == 4
+
+    session_history.set_self_report(sid, None)      # user retracts
+    assert session_history.labeled_sessions() == []
+
+    import pytest as _pytest
+    with _pytest.raises(ValueError):
+        session_history.set_self_report(sid, 9)
+
+
+def test_labeled_sessions_excludes_tiny_sessions(temp_db):
+    """A 3-frame accidental session must not become training data."""
+    session_history.init_db()
+    tiny = session_history.save_session(_history(3))
+    session_history.set_self_report(tiny, 5)
+    assert session_history.labeled_sessions(min_samples=10) == []

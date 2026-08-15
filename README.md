@@ -57,10 +57,18 @@ writes a timestamped file to `evaluation_data/`. Nothing here is transcribed by 
 
 | Evaluation | n | Result | 95% CI |
 |---|---|---|---|
-| Live system, Default mode | 224 frames (100 relaxed + 124 stressed) | **99.11%** | [96.8%, 99.8%] |
-| Live system, Studying mode | 293 frames (147 + 146) | **94.54%** | [91.3%, 96.6%] |
+| Live system, Default mode (single subject, own webcam) | 224 frames (100 relaxed + 124 stressed) | **99.11%** | [96.8%, 99.8%] |
+| Live system, Studying mode (single subject) | 293 frames (147 + 146) | **94.54%** | [91.3%, 96.6%] |
+| **Cross-subject (UBFC-Phys, 5 subjects), hand-tuned fusion** | 9,859 frames, LOSO | **57.73%** | — |
+| **Cross-subject, learned fusion (logistic / gradient boosting)** | same data, LOSO | **68.22% / 75.19%** | — |
+| rPPG heart rate vs Empatica E4 BVP (POS method) | 15 traces | **3.52 bpm** mean abs. error | — |
 | WESAD physiological validation (LOSO, 15 subjects) | 877 windows | **91.86%** (F1 0.874) | — |
 | DaiSEE CNN ensemble, held-out test split | — | ~82-84% | — |
+
+The gap between 99.11% (single-subject) and 57.73% (cross-subject) is the central finding of
+the PP2 work so far: hand-tuned constants measure the person they were tuned on. Learning the
+fusion weights recovers +10 to +17 points out-of-fold, and the calibration fixes it prompted
+(posture baseline, relative blink threshold, calibrated blink rate) are regression-tested.
 
 Default mode: relaxed→LOW recall 100% (100/100), stressed→MOD/HIGH recall 98.39% (122/124).
 Discrimination gap **+0.320** (relaxed mean 0.235 vs stressed mean 0.554).
@@ -90,18 +98,25 @@ Discrimination gap **+0.320** (relaxed mean 0.235 vs stressed mean 0.554).
 ## Repository layout
 
 ```
-code/                     live system, training and evaluation scripts
+code/                     all modules — see code/README.md for the full map
   app.py                  Streamlit dashboard (main entry point)
-  behavioral_features.py  MediaPipe feature engine (7 signals)
-  stress_fusion.py        task-aware fusion, smoothing, hysteresis
-  session_history.py      SQLite persistence
-  lstm_temporal.py        LSTM inference wrapper (disabled, see above)
-  stress_detector.py      OpenCV runner (no Streamlit dependency)
-  _archive/               pre-SQLite and pre-task-aware snapshots
-evaluation_data/          labeled relaxed/stressed session CSVs
-models/                   calibration JSON + training reports (.h5 excluded, see below)
-BACKUP_DEMO_FINAL/        frozen demo snapshot
-PLAN_FOR_PP2.md           audit findings + PP2 roadmap
+  config.py               every tunable constant + the feature switches
+  behavioral_features.py  MediaPipe engine, 7 signals, personal calibration
+  stress_fusion.py        fusion, task modes, smoothing, hysteresis
+  rppg_live.py            camera-only heart rate (POS), quality-gated
+  learned_fusion.py       data-fitted fusion weights (default off)
+  run_all_evaluations.py  regenerates every reported number
+  evaluate_video_file.py  pipeline over video files (UBFC-Phys etc.)
+  tests/                  113+ pytest tests
+evaluation_data/          labeled session CSVs + canonical results files
+  ubfc_phys/              cross-subject results (kept separate on purpose)
+datasets/
+  feature_traces/         per-frame signals from processed videos (Phase 3 input)
+  rppg_traces/            face-RGB traces (Phase 2 input) — these replace deleted video
+  UBFC-Phys/              BVP/EDA ground truth only (video processed then deleted)
+models/                   calibration JSON, meta_learner.joblib, .h5 via Git LFS
+PLAN_FOR_PP2.md           roadmap + live status snapshot
+RECORDING_PROTOCOL.md     exact procedure for evaluation recordings
 ```
 
 ---

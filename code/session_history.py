@@ -104,6 +104,16 @@ def init_db():
                 "ADD COLUMN task_mode TEXT NOT NULL DEFAULT 'Default'"
             )
 
+        # Migration v3 -> v4: self_report holds the user's end-of-session
+        # answer to "how stressed did you actually feel?" (1-5), NULL when
+        # skipped. This is the label source for Phase 3's continual
+        # adaptation - the system's predictions are NOT ground truth, the
+        # user's own report is.
+        if 'self_report' not in existing_cols:
+            conn.execute(
+                "ALTER TABLE sessions ADD COLUMN self_report INTEGER"
+            )
+
         conn.commit()
     finally:
         conn.close()
@@ -182,6 +192,40 @@ def save_session(history: List[Dict], task_mode: str = 'Default') -> Optional[in
 
         conn.commit()
         return session_id
+    finally:
+        conn.close()
+
+
+def set_self_report(session_id: int, rating: Optional[int]):
+    """
+    Record the user's own end-of-session stress rating (1-5), or clear it
+    with None. This is Phase 3's label source: the system's prediction is
+    not ground truth - the user's report is what the continual-adaptation
+    loop trains against.
+    """
+    if rating is not None:
+        rating = int(rating)
+        if not 1 <= rating <= 5:
+            raise ValueError(f"self_report must be 1-5 or None, got {rating}")
+    conn = _get_conn()
+    try:
+        conn.execute("UPDATE sessions SET self_report = ? WHERE id = ?",
+                     (rating, session_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def labeled_sessions(min_samples: int = 10) -> List[Dict]:
+    """Sessions that have a self-report, for the retraining loop."""
+    conn = _get_conn()
+    try:
+        rows = conn.execute("""
+            SELECT * FROM sessions
+            WHERE self_report IS NOT NULL AND sample_count >= ?
+            ORDER BY id ASC
+        """, (min_samples,)).fetchall()
+        return [dict(r) for r in rows]
     finally:
         conn.close()
 

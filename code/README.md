@@ -1,488 +1,72 @@
-\# Vision-Based Behavioral Stress Detection
+# code/ — module map
 
+> The full project README (setup, datasets, results, privacy) is at the repo root:
+> [`../README.md`](../README.md). This file documents what each module in `code/` does and
+> which switches control the system. It is kept in sync with the code — if you change a
+> default, change it here too.
 
+## Live system
 
-A real-time, vision-based stress monitoring system that classifies cognitive stress into LOW / MODERATE / HIGH categories using a webcam feed. Combines a deep-learning visual classifier (DaiSEE-trained CNN ensemble), an interpretable behavioral feature engine (MediaPipe FaceMesh + Pose), and physiological calibration (WESAD) into a single Streamlit dashboard with persistent session history and task-aware context modes.
+| Module | Role |
+|---|---|
+| `app.py` | Streamlit dashboard — main entry point (`streamlit run app.py` from this folder) |
+| `config.py` | **Every tunable constant, with provenance.** Start here before changing behaviour |
+| `behavioral_features.py` | MediaPipe FaceMesh + Pose engine, 7 signals, personal calibration (face, posture, blink threshold, blink rate) |
+| `stress_fusion.py` | Branch fusion, task modes, rule boost, smoothing, hysteresis |
+| `rppg_live.py` | Heart rate from the camera (POS), quality-gated, abstains when noisy |
+| `learned_fusion.py` | Data-fitted fusion weights (meta-learner inference) |
+| `lstm_temporal.py` | LSTM inference wrapper (disabled — see below) |
+| `session_history.py` | SQLite persistence: sessions, per-frame samples, self-reports |
+| `app_naming.py` | Canonical evaluation-CSV naming + parsing |
+| `stress_detector.py` | OpenCV-only runner (no Streamlit) |
 
+## The switches (all in `config.py`)
 
-
-\---
-
-
-
-\## Headline results
-
-
-
-| Metric | Value | Source |
-
+| Switch | Default | Meaning |
 |---|---|---|
+| `W_DAISEE / W_BEHAVIOR` | 0.20 / 0.80 | Hand-tuned branch weights (PP1 values) |
+| `W_LSTM` | **0.0** | LSTM disabled: scored 71.1% vs an 86.6% majority-class floor |
+| `W_RPPG` | **0.0** | rPPG validated offline (POS 3.52 bpm on UBFC-Phys) but unproven on compressed webcam video. HR is still computed and displayed; raise to 0.15–0.25 only after it tracks reality on your hardware |
+| `USE_LEARNED_FUSION` | **False** | Meta-learner beats hand-tuned by 10–17 points on UBFC-Phys (LOSO), but was trained on that camera/cohort. Enable only after retraining on recordings made under `../RECORDING_PROTOCOL.md` |
+| `USE_WESAD_CUTOFFS` | **False** | The LOW/MOD/HIGH cutoffs (0.36/0.55) are **empirically tuned, not WESAD-derived**. The JSON's cutoffs are percentiles of a physiological classifier's probabilities — a different scale — and are deliberately unused. `calibrated_thresholds.json` is read for provenance/reporting only |
 
-| WESAD physiological validation (LOSO) | \*\*91.86%\*\* | `wesad\\\\\\\_calibration.py`, 15 subjects |
+The temporal smoother is a fixed **60 frames (~2 s at 30 fps)** from `config.py`. The
+11.1 s window recommended inside the WESAD JSON is **not** used (it describes stress-block
+duration in WESAD's protocol, not per-frame vision noise).
 
-| DaiSEE single-frame test accuracy | \*\*\~82%\*\* | `train\\\\\\\_daisee\\\\\\\_stress.py`, ensemble |
+## Training & preprocessing (offline)
 
-| Live system accuracy, Default mode | \*\*98.9%\*\* | 176 samples (52 relaxed + 124 stressed) |
-
-| Live system accuracy, Studying mode | \*\*94.5%\*\* | 293 samples (147 relaxed + 146 stressed) |
-
-| Earlier baseline (May 2, pre-task-aware) | 89.6% | 202 samples |
-
-
-
-\*\*Discrimination gap (Default mode):\*\* mean stress\_index of relaxed sessions = 0.262, mean of stressed sessions = 0.554. Gap = \*\*+0.292\*\*.
-
-
-
-\---
-
-
-
-\## Architecture
-
-
-
-```
-
-TRAINING (one-time, offline)
-
-\\\&#x20; DaiSEE 8,571 clips ──► derive binary stress label ──► CNN ensemble training
-
-\\\&#x20;                                                  ──► daisee\\\\\\\_mobilenet\\\\\\\_stress.h5
-
-\\\&#x20;                                                  ──► daisee\\\\\\\_efficientnet\\\\\\\_stress.h5
-
-
-
-CALIBRATION (one-time, offline)
-
-\\\&#x20; WESAD 15 subjects ──► physiological features ──► LOSO CV stress classifier
-
-\\\&#x20;                                               ──► calibrated\\\\\\\_thresholds.json
-
-
-
-CALIBRATION (per-session, online)
-
-\\\&#x20; 6 sec of relaxed user video ──► personal DaiSEE baseline
-
-\\\&#x20;                             ──► personal behavioral baseline (EAR, brow, lip)
-
-
-
-INFERENCE (real-time, \\\\\\\~30 fps)
-
-\\\&#x20; Webcam ──► MediaPipe FaceMesh + Pose
-
-\\\&#x20;        ├──► DaiSEE CNN ensemble (re-centered against personal baseline)
-
-\\\&#x20;        ├──► Behavioral feature engine (EAR, blink, brow, jaw, posture)
-
-\\\&#x20;        └──► \\\\\\\[LSTM temporal branch — see "Negative results" below; disabled]
-
-\\\&#x20;                                                             │
-
-\\\&#x20;                                                             ▼
-
-\\\&#x20;             Task-aware weighted fusion (Default / Studying / Hospital / Driving)
-
-\\\&#x20;                             + multi-signal rule boost (+0.12 if 4+ active)
-
-\\\&#x20;                             + 60-frame temporal smoother
-
-\\\&#x20;                             + 3-frame hysteresis level confirmation
-
-\\\&#x20;                                                             │
-
-\\\&#x20;                                                             ▼
-
-\\\&#x20;                                                      LOW / MOD / HIGH
-
-\\\&#x20;                                                             │
-
-\\\&#x20;                                                             ▼
-
-\\\&#x20;                         Streamlit dashboard + SQLite session history DB
-
-```
-
-
-
-\---
-
-
-
-\## File map
-
-
-
-\### Live system (active in production)
-
-| File | Role |
-
+| Module | Role |
 |---|---|
+| `daisee_preprocessing.py` → `rebucket_to_binary.py` → `train_daisee_stress.py` | DaiSEE face crops → binary labels → CNN ensemble (.h5) |
+| `wesad_calibration.py` | WESAD LOSO (91.86%) → `calibrated_thresholds.json` (provenance) |
+| `lstm_preprocessing.py` / `train_lstm.py` | The failed pixel-LSTM (kept as the documented negative result) |
+| `train_meta_learner.py` | Learned fusion weights, LOSO over subjects → `../models/meta_learner.joblib` |
 
-| `app.py` | Streamlit web UI. Session control, calibration flow, live timeline, past-session viewer, context selector. |
+## Evaluation & analysis
 
-| `behavioral\\\\\\\_features.py` | MediaPipe FaceMesh + Pose engine. Extracts EAR, blink rate, brow tension, jaw tension, head instability, neck strain, slouch. v5 (smile fix + pose noise reduction). |
-
-| `stress\\\\\\\_fusion.py` | Three-branch weighted fusion (DaiSEE 0.20, Behavior 0.80, LSTM 0.0). Task-aware reweighting (4 modes). Temporal smoother. Hysteresis level. |
-
-| `session\\\\\\\_history.py` | SQLite persistence layer for completed sessions. Schema: `sessions` summary table + `samples` per-frame table. Auto-creates `../data/sessions.db`. |
-
-| `lstm\\\\\\\_temporal.py` | Real-time LSTM inference module. Returns `is\\\\\\\_available()=False` if model file absent (current state). Wired into fusion but disabled. |
-
-| `stress\\\\\\\_detector.py` | OpenCV alternative runner (no Streamlit dependency). |
-
-
-
-\### Training and preprocessing
-
-| File | Role |
-
+| Module | Role |
 |---|---|
+| `run_all_evaluations.py` | **Regenerates every reported number** into one timestamped file. Nothing is ever hand-transcribed |
+| `evaluate_video_file.py` | Full pipeline over video files (UBFC-Phys etc.): stress CSVs + per-frame feature traces + rPPG RGB traces, then the video is disposable |
+| `diagnose_features.py` | Per-signal discriminability (Cohen's d, saturation, inversion); can diff two runs |
+| `analyze_rppg.py` | GREEN/CHROM/POS heart-rate recovery vs BVP ground truth |
+| `correlate_physiology.py` | Stress index ↔ EDA correlation per subject/task |
+| `analyze_sessions.py` | Quick single-folder accuracy check (superseded by the harness) |
+| `evaluate_threshold_sweep.py` | DaiSEE decision-threshold sweep |
 
-| `daisee\\\\\\\_preprocessing.py` | Walks DaiSEE, extracts 16 face crops per clip, derives binary stress labels. |
+## Tests
 
-| `rebucket\\\\\\\_to\\\\\\\_binary.py` | Converts DaiSEE 3-class stress labels to binary (not\_stressed / stressed). |
-
-| `train\\\\\\\_daisee\\\\\\\_stress.py` | Trains MobileNetV2 + EfficientNetB0 on DaiSEE binary labels. Two-stage, class-weighted. |
-
-| `wesad\\\\\\\_calibration.py` | Loads all 15 WESAD subjects, runs LOSO CV, outputs calibrated thresholds JSON + report. |
-
-| `lstm\\\\\\\_preprocessing.py` | Builds sequence index from extracted face crops for LSTM training. |
-
-| `train\\\\\\\_lstm.py` | Trains CNN+LSTM temporal classifier (frozen MobileNet → LSTM → dense). |
-
-| `evaluate\\\\\\\_threshold\\\\\\\_sweep.py` | DaiSEE threshold sweep utility. |
-
-
-
-\### Evaluation
-
-| File | Role |
-
-|---|---|
-
-| `analyze\\\\\\\_sessions.py` | Aggregates labeled session CSVs (`relaxed\\\\\\\_\\\\\\\*.csv`, `stressed\\\\\\\_\\\\\\\*.csv`) into per-file and pooled accuracy reports + confusion matrix. |
-
-
-
-\### Deprecated (kept for documentation only)
-
-| File | Note |
-
-|---|---|
-
-| `train\\\\\\\_mobilenet.py` | FER2013 emotion classifier. A/B tested May 2 — including FER hurt accuracy (82.4% with FER vs 89.1% without). Removed from active pipeline. |
-
-| `train\\\\\\\_efficientnet.py` | Same as above. |
-
-
-
-\---
-
-
-
-\## Folder layout
-
-
-
+```bash
+python -m pytest tests -q        # from code/, or: python -m pytest code/tests from the root
 ```
 
-stress\\\\\\\_project/
-
-├── code/                      ← all .py files + README.md (this file)
-
-├── models/
-
-│   ├── daisee\\\\\\\_mobilenet\\\\\\\_stress.h5         ← in use
-
-│   ├── daisee\\\\\\\_efficientnet\\\\\\\_stress.h5      ← in use
-
-│   ├── calibrated\\\\\\\_thresholds.json         ← WESAD-derived
-
-│   └── (lstm\\\\\\\_stress.h5 not present — see Negative results below)
-
-├── datasets/
-
-│   ├── DaiSEE/                ← raw video clips
-
-│   ├── processed\\\\\\\_daisee/      ← extracted face crops + lstm\\\\\\\_index.pkl
-
-│   └── WESAD/                 ← physiological data
-
-├── data/
-
-│   └── sessions.db            ← SQLite session history (auto-created)
-
-├── evaluation\\\\\\\_data/
-
-│   ├── relaxed\\\\\\\_1.csv, relaxed\\\\\\\_2.csv, stressed\\\\\\\_1.csv, stressed\\\\\\\_2.csv
-
-│   └── baseline\\\\\\\_v1/           ← archived May-2 baseline CSVs (89.6% reference)
-
-└── BACKUP\\\\\\\_89.6\\\\\\\_percent/       ← safety backup of pre-task-aware code
-
-```
-
-
-
-\---
-
-
-
-\## How to run
-
-
-
-\### Prerequisites
-
-```
-
-\\\\- Windows 10/11
-
-\\\\- Python 3.11
-
-\\\\- Webcam
-
-```
-
-
-
-\### Install dependencies
-
-```
-
-pip install streamlit==1.30 tensorflow==2.15.0 mediapipe==0.10.14 protobuf==4.25.3 numpy==1.26.4 opencv-python scikit-learn pandas scipy
-
-```
-
-
-
-\### Run the live system
-
-```
-
-cd code
-
-streamlit run app.py
-
-```
-
-
-
-The browser opens automatically. Workflow:
-
-
-
-1\. \*\*Pick a context\*\* from the sidebar dropdown (Default / Studying / Hospital / Driving).
-
-2\. \*\*🎯 Calibrate\*\* — sit relaxed for 6 seconds. The system learns your personal baseline.
-
-3\. \*\*▶ Start\*\* — begin live monitoring.
-
-4\. Stress level updates in real time with a 60-frame smoother + 3-frame hysteresis.
-
-5\. \*\*⏸ Stop\*\* — auto-saves the session to the SQLite history DB.
-
-6\. \*\*👁 View\*\* any past session in the sidebar to replay its timeline.
-
-
-
-\### Run accuracy evaluation on saved CSVs
-
-```
-
-cd code
-
-python analyze\\\\\\\_sessions.py --dir ..\\\\\\\\evaluation\\\\\\\_data
-
-```
-
-The analyzer treats `relaxed\\\\\\\_\\\\\\\*.csv` files as ground truth = LOW and `stressed\\\\\\\_\\\\\\\*.csv` as ground truth = MODERATE/HIGH.
-
-
-
-\---
-
-
-
-\## Stress label derivation
-
-
-
-\### DaiSEE (training labels)
-
-DaiSEE provides four affect annotations (Engagement, Boredom, Confusion, Frustration), each on a 0–3 scale. We collapse these into a continuous stress score:
-
-
-
-```
-
-stress\\\\\\\_score = 0.45 \\\\\\\* (Frustration / 3)
-
-\\\&#x20;            + 0.30 \\\\\\\* (Confusion   / 3)
-
-\\\&#x20;            + 0.15 \\\\\\\* (1 - Engagement / 3)
-
-\\\&#x20;            + 0.10 \\\\\\\* (Boredom     / 3)
-
-```
-
-
-
-Frustration and confusion are the strongest predictors of cognitive stress in affective-computing literature. The score is then thresholded to a binary `not\\\\\\\_stressed` / `stressed` label for CNN training.
-
-
-
-\### Live runtime (inference cutoffs)
-
-| Range | Level |
-
-|---|---|
-
-| stress\_index < 0.36 | LOW |
-
-| 0.36 ≤ stress\_index < 0.55 | MODERATE |
-
-| stress\_index ≥ 0.55 | HIGH |
-
-
-
-Cutoffs are auto-loaded from `calibrated\\\\\\\_thresholds.json` (WESAD-derived) at startup.
-
-
-
-\---
-
-
-
-\## Task-aware context modes
-
-
-
-Each mode applies signal-specific multipliers to the base behavior weights, then renormalizes. Default mode uses 1.0× across all signals — mathematically identical to the un-modal baseline.
-
-
-
-| Signal | Default | Studying | Hospital | Driving |
-
-|---|---|---|---|---|
-
-| brow\_tension | 30% | 31% | \*\*33%\*\* | 22% |
-
-| jaw\_tension | 25% | 22% | \*\*28%\*\* | 22% |
-
-| blink\_stress | 15% | \*\*19%\*\* | 16% | 11% |
-
-| eye\_strain | 10% | \*\*13%\*\* | 7% | \*\*13%\*\* |
-
-| slouch | 10% | 12% | 7% | 11% |
-
-| neck\_strain | 5% | 6% | 4% | 5% |
-
-| head\_instability | 5% | 4% | 5% | \*\*6%\*\* |
-
-
-
-Bolded cells indicate where each mode diverges most from Default. Studying emphasizes screen-related fatigue (eye, blink) and desk posture (slouch, neck). Hospital emphasizes facial micro-expressions (brow, jaw) and restlessness (head). Driving emphasizes drowsiness signals (eye openness, head bobs) and slumping (slouch).
-
-
-
-\---
-
-
-
-\## Negative results (worth citing)
-
-
-
-\### FER2013 emotion branch — removed
-
-A/B evaluation on May 2 showed that adding the FER2013 emotion classifier to the fusion \*\*decreased\*\* live-system accuracy from 89.1% to 82.4%. The DaiSEE classifier already encodes emotion-relevant features, and the FER branch added noise rather than signal. FER scripts (`train\\\\\\\_mobilenet.py`, `train\\\\\\\_efficientnet.py`) are retained for reproducibility but disabled in the active pipeline.
-
-
-
-\### CNN+LSTM temporal branch — disabled
-
-A CNN+LSTM model (frozen MobileNetV2 → LSTM(64) → Dense) was trained on 5,356 DaiSEE sequences. Final test accuracy was 71.1%, which is \*\*below the trivial-majority-class baseline of 86.6%\*\* for DaiSEE's class distribution (\~6.4:1 not\_stressed:stressed). The model collapsed to predicting the majority class.
-
-
-
-Likely causes:
-
-1\. Frozen ImageNet features are not stress-discriminative.
-
-2\. DaiSEE's synthesized stress label is noisy.
-
-3\. Insufficient training data for end-to-end fine-tuning.
-
-
-
-The branch is wired into `stress\\\\\\\_fusion.py` with weight = 0.0 and `lstm\\\\\\\_temporal.py` returns `is\\\\\\\_available()=False` when the model file is absent. \*\*Recommended for future work:\*\* retrain on a face-emotion-labeled dataset such as AffectNet, AFEW-VA, or RAF-DB.
-
-
-
-\---
-
-
-
-\## Honest limitations
-
-
-
-1\. \*\*Dataset coverage.\*\* DaiSEE is an e-learning dataset (university students at desks). The model generalizes well to study/desk-work and clinical-seated contexts, but extrapolating to driving or outdoor contexts is unvalidated.
-
-2\. \*\*Ground truth.\*\* DaiSEE's "stress" label is derived from affect annotations, not biosignals. WESAD calibration partly closes this gap by anchoring decision boundaries to physiological data, but WESAD has no video and therefore cannot validate per-frame vision predictions.
-
-3\. \*\*Single-frame limitation.\*\* The CNN runs per-frame. Slow-building stress over minutes is partially captured by the temporal smoother but not modeled directly. A working LSTM (future work) would improve this.
-
-4\. \*\*Behavioral signal calibration.\*\* Personal baseline is critical. Reset baseline whenever the user, lighting, or camera position changes meaningfully.
-
-5\. \*\*Task-mode selection is user-driven.\*\* The system does not automatically detect context.
-
-
-
-\---
-
-
-
-\## Future work
-
-
-
-| Item | Notes |
-
-|---|---|
-
-| LSTM on face-emotion datasets | AffectNet / AFEW-VA / RAF-DB / FER+ have proper labels for posed-static stress expressions. |
-
-| Auto-detection of task context | Replace dropdown with classifier on user environment / posture. |
-
-| Mobile deployment | TFLite int8 quantization. |
-
-| Larger live-system evaluation | Current evaluation uses 4 CSVs (\~300 samples). Scaling to 50+ subjects would tighten confidence intervals. |
-
-| Multi-subject baseline robustness | All current testing was single-subject. Cross-subject validation is the next frontier. |
-
-
-
-\---
-
-
-
-\## Citations to include in the project paper
-
-
-
-> \\\\\\\*"Primary stress classification was trained on the DaiSEE dataset (Gupta et al., 2016), with binary stress labels derived from a weighted combination of frustration (0.45), confusion (0.30), inverse engagement (0.15), and boredom (0.10) annotations. Stress-level decision boundaries were independently calibrated against the WESAD physiological reference dataset (Schmidt et al., 2018), where a leave-one-subject-out classifier achieved 91.86% binary baseline-vs-stress accuracy."\\\\\\\*
-
-
-
-> \\\\\\\*"On a held-out evaluation set of N=176 samples (52 relaxed, 124 stressed), the live system achieved 98.9% overall classification accuracy in Default mode, with a relaxed→LOW recall of 100% and a stressed→MOD/HIGH recall of 98.4%. Task-aware reweighting maintained accuracy across context modes (Studying: 94.5% on N=293)."\\\\\\\*
-
-
-
-> \\\\\\\*"A CNN+LSTM temporal branch was evaluated but underperformed the trivial-majority-class baseline on DaiSEE's imbalanced label distribution and was disabled in the final system. Future work will retrain temporal modeling on face-emotion-labeled corpora."\\\\\\\*
-
+113+ tests. The load-bearing ones: Default-mode fusion equals the archived pre-task-aware
+implementation **exactly** (diff 0.00e+00); uncalibrated posture/blink behaviour is
+byte-identical to PP1; rPPG methods recover a synthetic pulse of known frequency; every
+default-off switch above leaves output unchanged.
+
+## History
+
+`_archive/` holds pre-SQLite and pre-task-aware snapshots, kept for the equivalence tests
+and provenance. Do not edit them — tests compare against them.

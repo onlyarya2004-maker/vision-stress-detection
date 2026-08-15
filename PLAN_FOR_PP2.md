@@ -242,6 +242,49 @@ outcome in the same honest style, positive or negative.
 
 ---
 
+## Status snapshot — 2026-08-16
+
+Checked line-by-line against the phases above. ✅ done · 🟡 partial · ❌ not started.
+
+| Phase | Part | Status |
+|---|---|---|
+| **0 (100%)** | 0.1 Repo + deps + GPU (git/LFS, requirements ×2, PyTorch sm_120) | ✅ |
+| | 0.2 Tests + harness + data fix (113 tests; CIs + session-level; relaxed_2 → 99.11% n=224) | ✅ |
+| | 0.3 Config centralization + honest thresholds + recording protocol/naming | ✅ |
+| **1 (~60%)** | 1.1 UBFC-Phys download | 🟡 s1–s5 of s15–20 target; loop = process → delete video → keep traces → next batch |
+| | 1.2 Offline video pipeline (media clock, feature dump, rPPG traces) | ✅ |
+| | 1.3 Cross-subject validation + calibration fixes (posture/blink/blink-rate) | ✅ for 5 subjects |
+| | 1.4 Stress-index ↔ EDA/BVP continuous correlation | 🟡 script built, first results in |
+| | 1.5 Team recordings + multi-user profiles | ❌ **user-gated — biggest blocker** |
+| **2 (~30%)** | 2.1 Feature-based temporal model (GRU/TCN) | ❌ |
+| | 2.2 rPPG branch (offline 3.52 bpm POS; live module, quality-gated, W_RPPG=0) | ✅ pending webcam validation |
+| | 2.3 PERCLOS for Driving | ❌ |
+| | 2.4 (Stretch) affect-pretrained pixel branch | ❌ |
+| | 2.5 Inference off the UI thread | ❌ |
+| **3 (~35%)** | 3.1 Self-report labeling loop in app | ✅ built 2026-08-16 |
+| | 3.2 Meta-learner fusion (trainer + LOSO + live integration, default-off) | 🟡 enable after own-data retrain |
+| | 3.3 Continual adaptation (retrain_from_sessions.py) | ❌ |
+| | 3.4 Uncertainty/abstention | 🟡 rPPG abstains; no UI "uncertain" state |
+| | 3.5 Intervention effectiveness tracking | ❌ |
+| **4 (~40%)** | 4.1 One regenerating script | 🟡 missing rows: DaiSEE re-run, learned-vs-hand-tuned, temporal old-vs-new |
+| | 4.2 Ablation table | ❌ |
+| | 4.3 Per-subject breakdown | 🟡 active for UBFC; team data absent |
+| | 4.4 UBFC correlation row in harness | 🟡 standalone script; fold into harness |
+| | 4.5 Frame + session metrics with Wilson CIs | ✅ |
+| **5 (~20%)** | 5.1 Analytics dashboard | ❌ |
+| | 5.2 PDF export | ❌ |
+| | 5.3 Ethics/privacy statement | ✅ root README |
+| | 5.4 Fix code/README.md false claims | ✅ rewritten 2026-08-16 |
+| | 5.5 Demo rehearsal | ❌ |
+
+Unplanned-but-done: personal-calibration fixes (posture baseline, relative blink threshold,
+calibrated blink rate) — found via 1.3, regression-tested.
+
+Next actions: (user) download s6–s10 · (user) team recordings · (code) temporal model 2.1,
+ablations 4.2, continual adaptation 3.3.
+
+---
+
 ## New features roadmap
 
 | # | Feature | Needs | Phase | Why there |
