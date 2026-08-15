@@ -111,6 +111,39 @@ TASK_MODES = {
 }
 
 # ===========================================================================
+# rPPG BRANCH (Phase 2) - heart rate from the camera
+# ===========================================================================
+# Heart rate is the strongest stress feature in this project's own WESAD
+# analysis (Cohen's d = +1.61, larger than every behavioural signal), and
+# until now it was the one strong signal the live system could not sense.
+#
+# Validated offline on UBFC-Phys, 15 traces vs Empatica E4 BVP:
+#     GREEN 16.57 bpm | CHROM 9.12 bpm | POS 3.52 bpm  mean absolute error
+#
+# W_RPPG = 0.0 DELIBERATELY. Those numbers come from a 1024x1024 MJPG camera
+# at 35fps. A laptop webcam is 640x480 and heavily compressed, and video
+# compression attacks exactly the sub-1% colour changes rPPG reads. There is
+# no evidence yet that it works on that hardware.
+#
+# The heart rate is still computed and DISPLAYED at zero weight, so it can be
+# checked against a finger on the wrist before anyone trusts it. Raise
+# W_RPPG (try 0.15-0.25) only after that check passes.
+W_RPPG = 0.0
+
+RPPG_ROI = 'cheek'               # cheeks beat forehead on UBFC-Phys
+RPPG_WINDOW_SECONDS = 12.0       # rolling analysis window
+RPPG_MIN_SECONDS = 8.0           # below this, no estimate is attempted
+RPPG_MIN_FPS = 12.0              # below this the cardiac band is unreliable
+RPPG_ESTIMATE_EVERY_N_FRAMES = 15  # the FFT is far too costly per frame
+RPPG_MIN_QUALITY = 0.35          # share of in-band power at the peak; motion
+                                 # smears the spectrum, so this is what makes
+                                 # the branch abstain while a user is talking
+RPPG_RESTING_SAMPLES = 5         # usable readings before a resting rate is set
+# WESAD: baseline 72.41 bpm vs stress 97.49 bpm, so ~25 bpm of elevation is
+# a full-scale response. This scale is measured, not invented.
+RPPG_STRESS_SCALE_BPM = 25.0
+
+# ===========================================================================
 # LEARNED FUSION (Phase 3)
 # ===========================================================================
 # Weights fitted from data rather than chosen. Measured on 5 UBFC-Phys

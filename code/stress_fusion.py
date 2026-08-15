@@ -73,6 +73,7 @@ _CAL = {
 W_DAISEE   = config.W_DAISEE
 W_BEHAVIOR = config.W_BEHAVIOR
 W_LSTM     = config.W_LSTM
+W_RPPG     = config.W_RPPG
 
 
 # ---------------- STARTUP STATUS ----------------
@@ -214,7 +215,8 @@ def behavioral_stress_score(features, task_mode='Default'):
 # ---------------- MAIN FUSION ----------------
 def compute_stress_index(daisee_probs, behavioral_features,
                          emotion_probs=None, emotion_class_names=None,
-                         lstm_score=None, task_mode='Default'):
+                         lstm_score=None, task_mode='Default',
+                         rppg_score=None):
     """
     daisee_probs:        ndarray (2,) softmax [not_stressed, stressed]; None if absent
     behavioral_features: dict from BehavioralFeatureEngine.extract()
@@ -239,6 +241,7 @@ def compute_stress_index(daisee_probs, behavioral_features,
             'emotion_stress': None, 'emotion_raw': None,   # kept for CSV compat
             'behavior_stress': beh_s,
             'lstm_stress': lstm_score,
+            'rppg_stress': rppg_score,
             'active_signals': 0, 'boost_applied': False,
             'contributions': beh_contribs, 'calibrating': True,
         }
@@ -248,14 +251,21 @@ def compute_stress_index(daisee_probs, behavioral_features,
     w_d = W_DAISEE if daisee_s is not None else 0.0
     w_b = W_BEHAVIOR
     w_l = W_LSTM if (lstm_score is not None and W_LSTM > 0.0) else 0.0
-    total_w = w_d + w_b + w_l
-    w_d, w_b, w_l = w_d / total_w, w_b / total_w, w_l / total_w
+    # rPPG abstains (None) whenever signal quality is poor - typically while
+    # the user is moving or talking - so its weight is redistributed rather
+    # than a motion artefact being fused in.
+    w_r = W_RPPG if (rppg_score is not None and W_RPPG > 0.0) else 0.0
+    total_w = w_d + w_b + w_l + w_r
+    w_d, w_b = w_d / total_w, w_b / total_w
+    w_l, w_r = w_l / total_w, w_r / total_w
 
     raw = w_b * beh_s
     if daisee_s is not None:
         raw += w_d * daisee_s
     if lstm_score is not None and W_LSTM > 0.0:
         raw += w_l * float(lstm_score)
+    if rppg_score is not None and W_RPPG > 0.0:
+        raw += w_r * float(rppg_score)
 
     active = sum(1 for v in beh_contribs.values() if v >= ACTIVE_SIGNAL_THRESHOLD)
     if daisee_s is not None and daisee_s >= DAISEE_ACTIVE_THRESHOLD:
@@ -272,6 +282,7 @@ def compute_stress_index(daisee_probs, behavioral_features,
         'emotion_raw':     None,
         'behavior_stress': beh_s,
         'lstm_stress':     lstm_score,
+        'rppg_stress':     rppg_score,
         'active_signals':  active,
         'boost_applied':   boost,
         'contributions':   beh_contribs,

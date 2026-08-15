@@ -32,6 +32,7 @@ from stress_fusion import (
 )
 from lstm_temporal import LSTMTemporalInference
 from app_naming import export_filename
+from rppg_live import get_live_rppg, reset_live_rppg
 import session_history
 import config
 
@@ -348,13 +349,17 @@ def render_features(contributions, top_n=4):
     return ''.join(cards_html)
 
 
-def render_tiles(blink_rate, ear_value):
+def render_tiles(blink_rate, ear_value, hr_text="--", hr_note=""):
+    """Third tile is the rPPG heart rate. Shown even when W_RPPG = 0, so the
+    reading can be checked against a wrist pulse before it is trusted."""
     return (
         f'<div class="vbsd-tile-row">'
         f'<div class="vbsd-tile"><div class="v">{blink_rate:.0f}</div>'
         f'<div class="l">Blinks / min</div></div>'
         f'<div class="vbsd-tile"><div class="v">{ear_value:.2f}</div>'
         f'<div class="l">Eye openness</div></div>'
+        f'<div class="vbsd-tile"><div class="v">{hr_text}</div>'
+        f'<div class="l">Heart rate{hr_note}</div></div>'
         f'</div>'
     )
 
@@ -779,6 +784,9 @@ def main():
         if lstm_inf.is_available():
             lstm_inf.reset()
 
+        rppg = get_live_rppg()
+        rppg.reset()
+
         last_daisee_probs = None
         frame_idx = 0
         last_timeline_update = 0.0
@@ -817,6 +825,12 @@ def main():
                     lstm_inf.add_frame(face_crop)
                     lstm_score = lstm_inf.predict()
 
+                # rPPG: cheap per frame (a couple of patch means). The heart
+                # rate is computed and shown even at W_RPPG = 0 so it can be
+                # sanity-checked against a wrist pulse before being trusted.
+                rppg.add_frame(time.time(), frame, face_mesh_results)
+                rppg_score = rppg.stress_score()
+
                 behavioral_features = engine.extract(rgb)
                 if behavioral_features is None:
                     frame_idx += 1
@@ -827,6 +841,7 @@ def main():
                     behavioral_features=behavioral_features,
                     lstm_score=lstm_score,
                     task_mode=st.session_state.task_mode,
+                    rppg_score=rppg_score,
                 )
                 smoothed = smoother.update(result['stress_index'])
                 level = hyst.update(smoothed)
@@ -855,10 +870,14 @@ def main():
                     render_features(result['contributions']),
                     unsafe_allow_html=True,
                 )
+                _hr, _q = rppg.estimate()
+                _hr_text = f"{_hr:.0f}" if _hr else "--"
+                _hr_note = " (bpm)" if _hr else ""
                 tiles_placeholder.markdown(
                     render_tiles(
                         blink_rate=behavioral_features.get('blinks_per_minute', 0.0),
                         ear_value=behavioral_features.get('ear', 0.0),
+                        hr_text=_hr_text, hr_note=_hr_note,
                     ),
                     unsafe_allow_html=True,
                 )
