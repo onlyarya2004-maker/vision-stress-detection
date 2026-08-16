@@ -1,10 +1,14 @@
 """
-Vision-Based Behavioral Stress Detection - Web UI (v7)
-======================================================
+Vision-Based Behavioral Stress Detection - Web UI (v8)
+=======================================================
 FER2013 emotion branch fully removed after A/B evaluation showed it hurt
 live-system accuracy. Active branches: DaiSEE CNN ensemble (re-centered
-against personal baseline) + behavioral feature engine. Calibrated
-against WESAD physiological reference.
+against personal baseline) + behavioral feature engine + rPPG + AI
+intervention agent. Calibrated against WESAD physiological reference.
+
+UI follows UI_DESIGN_BRIEF.md / the "Fixed Sidebars" concept selected from
+the generated mockups: fixed-height panels, no page scroll, near-black /
+blue / orange palette, zero emoji.
 
 Run:
     streamlit run app.py
@@ -70,180 +74,249 @@ GUIDANCE_TIPS = {
     ],
 }
 
+TASK_LABELS = {
+    'Default':  ('Default', 'GEN'),
+    'Studying': ('Studying', 'STU'),
+    'Hospital': ('Hospital', 'MED'),
+    'Driving':  ('Driving', 'DRV'),
+}
+
+AGENT_PHASES = ['warming', 'watching', 'showing', 'evaluating', 'cooldown']
+
 st.set_page_config(
     page_title="Vision-Based Behavioral Stress Detection",
-    page_icon="🧠", layout="wide", initial_sidebar_state="expanded",
+    page_icon="\U0001F9E0", layout="wide", initial_sidebar_state="expanded",
 )
 
 
+# =============================================================================
+# STYLE
+# =============================================================================
 def inject_css():
     st.markdown("""
     <style>
       :root {
-        --bg:#0B0F14; --surface:#121820; --surface2:#171F29;
-        --border:#232D3A; --border2:#2E3B4B;
-        --text:#E6EBF2; --dim:#8A96A8; --faint:#5C6878;
-        --blue:#2F6FED; --orange:#F5762B; --green:#2FBF71;
-        --red:#E5484D; --amber:#F5A623; --indigo:#7C8CF8;
+        --bg:#0B0F14; --panel:#10161D; --panel2:#141B23; --border:#1C2733;
+        --border2:#2E3B4B; --text:#E6EDF3; --sub:#8B98A5; --dim:#5B6772;
+        --blue:#2F6FED; --orange:#F5762B; --green:#22C55E; --amber:#F59E0B;
+        --red:#EF4444; --indigo:#7C8CF8;
+        --mono:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;
       }
       html, body, [data-testid="stAppViewContainer"] {
-        font-family:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif;
+        font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+        background:var(--bg);
       }
       #MainMenu, footer, [data-testid="stToolbar"], [data-testid="stDecoration"],
       [data-testid="stStatusWidget"], .stAppDeployButton { display:none !important; }
       [data-testid="stHeader"] { background:transparent; height:0; }
-      .block-container { padding-top:1.1rem; max-width:1250px; }
-      h3 { font-size:14px !important; font-weight:600 !important;
-           letter-spacing:.06em; text-transform:uppercase; color:var(--dim) !important; }
+      .block-container { padding-top:0.9rem; padding-bottom:1rem; max-width:1350px; }
+      section[data-testid="stSidebar"] { background:#0A0E13; border-right:1px solid var(--border); }
+      section[data-testid="stSidebar"] .block-container { padding-top:1rem; }
+      h3 { font-size:13px !important; font-weight:700 !important;
+           letter-spacing:.08em; text-transform:uppercase; color:var(--sub) !important; }
 
+      /* ---- native widgets restyled to match the console ---- */
       .stButton>button {
-        background:var(--surface2); color:var(--text);
-        border:1px solid var(--border2); border-radius:8px;
-        font-size:13px; font-weight:600; letter-spacing:.01em;
+        background:var(--panel2); color:var(--text);
+        border:1px solid var(--border2); border-radius:7px;
+        font-size:12.5px; font-weight:700; letter-spacing:.02em;
         padding:.45rem 1rem; transition:border-color .15s, background .15s;
       }
-      .stButton>button:hover { border-color:var(--blue); color:#fff; background:#1B2531; }
+      .stButton>button:hover { border-color:var(--blue); color:#fff; background:#182233; }
       .stButton>button[kind="primary"] { background:var(--blue); border-color:var(--blue); color:#fff; }
       .stButton>button[kind="primary"]:hover { background:#2861D6; border-color:#2861D6; }
-      .stButton>button:disabled { opacity:.4; }
+      .stButton>button:disabled { opacity:.35; }
+      div[data-testid="stSelectbox"] > div, .stTextInput input {
+        background:var(--panel2) !important; border-color:var(--border2) !important;
+        border-radius:6px !important; font-size:12.5px !important;
+      }
+      [data-testid="stExpander"] { background:var(--panel2); border:1px solid var(--border);
+                                    border-radius:8px; }
+      [data-testid="stExpander"] summary { font-size:10.5px; letter-spacing:.08em;
+                                            text-transform:uppercase; color:var(--sub); font-weight:700; }
+      hr { border-color:var(--border) !important; }
 
-      .sb-label, .vbsd-section-label, .sidebar-graph-label {
-        color:var(--faint); font-size:11px; font-weight:600;
-        text-transform:uppercase; letter-spacing:.09em; margin:2px 0 8px 0;
+      /* native bordered containers become our "panel" primitive */
+      div[data-testid="stVerticalBlockBorderWrapper"] {
+        background:var(--panel); border:1px solid var(--border) !important;
+        border-radius:10px;
       }
 
-      .vbsd-header {
-        background:linear-gradient(180deg,#101722 0%,#0D131C 100%);
-        border:1px solid var(--border); border-radius:12px;
-        padding:16px 22px; margin-bottom:14px;
-        display:flex; justify-content:space-between; align-items:center;
-      }
-      .vbsd-header-left { display:flex; align-items:center; gap:14px; }
-      .vbsd-icon {
-        width:40px; height:40px; border-radius:10px;
-        background:linear-gradient(135deg,#2F6FED 0%,#1B49B8 100%);
-        display:flex; align-items:center; justify-content:center;
-      }
-      .vbsd-title { color:var(--text); font-size:17px; font-weight:650; letter-spacing:-.01em; }
-      .vbsd-subtitle { color:var(--dim); font-size:12px; margin-top:2px; }
+      .label { font-size:10.5px; letter-spacing:.1em; text-transform:uppercase;
+               color:var(--sub); font-weight:700; margin-bottom:8px; }
+      .mono { font-family:var(--mono); font-variant-numeric:tabular-nums; }
 
-      .vbsd-badge {
-        display:inline-flex; align-items:center; gap:7px;
-        border:1px solid rgba(47,191,113,.35); color:var(--green);
-        background:rgba(47,191,113,.07);
-        padding:5px 12px; border-radius:999px;
-        font-size:11px; font-weight:700; letter-spacing:.08em;
-      }
-      .vbsd-badge.offline { border-color:var(--border2); color:var(--faint); background:transparent; }
-      .vbsd-badge.calibrating { border-color:rgba(47,111,237,.4); color:var(--blue); background:rgba(47,111,237,.07); }
-      .vbsd-badge .dot { width:7px; height:7px; border-radius:50%; background:currentColor;
-                         animation:pulse 2s infinite; }
-      @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:.35;} }
+      /* ---- header ---- */
+      .app-header { display:flex; align-items:center; gap:14px; padding:2px 4px 12px 4px;
+                    flex-wrap:wrap; }
+      .app-icon { width:36px; height:36px; border-radius:9px;
+                  background:linear-gradient(135deg,#2F6FED 0%,#1B49B8 100%);
+                  display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+      .app-title { color:var(--text); font-size:16px; font-weight:700; letter-spacing:-.01em; }
+      .app-subtitle { color:var(--dim); font-size:11.5px; margin-top:1px; }
+      .pill { display:inline-flex; align-items:center; gap:6px; font-size:11px;
+              font-weight:700; letter-spacing:.07em; padding:5px 11px; border-radius:20px;
+              border:1px solid; white-space:nowrap; }
+      .pill.dot::before { content:''; width:7px; height:7px; border-radius:50%;
+                          background:currentColor; box-shadow:0 0 8px currentColor;
+                          animation:pulse 1.8s infinite; }
+      .pill-live { color:var(--blue); border-color:#21335c; background:#132038; }
+      .pill-offline { color:var(--dim); border-color:var(--border2); background:var(--panel2); }
+      .pill-offline::before { display:none; }
+      .pill-calibrating { color:var(--amber); border-color:#5c4416; background:#241a08; }
+      .rec-tag { font-size:10px; font-weight:800; letter-spacing:.08em; color:var(--red);
+                 background:rgba(239,68,68,.12); border:1px solid rgba(239,68,68,.4);
+                 padding:4px 9px; border-radius:6px; }
+      .sess-title { font-size:12.5px; letter-spacing:.03em; color:var(--sub); font-weight:600;
+                    font-family:var(--mono); }
+      .chips { display:flex; gap:6px; margin-left:auto; align-items:center; flex-wrap:wrap; }
+      .ctx-label { font-size:9.5px; color:var(--dim); letter-spacing:.07em;
+                   text-transform:uppercase; margin-right:2px; }
+      .chip { font-size:10.5px; font-weight:700; letter-spacing:.03em; padding:5px 10px;
+              border-radius:6px; background:var(--panel2); border:1px solid var(--border);
+              color:var(--sub); }
+      .chip.on { color:#fff; border-color:var(--blue); background:#132038; }
+      .cal-pill { font-size:11px; font-weight:700; letter-spacing:.04em; display:inline-flex;
+                  align-items:center; gap:5px; padding:5px 10px; border-radius:20px; border:1px solid; }
+      .cal-pill.ok { color:var(--green); border-color:#1e4430; background:#0f2417; }
+      .cal-pill.warn { color:var(--amber); border-color:#5c4416; background:#241a08; }
 
-      .vbsd-live-tag {
-        display:inline-block; background:rgba(229,72,77,.12); color:var(--red);
-        border:1px solid rgba(229,72,77,.4);
-        padding:3px 10px; border-radius:6px; font-size:11px;
-        font-weight:700; letter-spacing:.08em; margin-bottom:6px;
-      }
-      .vbsd-live-tag.calibrating { background:rgba(47,111,237,.1); color:var(--blue);
-                                   border-color:rgba(47,111,237,.4); }
+      /* ---- calibration banner ---- */
+      .calib-banner { background:rgba(47,111,237,.06); border:1px solid rgba(47,111,237,.35);
+                      border-radius:10px; padding:12px 16px; margin-bottom:10px; }
+      .cb-title { color:var(--blue); font-size:12.5px; font-weight:700; margin-bottom:3px; }
+      .cb-body { color:var(--sub); font-size:12px; line-height:1.5; }
+      .cb-body .warn { color:var(--amber); font-weight:600; }
 
-      .vbsd-level-display { display:flex; align-items:center; gap:10px; margin-bottom:6px; }
-      .vbsd-level-dot { width:12px; height:12px; border-radius:50%; }
-      .vbsd-level-text { font-size:26px; font-weight:750; letter-spacing:.01em; }
-      .vbsd-stress-num { color:var(--dim); font-size:12px; margin-top:2px; }
-      .vbsd-stress-num strong { font-size:13px; }
+      /* ---- video panel ---- */
+      .vid-topbar { display:flex; gap:8px; padding:10px 12px 0 12px; }
+      .hr-chip { background:var(--panel2); border:1px solid var(--border); border-radius:7px;
+                 padding:5px 10px; font-size:11px; color:var(--sub); }
+      .hr-chip .v { font-family:var(--mono); font-weight:700; font-size:13px; color:var(--text); }
+      .level-block { margin:10px 12px 12px 12px; background:var(--panel2);
+                     border:1px solid var(--border); border-radius:10px; padding:14px 16px; }
+      .index-row { display:flex; align-items:baseline; gap:12px; margin-bottom:8px; }
+      .index-num { font-family:var(--mono); font-size:32px; font-weight:700; letter-spacing:-.02em; }
+      .level-tag { font-size:12.5px; font-weight:800; letter-spacing:.09em; }
+      .lvl-bar { height:7px; border-radius:5px; background:#0d1117; overflow:hidden;
+                 border:1px solid var(--border); }
+      .lvl-bar>i { display:block; height:100%; }
 
-      .vbsd-feature-card {
-        background:var(--surface); border:1px solid var(--border);
-        border-left:3px solid; border-radius:8px;
-        padding:8px 12px; margin-bottom:6px;
-        display:flex; align-items:center; gap:10px;
-      }
-      .vbsd-feature-icon {
-        width:34px; height:22px; border-radius:5px;
-        display:flex; align-items:center; justify-content:center;
-        font-size:9px; font-weight:800; letter-spacing:.06em;
-        font-family:Consolas,monospace; flex-shrink:0;
-      }
-      .vbsd-feature-text { flex:1; }
-      .vbsd-feature-text .fname { font-size:12.5px; font-weight:650; color:var(--text); }
-      .vbsd-feature-text .fdetail { font-size:11px; color:var(--faint); }
-      .vbsd-feature-val { font-family:Consolas,monospace; font-size:12px;
-                          color:var(--dim); font-weight:600; }
+      .idle-view, .calib-view { display:flex; flex-direction:column; align-items:center;
+                                justify-content:center; gap:14px; text-align:center;
+                                padding:36px 20px; min-height:260px; }
+      .idle-view .ot { color:var(--sub); font-size:13px; margin-top:2px; }
+      .idle-view .os { color:var(--dim); font-size:11.5px; }
+      .calib-ring { width:104px; height:104px; border-radius:50%; position:relative;
+                    display:flex; align-items:center; justify-content:center; }
+      .calib-ring::before { content:''; position:absolute; inset:6px; border-radius:50%;
+                            background:#0d1117; }
+      .calib-ring span { position:relative; font-family:var(--mono); font-size:19px;
+                         font-weight:700; color:var(--text); }
+      .calib-instr { max-width:360px; color:var(--sub); font-size:12px; line-height:1.6; }
+      .calib-instr b { color:var(--text); }
+      .calib-instr .warn { color:var(--amber); }
 
-      .vbsd-tile-row { display:flex; gap:8px; margin:10px 0; }
-      .vbsd-tile {
-        flex:1; background:var(--surface); border:1px solid var(--border);
-        border-radius:8px; padding:12px 8px; text-align:center;
-      }
-      .vbsd-tile .v { font-size:22px; font-weight:700; color:var(--text);
-                      font-variant-numeric:tabular-nums; }
-      .vbsd-tile .l { font-size:9.5px; color:var(--faint); margin-top:3px;
-                      text-transform:uppercase; letter-spacing:.07em; }
+      .face-status { font-size:12px; color:var(--amber); padding:8px 12px; }
 
-      .vbsd-guidance {
-        background:var(--surface); border:1px solid var(--border);
-        border-radius:10px; padding:14px; margin-top:8px;
-      }
-      .vbsd-guidance-title {
-        color:var(--dim); font-size:11px; font-weight:700;
-        text-transform:uppercase; letter-spacing:.09em; margin-bottom:8px;
-      }
-      .vbsd-guidance-sub { font-size:12.5px; font-weight:650; margin-bottom:6px; }
-      .vbsd-guidance-list { color:var(--dim); font-size:12px; margin:0;
-                            padding-left:0; list-style:none; }
-      .vbsd-guidance-list li { padding:3px 0 3px 16px; position:relative; }
-      .vbsd-guidance-list li::before { content:'\2013'; position:absolute; left:0;
-                                       color:var(--blue); }
+      /* ---- signals ---- */
+      .sig { display:flex; align-items:center; gap:10px; padding:7px 2px;
+             border-bottom:1px solid var(--border); }
+      .sig:last-child { border-bottom:none; }
+      .code { font-family:var(--mono); font-size:9.5px; font-weight:800;
+              background:var(--panel2); border:1px solid var(--border); border-radius:4px;
+              padding:3px 5px; width:32px; text-align:center; flex-shrink:0; }
+      .sig-mid { flex:1; min-width:0; }
+      .sig-name { font-size:11.5px; color:var(--text); font-weight:500; }
+      .sig-desc { font-size:9.5px; color:var(--dim); }
+      .sig-bar { height:4px; border-radius:3px; background:var(--panel2); margin-top:4px; overflow:hidden; }
+      .sig-bar>i { display:block; height:100%; }
+      .sig-val { font-family:var(--mono); font-size:12px; width:32px; text-align:right; flex-shrink:0; }
 
-      .calib-banner {
-        background:rgba(47,111,237,.06); border:1px solid rgba(47,111,237,.35);
-        border-radius:10px; padding:14px 16px; margin-bottom:10px;
-      }
-      .cb-title { color:var(--blue); font-size:13px; font-weight:700; margin-bottom:4px; }
-      .cb-body { color:var(--dim); font-size:12.5px; line-height:1.5; }
+      /* ---- metrics ---- */
+      .mtiles { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+      .mtile { background:var(--panel2); border:1px solid var(--border); border-radius:8px;
+               padding:10px; text-align:center; }
+      .mtile .v { font-family:var(--mono); font-size:19px; font-weight:700; color:var(--text); }
+      .mtile .l { font-size:9px; color:var(--dim); text-transform:uppercase;
+                  letter-spacing:.06em; margin-top:3px; }
 
-      .pill { display:inline-flex; align-items:center; gap:6px;
-              font-size:11px; font-weight:650; letter-spacing:.04em;
-              padding:3px 10px; border-radius:999px; border:1px solid; }
-      .pill .dot { width:6px; height:6px; border-radius:50%; background:currentColor; }
-      .pill.ok { color:var(--green); border-color:rgba(47,191,113,.35);
-                 background:rgba(47,191,113,.06); }
-      .pill.warn { color:var(--amber); border-color:rgba(245,166,35,.35);
-                   background:rgba(245,166,35,.06); }
+      /* ---- guidance ---- */
+      .glist { font-size:11.5px; color:var(--sub); line-height:1.75; }
+      .glist span { display:block; padding-left:14px; position:relative; }
+      .glist span::before { content:'\\2013'; position:absolute; left:0; color:var(--orange); }
+      .glist-sub { font-size:11px; font-weight:700; margin-bottom:6px; }
 
-      .sdot { display:inline-block; width:8px; height:8px; border-radius:50%;
-              margin-right:2px; }
-      .tag { display:inline-block; font-size:9px; font-weight:750; letter-spacing:.08em;
-             color:var(--faint); border:1px solid var(--border2);
-             padding:1px 6px; border-radius:4px; vertical-align:1px; }
-      .tag.active { color:var(--blue); border-color:rgba(47,111,237,.5); }
+      /* ---- sidebar: session list ---- */
+      .sess-row { display:flex; align-items:center; gap:8px; padding:8px 2px;
+                  border-bottom:1px solid var(--border); font-size:11px; }
+      .sess-row:last-child { border-bottom:none; }
+      .sdot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+      .sinfo { flex:1; min-width:0; }
+      .sinfo .t { color:var(--text); font-weight:600; }
+      .sinfo .m { color:var(--dim); font-size:10px; margin-top:1px; }
+      .tag { font-family:var(--mono); font-size:9px; font-weight:800; letter-spacing:.05em;
+             background:var(--panel2); border:1px solid var(--border2); padding:2px 5px;
+             border-radius:4px; color:var(--sub); vertical-align:1px; }
+      .tag.on { color:var(--blue); border-color:#21335c; }
+      .cal-check { display:inline-flex; align-items:center; gap:6px; font-size:11px;
+                   font-weight:700; padding:5px 10px; border-radius:20px; margin-bottom:10px; }
+      .cal-check.ok { color:var(--green); background:#0f2417; border:1px solid #1e4430; }
+      .cal-check.warn { color:var(--amber); background:#241a08; border:1px solid #5c4416; }
 
-      .agent-panel {
-        background:var(--surface); border:1px solid var(--border);
-        border-radius:10px; padding:12px 14px; margin:6px 0 8px 0;
-      }
-      .agent-panel.on { border-color:rgba(47,111,237,.45);
-        background:linear-gradient(180deg,rgba(47,111,237,.07),rgba(47,111,237,.02)); }
-      .agent-head { display:flex; align-items:center; gap:8px; }
-      .agent-led { width:9px; height:9px; border-radius:50%; background:var(--faint);
-                   flex-shrink:0; }
-      .agent-panel.on .agent-led { background:var(--blue);
-                                   box-shadow:0 0 8px rgba(47,111,237,.9);
-                                   animation:pulse 2s infinite; }
-      .agent-name { color:var(--text); font-size:12px; font-weight:700; letter-spacing:.05em; }
-      .agent-state { margin-left:auto; font-size:10px; font-weight:750;
-                     letter-spacing:.08em; color:var(--faint); }
-      .agent-panel.on .agent-state { color:var(--blue); }
-      .agent-desc { color:var(--faint); font-size:11px; margin-top:6px; line-height:1.45; }
-      .agent-mem { color:var(--dim); font-size:11px; margin-top:6px;
-                   border-top:1px solid var(--border); padding-top:6px; }
+      /* ---- agent panel ---- */
+      .agent-wrap { padding:2px; }
+      .agent-top { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+      .agent-name { font-weight:800; font-size:11.5px; letter-spacing:.04em; color:var(--text); }
+      .state-pill { margin-left:auto; font-size:9.5px; font-weight:800; letter-spacing:.06em;
+                    padding:3px 9px; border-radius:12px; border:1px solid; }
+      .state-pill.active { color:var(--green); border-color:#1e4430; background:#0f2417; }
+      .state-pill.standby { color:var(--dim); border-color:var(--border2); background:var(--panel2); }
+      .agent-desc { font-size:10.5px; color:var(--sub); line-height:1.45; margin-bottom:10px; }
+
+      .agent-core-row { display:flex; align-items:center; gap:10px; margin-bottom:9px;
+                        padding:8px 10px; background:var(--panel2); border:1px solid var(--border);
+                        border-radius:10px; }
+      .agent-core { width:38px; height:38px; border-radius:50%; position:relative;
+                    flex-shrink:0; display:flex; align-items:center; justify-content:center; }
+      .agent-core::before { content:''; position:absolute; inset:0; border-radius:50%;
+                            background:conic-gradient(from 0deg,var(--blue),#0d1117 40%,var(--blue) 80%,#0d1117);
+                            animation:spin 3.2s linear infinite; }
+      .agent-core::after { content:''; position:absolute; inset:3px; border-radius:50%; background:#0d1117; }
+      .agent-core svg { position:relative; z-index:2; width:15px; height:15px; stroke:var(--blue); }
+      .agent-core-row.off .agent-core::before { animation:none; background:#1C2733; }
+      .agent-core-row.off .agent-core svg { stroke:var(--dim); }
+      .agent-core-label .t { font-size:10.5px; font-weight:700; color:var(--text); }
+      .agent-core-row.off .agent-core-label .t { color:var(--dim); }
+      .agent-core-label .s { font-size:9.5px; color:var(--dim); margin-top:1px; }
+      @keyframes spin { to { transform:rotate(360deg); } }
+      @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
+
+      .mem { font-size:10px; color:var(--text); background:var(--panel2);
+             border:1px solid var(--border); border-radius:6px; padding:6px 9px; margin-bottom:8px; }
+      .mem b { color:var(--orange); }
+      .phases { display:flex; gap:4px; flex-wrap:wrap; margin-bottom:6px; }
+      .phase { font-size:8.5px; letter-spacing:.04em; font-weight:700; padding:4px 6px;
+               border-radius:5px; background:var(--panel2); border:1px solid var(--border);
+               color:var(--dim); text-transform:uppercase; }
+      .phase.cur { background:#3a2312; border-color:var(--orange); color:var(--orange); }
+      .phase-reason { font-size:10px; color:var(--sub); }
+
+      .intervention-card { background:rgba(245,118,43,.08); border:1px solid rgba(245,118,43,.45);
+                           border-radius:10px; padding:12px 16px; margin:0 0 10px 0; }
+      .intervention-card .tag-lbl { color:var(--orange); font-size:10px; font-weight:800;
+                                    letter-spacing:.09em; margin-bottom:3px; }
+      .intervention-card .ttl { color:var(--text); font-weight:700; font-size:14px; }
+      .intervention-card .body { color:var(--sub); font-size:12px; margin-top:4px; }
+
+      .del-btn button { color:#F87171 !important; }
     </style>
     """, unsafe_allow_html=True)
 
 
+# =============================================================================
+# MODEL / ENGINE LOADING
+# =============================================================================
 @st.cache_resource(show_spinner="Loading models...")
 def load_models():
     """Load only the active live-system models (DaiSEE ensemble)."""
@@ -272,6 +345,9 @@ def get_lstm_inference():
     return LSTMTemporalInference()
 
 
+# =============================================================================
+# VISION HELPERS
+# =============================================================================
 def crop_face(frame_bgr, face_mesh_results):
     if not face_mesh_results.multi_face_landmarks:
         return None, None
@@ -310,24 +386,34 @@ def ensemble_predict(face_bgr, model_pairs):
 
 def annotate_frame(frame_bgr, bbox, level, smoothed_index, calibrating=False):
     if calibrating:
-        color = (255, 200, 0); label = "CALIBRATING"
+        color = (237, 158, 47); label = "CALIBRATING"     # amber, BGR
     else:
-        color = {'LOW': (0, 200, 0), 'MODERATE': (0, 200, 255),
-                 'HIGH': (0, 0, 255)}[level]
+        color = {'LOW': (34, 197, 34), 'MODERATE': (0, 158, 245),
+                 'HIGH': (68, 68, 239)}[level]              # BGR of green/amber/red
         label = f"{level} ({smoothed_index*100:.0f}%)"
     if bbox is not None:
         x1, y1, x2, y2 = bbox
         cv2.rectangle(frame_bgr, (x1, y1), (x2, y2), color, 2)
+        corner = 14
+        for (cx, cy, dx, dy) in ((x1, y1, 1, 1), (x2, y2, -1, -1)):
+            cv2.line(frame_bgr, (cx, cy), (cx + dx * corner, cy), color, 3)
+            cv2.line(frame_bgr, (cx, cy), (cx, cy + dy * corner), color, 3)
     cv2.putText(frame_bgr, label, (15, 30),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
 
 
-def render_mini_graph(values, height=120, width=260):
+# =============================================================================
+# RENDER HELPERS
+# =============================================================================
+LEVEL_COLORS = {'LOW': '#22C55E', 'MODERATE': '#F59E0B', 'HIGH': '#EF4444'}
+
+
+def render_mini_graph(values, height=110, width=250):
     if len(values) < 2:
         return (
             f'<svg viewBox="0 0 {width} {height}" '
-            f'style="width:100%;height:{height}px;background:#121820;border-radius:8px;">'
-            f'<text x="{width/2}" y="{height/2}" font-size="11" fill="#5C6878" '
+            f'style="width:100%;height:{height}px;background:#141B23;border-radius:8px;">'
+            f'<text x="{width/2}" y="{height/2}" font-size="11" fill="#5B6772" '
             f'text-anchor="middle">waiting for data...</text></svg>'
         )
     pad = 8
@@ -338,114 +424,196 @@ def render_mini_graph(values, height=120, width=260):
     area_pts = (f"{pad},{height-pad} " + pts + f" {x_of(n-1):.1f},{height-pad}")
     return (
         f'<svg viewBox="0 0 {width} {height}" '
-        f'style="width:100%;height:{height}px;background:#121820;border-radius:8px;">'
+        f'style="width:100%;height:{height}px;background:#141B23;border-radius:8px;">'
         f'<polygon points="{area_pts}" fill="rgba(245,118,43,0.15)"/>'
         f'<polyline points="{pts}" fill="none" stroke="#F5762B" stroke-width="2"/>'
         f'</svg>'
     )
 
 
-def render_full_timeline(history, height=240):
-    """3-line timeline: stress_index, daisee, behavior. (No emotion line.)"""
+def render_full_timeline(history, height=150):
+    """3-line timeline: stress_index, daisee, behavior."""
     if len(history) < 2:
         return ""
-    width = 700
-    pad = 30
+    width = 1000
+    pad = 26
     n = len(history)
     def x_of(i): return pad + (i / max(n - 1, 1)) * (width - 2 * pad)
     def y_of(v): return height - pad - v * (height - 2 * pad)
     series = {
-        'stress_index': '#F5762B',
-        'daisee':       '#2F6FED',
-        'behavior':     '#2FBF71',
+        'Stress index': '#F5762B',
+        'CNN branch':   '#2F6FED',
+        'Behavioral branch': '#7C8B99',
     }
+    keymap = {'Stress index': 'stress_index', 'CNN branch': 'daisee',
+              'Behavioral branch': 'behavior'}
     paths = []
-    for key, color in series.items():
+    for label, color in series.items():
+        key = keymap[label]
         pts = " ".join(f"{x_of(i):.1f},{y_of(rec[key]):.1f}"
                        for i, rec in enumerate(history))
-        paths.append(f'<polyline points="{pts}" fill="none" stroke="{color}" stroke-width="2"/>')
-    axes = (
-        f'<line x1="{pad}" y1="{height-pad}" x2="{width-pad}" y2="{height-pad}" stroke="#232D3A" stroke-width="1"/>'
-        f'<line x1="{pad}" y1="{pad}" x2="{pad}" y2="{height-pad}" stroke="#232D3A" stroke-width="1"/>'
-        f'<text x="6" y="{pad+5}" font-size="10" fill="#8A96A8">1.0</text>'
-        f'<text x="6" y="{height-pad+3}" font-size="10" fill="#8A96A8">0.0</text>'
-    )
-    legend = []
-    for i, (key, color) in enumerate(series.items()):
-        x = pad + i * 120
-        legend.append(
-            f'<rect x="{x}" y="6" width="10" height="10" fill="{color}"/>'
-            f'<text x="{x+14}" y="15" font-size="11" fill="#B7C1CF">{key}</text>'
-        )
-    return (
-        f'<svg viewBox="0 0 {width} {height}" style="width:100%;height:auto;'
-        f'background:#121820;border-radius:10px;border:1px solid #232D3A;">'
-        f'{axes}{"".join(paths)}{"".join(legend)}</svg>'
-    )
+        width_px = "2.5" if key == 'stress_index' else "1.6"
+        paths.append(f'<polyline points="{pts}" fill="none" stroke="{color}" '
+                     f'stroke-width="{width_px}"/>')
+    gridlines = "".join(
+        f'<line x1="0" y1="{height*f:.0f}" x2="{width}" y2="{height*f:.0f}" '
+        f'stroke="#1C2733"/>' for f in (0.25, 0.5, 0.75))
+    return f'<svg viewBox="0 0 {width} {height}" preserveAspectRatio="none" ' \
+           f'style="width:100%;height:{height}px;display:block;">{gridlines}{"".join(paths)}</svg>'
+
+
+TIMELINE_LEGEND = (
+    '<div style="display:flex;gap:16px;font-size:10.5px;color:#8B98A5;margin-bottom:6px;">'
+    '<span><i style="display:inline-block;width:10px;height:2px;background:#F5762B;'
+    'margin-right:5px;vertical-align:middle;"></i>Stress index</span>'
+    '<span><i style="display:inline-block;width:10px;height:2px;background:#2F6FED;'
+    'margin-right:5px;vertical-align:middle;"></i>CNN branch</span>'
+    '<span><i style="display:inline-block;width:10px;height:2px;background:#7C8B99;'
+    'margin-right:5px;vertical-align:middle;"></i>Behavioral branch</span>'
+    '</div>'
+)
 
 
 SIGNAL_DISPLAY = {
-    'eye_strain':       ("EYE", "#F5A623", "Eye strain",    "Sustained eyelid closure"),
-    'blink_stress':     ("BLK", "#2FBF71", "Blink rate",    "Elevated blink frequency"),
-    'brow_tension':     ("BRW", "#E5484D", "Brow tension",  "Furrowed brow"),
-    'jaw_tension':      ("JAW", "#F5762B", "Jaw tension",   "Clench / grimace"),
-    'head_instability': ("MOV", "#7C8CF8", "Head movement", "Restless motion"),
-    'neck_strain':      ("NCK", "#7C8CF8", "Neck strain",   "Forward head posture"),
-    'slouch':           ("PST", "#7C8CF8", "Posture",       "Slouching detected"),
+    'jaw_tension':      ("JAW", "Jaw tension",   "Clench / grimace"),
+    'brow_tension':     ("BRW", "Brow tension",  "Furrow / contraction"),
+    'slouch':           ("PST", "Posture",       "Spinal deviation"),
+    'eye_strain':       ("EYE", "Eye strain",    "Openness + squint"),
+    'neck_strain':      ("NCK", "Neck strain",   "Forward head position"),
+    'blink_stress':     ("BLK", "Blink rate",    "Deviation from baseline"),
+    'head_instability': ("MOV", "Head movement", "Fidget / restlessness"),
 }
 
 
-def render_features(contributions, top_n=4):
-    sorted_signals = sorted(contributions.items(), key=lambda kv: kv[1], reverse=True)
-    cards_html = []
-    for name, value in sorted_signals[:top_n]:
-        icon, color, label, detail = SIGNAL_DISPLAY.get(name, ("•", "#232D3A", name, ""))
-        if value >= 0.7:   border = "#E5484D"
-        elif value >= 0.4: border = "#F5A623"
-        elif value >= 0.2: border = "#2FBF71"
-        else:              border = "#232D3A"
-        cards_html.append(
-            f'<div class="vbsd-feature-card" style="border-left-color:{border};">'
-            f'<div class="vbsd-feature-icon" style="background:{color}1F;color:{color};">{icon}</div>'
-            f'<div class="vbsd-feature-text">'
-            f'  <div class="fname">{label}</div>'
-            f'  <div class="fdetail">{detail}</div>'
-            f'</div>'
-            f'<div class="vbsd-feature-val">{value:.2f}</div>'
+def _severity_color(value):
+    if value >= 0.6:  return '#EF4444'
+    if value >= 0.4:  return '#F5762B'
+    if value >= 0.2:  return '#2F6FED'
+    return '#3a4552'
+
+
+def render_signal_rows(contributions):
+    rows = []
+    for name, value in sorted(contributions.items(), key=lambda kv: kv[1], reverse=True):
+        code, label, detail = SIGNAL_DISPLAY.get(name, (name[:3].upper(), name, ""))
+        color = _severity_color(value)
+        pct = max(0, min(100, value * 100))
+        rows.append(
+            f'<div class="sig">'
+            f'<span class="code" style="color:{color};border-color:{color}55;">{code}</span>'
+            f'<div class="sig-mid"><div class="sig-name">{label}</div>'
+            f'<div class="sig-desc">{detail}</div>'
+            f'<div class="sig-bar"><i style="width:{pct:.0f}%;background:{color};"></i></div></div>'
+            f'<span class="sig-val mono" style="color:{color};">{value:.2f}</span>'
             f'</div>'
         )
-    return ''.join(cards_html)
+    return ''.join(rows)
 
 
-def render_tiles(blink_rate, ear_value, hr_text="--", hr_note=""):
-    """Third tile is the rPPG heart rate. Shown even when W_RPPG = 0, so the
-    reading can be checked against a wrist pulse before it is trusted."""
+def render_tiles(blink_rate, ear_value, hr_text="--"):
     return (
-        f'<div class="vbsd-tile-row">'
-        f'<div class="vbsd-tile"><div class="v">{blink_rate:.0f}</div>'
-        f'<div class="l">Blinks / min</div></div>'
-        f'<div class="vbsd-tile"><div class="v">{ear_value:.2f}</div>'
-        f'<div class="l">Eye openness</div></div>'
-        f'<div class="vbsd-tile"><div class="v">{hr_text}</div>'
-        f'<div class="l">Heart rate{hr_note}</div></div>'
+        f'<div class="mtiles">'
+        f'<div class="mtile"><div class="v">{blink_rate:.0f}</div><div class="l">Blinks/min</div></div>'
+        f'<div class="mtile"><div class="v">{ear_value:.2f}</div><div class="l">Eye open</div></div>'
+        f'<div class="mtile"><div class="v">{hr_text}</div><div class="l">HR bpm</div></div>'
         f'</div>'
     )
 
 
 def render_guidance(level):
     level_labels = {
-        'LOW':      ('Stay relaxed:',          '#2FBF71'),
-        'MODERATE': ('How to reduce stress:',  '#F5A623'),
-        'HIGH':     ('Recommended right now:', '#E5484D'),
+        'LOW':      ('Stay relaxed', '#22C55E'),
+        'MODERATE': ('Reduce stress', '#F59E0B'),
+        'HIGH':     ('Act now', '#EF4444'),
     }
     sub_label, sub_color = level_labels[level]
-    items = ''.join(f'<li>{tip}</li>' for tip in GUIDANCE_TIPS[level])
+    items = ''.join(f'<span>{tip}</span>' for tip in GUIDANCE_TIPS[level])
     return (
-        f'<div class="vbsd-guidance">'
-        f'  <div class="vbsd-guidance-title">Guidance</div>'
-        f'  <div class="vbsd-guidance-sub" style="color:{sub_color};">{sub_label}</div>'
-        f'  <ul class="vbsd-guidance-list">{items}</ul>'
+        f'<div class="glist-sub" style="color:{sub_color};">{sub_label}</div>'
+        f'<div class="glist">{items}</div>'
+    )
+
+
+def render_video_topbar(hr_text, ear_value):
+    return (
+        f'<div class="vid-topbar">'
+        f'<span class="hr-chip">HR <span class="v mono">{hr_text}</span> bpm</span>'
+        f'<span class="hr-chip">Eye open <span class="v mono">{ear_value:.2f}</span></span>'
         f'</div>'
+    )
+
+
+def render_level_block(level, smoothed):
+    color = LEVEL_COLORS[level]
+    pct = max(0.0, min(1.0, smoothed)) * 100
+    return (
+        f'<div class="level-block">'
+        f'<div class="index-row"><span class="index-num mono">{smoothed:.2f}</span>'
+        f'<span class="level-tag" style="color:{color};">{level}</span></div>'
+        f'<div class="lvl-bar"><i style="width:{pct:.0f}%;'
+        f'background:linear-gradient(90deg,#22C55E,{color});"></i></div>'
+        f'</div>'
+    )
+
+
+def render_calib_ring(progress, seconds_left):
+    deg = max(0, min(100, progress * 100))
+    return (
+        f'<div class="calib-view">'
+        f'<div class="calib-ring" style="background:conic-gradient(#2F6FED {deg:.0f}%, #1C2733 0);">'
+        f'<span>{deg:.0f}%</span></div>'
+        f'<div class="calib-instr"><b>Personal baseline calibration &mdash; {CALIBRATION_SECONDS}s</b><br>'
+        f'Sit naturally with a relaxed, neutral expression. Look at the camera and breathe '
+        f'normally &mdash; <span class="warn">do not smile</span>: a smiling baseline skews the '
+        f'jaw and brow signals for the whole session. {seconds_left:.0f}s remaining.</div>'
+        f'</div>'
+    )
+
+
+IDLE_SVG = (
+    '<svg viewBox="0 0 24 24" width="42" height="42" fill="none" stroke="#5B6772" '
+    'stroke-width="1.6"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" '
+    'height="14" rx="2"/></svg>'
+)
+
+
+def render_idle_view():
+    return (
+        f'<div class="idle-view">{IDLE_SVG}'
+        f'<div class="ot">Camera off</div>'
+        f'<div class="os">Press Calibrate, then Start, to begin a session</div></div>'
+    )
+
+
+def render_agent_core(active):
+    off = "" if active else "off"
+    label = "Agent engaged" if active else "Agent powered down"
+    sub = "Monitoring all seven signals" if active else "Interventions and learning paused"
+    return (
+        f'<div class="agent-core-row {off}">'
+        f'<div class="agent-core"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" '
+        f'stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8'
+        f'M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8"/>'
+        f'<circle cx="12" cy="12" r="3"/></svg></div>'
+        f'<div class="agent-core-label"><div class="t">{label}</div><div class="s">{sub}</div></div>'
+        f'</div>'
+    )
+
+
+def render_agent_phases(current_phase, reason):
+    chips = ''.join(
+        f'<span class="phase{" cur" if p == current_phase else ""}">{p}</span>'
+        for p in AGENT_PHASES
+    )
+    return f'<div class="phases">{chips}</div><div class="phase-reason">{reason}</div>'
+
+
+def render_intervention_card(title, body):
+    return (
+        f'<div class="intervention-card">'
+        f'<div class="tag-lbl">AI INTERVENTION</div>'
+        f'<div class="ttl">{title}</div>'
+        f'<div class="body">{body}</div></div>'
     )
 
 
@@ -480,11 +648,15 @@ def init_state():
     if 'condition' not in st.session_state: st.session_state.condition = 'unlabeled'
     if 'pending_self_report' not in st.session_state: st.session_state.pending_self_report = None
     if 'agent_enabled' not in st.session_state: st.session_state.agent_enabled = True
+    if 'session_count' not in st.session_state: st.session_state.session_count = 0
     if 'db_initialized' not in st.session_state:
         session_history.init_db()
         st.session_state.db_initialized = True
 
 
+# =============================================================================
+# MAIN
+# =============================================================================
 def main():
     init_state()
     inject_css()
@@ -493,32 +665,26 @@ def main():
     engine = get_feature_engine()
     lstm_inf = get_lstm_inference()
 
+    is_fully_calibrated = engine.baseline.calibrated and is_daisee_calibrated()
+
     # ---------- Sidebar ----------
     with st.sidebar:
-        st.markdown('<div class="sidebar-graph-label">LIVE STRESS</div>',
-                    unsafe_allow_html=True)
+        st.markdown('<div class="label">Live stress</div>', unsafe_allow_html=True)
         sidebar_graph_placeholder = st.empty()
-        sidebar_graph_placeholder.markdown(render_mini_graph([]),
-                                           unsafe_allow_html=True)
+        sidebar_graph_placeholder.markdown(render_mini_graph([]), unsafe_allow_html=True)
 
         st.divider()
-        st.markdown('<div class="sb-label">Session control</div>', unsafe_allow_html=True)
-
-        is_fully_calibrated = engine.baseline.calibrated and is_daisee_calibrated()
+        st.markdown('<div class="label">Session control</div>', unsafe_allow_html=True)
         if is_fully_calibrated:
-            st.markdown('<span class="pill ok"><span class="dot"></span>Calibrated</span>', unsafe_allow_html=True)
+            st.markdown('<span class="cal-check ok">&#10003; CALIBRATED</span>',
+                        unsafe_allow_html=True)
         else:
-            st.markdown('<span class="pill warn"><span class="dot"></span>Not calibrated</span>', unsafe_allow_html=True)
+            st.markdown('<span class="cal-check warn">&#9679; NOT CALIBRATED</span>',
+                        unsafe_allow_html=True)
 
         # ---------- Context selector ----------
         # Reweights behavioral signals to emphasize what matters most in
-        # the chosen context. 'Default' preserves the un-modal 89.6% baseline.
-        _task_labels = {
-            'Default':  'Default (general)',
-            'Studying': 'Studying',
-            'Hospital': 'Hospital / medical',
-            'Driving':  'Driving',
-        }
+        # the chosen context. 'Default' preserves the un-modal baseline.
         _current_idx = (
             VALID_TASK_MODES.index(st.session_state.task_mode)
             if st.session_state.task_mode in VALID_TASK_MODES else 0
@@ -526,44 +692,74 @@ def main():
         _selected_task = st.selectbox(
             "Context",
             options=VALID_TASK_MODES,
-            format_func=lambda x: _task_labels.get(x, x),
+            format_func=lambda x: TASK_LABELS.get(x, (x, x))[0],
             index=_current_idx,
             disabled=st.session_state.running or st.session_state.calibrating,
-            help="Reweights stress signals for the chosen context. "
-                 "'Default' is the un-modal 89.6% baseline. Other modes "
-                 "emphasize signals most diagnostic of stress in that context.",
+            help="Reweights stress signals for the chosen context. 'Default' "
+                 "is the un-modal baseline. Other modes emphasize signals "
+                 "most diagnostic of stress in that context.",
             key="task_select",
         )
         if _selected_task != st.session_state.task_mode:
             st.session_state.task_mode = _selected_task
 
-        # ---------- AI Intervention Agent ----------
-        # A real switch: when off, the agent's decision loop does not run at
-        # all. Disabled mid-session (like every other control) so the
-        # capture loop is not interrupted.
-        _on = st.session_state.agent_enabled
-        try:
-            from intervention_agent import InterventionAgent as _IA
-            _mem = _IA(stats=session_history.intervention_stats()).learned_summary()
-        except Exception:
-            _mem = "learning memory unavailable"
-        st.markdown(
-            f'<div class="agent-panel {"on" if _on else ""}">'
-            f'<div class="agent-head"><span class="agent-led"></span>'
-            f'<span class="agent-name">AI INTERVENTION AGENT</span>'
-            f'<span class="agent-state">{"ACTIVE" if _on else "STANDBY"}</span></div>'
-            f'<div class="agent-desc">Watches all seven stress signals, decides when an '
-            f'interruption is worth it, targets the signal driving the stress, then '
-            f'measures whether it helped and learns what works for you. '
-            f'Runs entirely on this device.</div>'
-            f'<div class="agent-mem">{_mem}</div></div>',
-            unsafe_allow_html=True,
-        )
-        if st.button("Deactivate agent" if _on else "Activate agent",
-                     width='stretch', key="agent_btn",
-                     disabled=st.session_state.running or st.session_state.calibrating):
-            st.session_state.agent_enabled = not _on
+        col_a, col_b = st.columns(2)
+        with col_a:
+            if st.button("Calibrate", width='stretch',
+                         disabled=st.session_state.running or st.session_state.calibrating,
+                         help=f"Sit naturally for {CALIBRATION_SECONDS} seconds. "
+                              f"System learns your personal baseline."):
+                st.session_state.calibrating = True
+                st.session_state.viewing_session_id = None
+                st.session_state.viewing_session_label = None
+                st.rerun()
+        with col_b:
+            if st.button("Start", type="primary", width='stretch',
+                         disabled=st.session_state.running or st.session_state.calibrating):
+                st.session_state.running = True
+                st.session_state.session_start = datetime.now()
+                st.session_state.history = []
+                st.session_state.viewing_session_id = None
+                st.session_state.viewing_session_label = None
+                st.session_state.session_count += 1
+                st.rerun()
+
+        if st.button("Stop", width='stretch',
+                     disabled=not (st.session_state.running or st.session_state.calibrating)):
+            st.session_state.running = False
+            st.session_state.calibrating = False
+            engine._calibrating = False
+            # Persist the just-ended session to the local DB
+            if st.session_state.history:
+                try:
+                    _sid = session_history.save_session(
+                        st.session_state.history,
+                        task_mode=st.session_state.task_mode,
+                    )
+                    # Queue the self-report prompt for this session. The
+                    # user's answer - not the system's prediction - is the
+                    # ground-truth label the adaptation loop trains on.
+                    st.session_state.pending_self_report = _sid
+                    _ivlog = st.session_state.pop('pending_interventions', [])
+                    if _ivlog:
+                        session_history.log_interventions(_sid, _ivlog)
+                except Exception as e:
+                    st.warning(f"Could not save session to history DB: {e}")
             st.rerun()
+
+        col_c, col_d = st.columns(2)
+        with col_c:
+            if st.button("Clear view", width='stretch',
+                         help="Clears the on-screen timeline. Saved sessions in the DB are not affected."):
+                st.session_state.history = []
+                st.session_state.viewing_session_id = None
+                st.session_state.viewing_session_label = None
+                st.rerun()
+        with col_d:
+            if st.button("Reset baseline", width='stretch'):
+                engine.reset_baseline()
+                reset_daisee_baseline()
+                st.rerun()
 
         # ---------- Recording labels ----------
         # Set BEFORE recording; these are baked into the export filename so
@@ -590,64 +786,38 @@ def main():
                 st.caption("Unlabelled — set both fields or this recording "
                            "will not be picked up by the evaluation harness.")
 
-        col_a, col_b = st.columns(2)
-        with col_a:
-            if st.button("Calibrate", width='stretch',
-                         disabled=st.session_state.running or st.session_state.calibrating,
-                         help=f"Sit naturally for {CALIBRATION_SECONDS} seconds. "
-                              f"System learns your personal baseline."):
-                st.session_state.calibrating = True
-                st.session_state.viewing_session_id = None
-                st.session_state.viewing_session_label = None
-                st.rerun()
-        with col_b:
-            if st.button("Start", type="primary", width='stretch',
+        # ---------- AI Intervention Agent ----------
+        # A real switch: when off, the agent's decision loop does not run at
+        # all. Disabled mid-session so the capture loop is not interrupted.
+        st.divider()
+        _on = st.session_state.agent_enabled
+        try:
+            _mem = InterventionAgent(stats=session_history.intervention_stats()).learned_summary()
+        except Exception:
+            _mem = "learning memory unavailable"
+        with st.container(border=True):
+            st.markdown(
+                f'<div class="agent-wrap">'
+                f'<div class="agent-top"><span class="agent-name">AI AGENT &mdash; ADAPTIVE COACH</span>'
+                f'<span class="state-pill {"active" if _on else "standby"}">'
+                f'{"ACTIVE" if _on else "STANDBY"}</span></div>'
+                f'<div class="agent-desc">Decides when an interruption is worth it, targets the '
+                f'signal driving the stress, then measures whether it helped and learns what '
+                f'works for you. Runs entirely on this device.</div>'
+                + render_agent_core(_on) +
+                f'<div class="mem">{_mem}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+            if st.button("Power down agent" if _on else "Power up agent",
+                         width='stretch', key="agent_btn",
                          disabled=st.session_state.running or st.session_state.calibrating):
-                st.session_state.running = True
-                st.session_state.session_start = datetime.now()
-                st.session_state.history = []
-                st.session_state.viewing_session_id = None
-                st.session_state.viewing_session_label = None
+                st.session_state.agent_enabled = not _on
                 st.rerun()
-
-        if st.button("Stop", width='stretch',
-                     disabled=not (st.session_state.running or st.session_state.calibrating)):
-            st.session_state.running = False
-            st.session_state.calibrating = False
-            engine._calibrating = False
-            # Persist the just-ended session to the local DB
-            if st.session_state.history:
-                try:
-                    _sid = session_history.save_session(
-                        st.session_state.history,
-                        task_mode=st.session_state.task_mode,
-                    )
-                    # Queue the self-report prompt for this session. The
-                    # user's answer - not the system's prediction - is the
-                    # ground-truth label the adaptation loop trains on.
-                    st.session_state.pending_self_report = _sid
-                    _ivlog = st.session_state.pop('pending_interventions', [])
-                    if _ivlog:
-                        session_history.log_interventions(_sid, _ivlog)
-                except Exception as e:
-                    st.warning(f"Could not save session to history DB: {e}")
-            st.rerun()
-
-        if st.button("Clear view", width='stretch',
-                     help="Clears the on-screen timeline. Saved sessions in the DB are not affected."):
-            st.session_state.history = []
-            st.session_state.viewing_session_id = None
-            st.session_state.viewing_session_label = None
-            st.rerun()
-
-        if st.button("Reset baseline", width='stretch'):
-            engine.reset_baseline()
-            reset_daisee_baseline()
-            st.rerun()
 
         # ---------- Past Sessions ----------
         st.divider()
-        st.markdown('<div class="sb-label">Past sessions</div>', unsafe_allow_html=True)
+        st.markdown('<div class="label">Past sessions</div>', unsafe_allow_html=True)
         try:
             recent = session_history.load_recent_sessions(n=10)
             total  = session_history.session_count()
@@ -661,33 +831,24 @@ def main():
             st.caption(f"Showing last {len(recent)} of {total} sessions")
             for s in recent:
                 start_label = s['started_at'][:16].replace('T', '  ')
-                pct_h = s['pct_high']
-                pct_m = s['pct_moderate']
-                pct_l = s['pct_low']
-                # Status dot reflects dominant state
-                if pct_h >= 30:
-                    _dc = '#E5484D'
-                elif pct_m >= 40:
-                    _dc = '#F5A623'
-                else:
-                    _dc = '#2FBF71'
-                dot = f'<span class="sdot" style="background:{_dc}"></span>'
+                pct_h, pct_m, pct_l = s['pct_high'], s['pct_moderate'], s['pct_low']
+                if pct_h >= 30:   dot_color = '#EF4444'
+                elif pct_m >= 40: dot_color = '#F59E0B'
+                else:             dot_color = '#22C55E'
                 _task = s.get('task_mode', 'Default') or 'Default'
-                _task_icon = ('<span class="tag">'
-                              + {'Default': 'GEN', 'Studying': 'STU',
-                                 'Hospital': 'MED', 'Driving': 'DRV'}.get(_task, 'GEN')
-                              + '</span>')
+                _tag = TASK_LABELS.get(_task, (_task, 'GEN'))[1]
 
                 col_info, col_btn = st.columns([3, 1])
                 with col_info:
                     is_active = (st.session_state.viewing_session_id == s['id'])
-                    active_marker = ' <span class="tag active">VIEWING</span>' if is_active else ''
+                    active_tag = ' <span class="tag on">VIEWING</span>' if is_active else ''
                     st.markdown(
-                        f"{dot} **{start_label}**  ·  {s['duration_sec']:.0f}s  ·  {_task_icon}{active_marker}"
-                        f"<div style='color:#8A96A8;font-size:11px;margin:-4px 0 6px 22px;'>"
-                        f"avg {s['mean_stress']:.2f} · "
-                        f"L/M/H {pct_l:.0f}/{pct_m:.0f}/{pct_h:.0f}%"
-                        f"</div>",
+                        f'<div class="sess-row">'
+                        f'<span class="sdot" style="background:{dot_color}"></span>'
+                        f'<div class="sinfo"><div class="t">{start_label} '
+                        f'<span class="tag">{_tag}</span>{active_tag}</div>'
+                        f'<div class="m">{s["duration_sec"]:.0f}s &middot; avg {s["mean_stress"]:.2f} '
+                        f'&middot; L/M/H {pct_l:.0f}/{pct_m:.0f}/{pct_h:.0f}%</div></div></div>',
                         unsafe_allow_html=True,
                     )
                 with col_btn:
@@ -700,7 +861,6 @@ def main():
                             st.session_state.viewing_session_id = s['id']
                             st.session_state.viewing_session_label = start_label
                         else:
-                            # Legacy v1 session that has no per-frame data
                             st.session_state.empty_session_warning = (
                                 f"Session from {start_label} was saved before per-frame "
                                 f"recording was supported. Only the summary stats above "
@@ -708,6 +868,7 @@ def main():
                             )
                         st.rerun()
 
+            st.markdown('<div class="del-btn">', unsafe_allow_html=True)
             if st.button("Delete all history", width='stretch', key="clear_db",
                          help="Deletes every saved session from the local DB. Cannot be undone."):
                 session_history.clear_all_sessions()
@@ -715,92 +876,105 @@ def main():
                 st.session_state.viewing_session_id = None
                 st.session_state.viewing_session_label = None
                 st.rerun()
+            st.markdown('</div>', unsafe_allow_html=True)
 
     # ---------- Header ----------
     if st.session_state.calibrating:
-        badge_class = "vbsd-badge calibrating"; badge_label = "CALIBRATING"
+        pill_class, pill_label = "pill dot pill-calibrating", "CALIBRATING"
     elif st.session_state.running:
-        badge_class = "vbsd-badge"; badge_label = "LIVE"
+        pill_class, pill_label = "pill dot pill-live", "LIVE"
     else:
-        badge_class = "vbsd-badge offline"; badge_label = "OFFLINE"
+        pill_class, pill_label = "pill pill-offline", "OFFLINE"
 
-    st.markdown(
-        f'<div class="vbsd-header">'
-        f'  <div class="vbsd-header-left">'
-        f'    <div class="vbsd-icon"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="2 12 6 12 9 4 14 20 17 12 22 12"/></svg></div>'
-        f'    <div>'
-        f'      <div class="vbsd-title">Vision-Based Behavioral Stress Detection</div>'
-        f'      <div class="vbsd-subtitle">Real-time behavioral analysis &middot; camera only &middot; on-device</div>'
-        f'    </div>'
-        f'  </div>'
-        f'  <div class="{badge_class}"><span class="dot"></span>{badge_label}</div>'
-        f'</div>',
-        unsafe_allow_html=True,
+    if st.session_state.running:
+        sess_text = f"SESSION {st.session_state.session_count:02d} &middot; running"
+    elif st.session_state.calibrating:
+        sess_text = "Calibrating&hellip;"
+    elif st.session_state.viewing_session_id:
+        sess_text = f"Viewing {st.session_state.viewing_session_label}"
+    else:
+        sess_text = "No active session"
+
+    _ctx_chips = ''.join(
+        f'<span class="chip{" on" if k == st.session_state.task_mode else ""}">'
+        f'{v[0].upper()}</span>'
+        for k, v in TASK_LABELS.items()
     )
+    _cal_html = ('<span class="cal-pill ok">&#10003; CALIBRATED</span>' if is_fully_calibrated
+                else '<span class="cal-pill warn">&#9679; NOT CALIBRATED</span>')
+
+    header_placeholder = st.empty()
+
+    def render_header(session_text):
+        rec = '<span class="rec-tag">&#9679; REC</span>' if st.session_state.running else ''
+        header_placeholder.markdown(
+            f'<div class="app-header">'
+            f'<div class="app-icon"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" '
+            f'stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">'
+            f'<polyline points="2 12 6 12 9 4 14 20 17 12 22 12"/></svg></div>'
+            f'<div><div class="app-title">Vision-Based Behavioral Stress Detection</div>'
+            f'<div class="app-subtitle">Camera only &middot; on-device &middot; no wearables</div></div>'
+            f'<span class="{pill_class}">{pill_label}</span>{rec}'
+            f'<span class="sess-title">{session_text}</span>'
+            f'<div class="chips"><span class="ctx-label">Context</span>{_ctx_chips}{_cal_html}</div>'
+            f'</div>', unsafe_allow_html=True)
+
+    render_header(sess_text)
 
     if st.session_state.calibrating:
         st.markdown(
-            '<div class="calib-banner">'
-            '<div class="cb-title">Personal baseline calibration</div>'
-            f'<div class="cb-body">Sit naturally with a relaxed, neutral expression for '
-            f'{CALIBRATION_SECONDS} seconds. Look at the camera and breathe normally '
-            '— do not pose, and do not smile: a smiling baseline skews the jaw and '
-            'brow signals for the whole session. The system is learning your calm '
-            'state.</div>'
-            '</div>',
-            unsafe_allow_html=True,
-        )
+            '<div class="calib-banner"><div class="cb-title">Personal baseline calibration</div>'
+            f'<div class="cb-body">Sit naturally, neutral expression, {CALIBRATION_SECONDS}s. '
+            'Do not pose or smile &mdash; a smiling baseline skews the jaw and brow signals for '
+            'the whole session.</div></div>', unsafe_allow_html=True)
 
-    col_features, col_video, col_metrics = st.columns([1, 2, 1])
+    col_video, col_right = st.columns([2, 1])
 
     with col_video:
-        live_tag_placeholder = st.empty()
-        if st.session_state.calibrating:
-            live_tag_placeholder.markdown(
-                '<span class="vbsd-live-tag calibrating">CALIBRATING</span>',
-                unsafe_allow_html=True)
-        elif st.session_state.running:
-            live_tag_placeholder.markdown(
-                '<span class="vbsd-live-tag">&#9679; REC</span>',
-                unsafe_allow_html=True)
-        video_placeholder  = st.empty()
-        status_placeholder = st.empty()
+        video_container = st.container(border=True)
+        with video_container:
+            topbar_placeholder = st.empty()
+            video_placeholder = st.empty()
+            level_placeholder = st.empty()
+            status_placeholder = st.empty()
 
-    with col_features:
-        st.markdown('<div class="vbsd-section-label">Stress Level</div>',
-                    unsafe_allow_html=True)
-        level_placeholder    = st.empty()
-        bar_placeholder      = st.empty()
-        st.markdown('<div class="vbsd-section-label" style="margin-top:14px;">Detected Features</div>',
-                    unsafe_allow_html=True)
-        features_placeholder = st.empty()
+    with col_right:
+        with st.container(border=True):
+            st.markdown('<div class="label">Behavioral signals</div>', unsafe_allow_html=True)
+            signals_placeholder = st.empty()
+            signals_placeholder.markdown(
+                '<div style="color:#5B6772;font-size:11.5px;padding:6px 0;">'
+                'No session running.</div>', unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown('<div class="label">Metrics</div>', unsafe_allow_html=True)
+            tiles_placeholder = st.empty()
+            tiles_placeholder.markdown(render_tiles(0, 0), unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown('<div class="label">Guidance</div>', unsafe_allow_html=True)
+            guidance_placeholder = st.empty()
 
-    with col_metrics:
-        st.markdown('<div class="vbsd-section-label">Metrics</div>',
-                    unsafe_allow_html=True)
-        tiles_placeholder    = st.empty()
-        guidance_placeholder = st.empty()
-
-    st.markdown("---")
+    # ---------- Agent live panel (only meaningful while running) ----------
+    agent_panel_placeholder = st.empty()
+    intervention_placeholder = st.empty()
 
     # Empty-session warning (legacy v1 sessions with no per-frame data)
     if st.session_state.get('empty_session_warning'):
         st.warning(st.session_state.empty_session_warning)
         del st.session_state.empty_session_warning
 
-    # Viewing banner (when looking at a saved session)
     if st.session_state.viewing_session_id and not st.session_state.running:
-        st.info(
-            f"Viewing saved session from **{st.session_state.viewing_session_label}**. "
-            f"Press Start or Calibrate to begin a new live session."
-        )
-        st.subheader("Saved session timeline")
-    else:
-        st.subheader("Session timeline")
-    timeline_placeholder = st.empty()
+        st.caption(f"Viewing saved session from {st.session_state.viewing_session_label}. "
+                   f"Press Start or Calibrate to begin a new live session.")
+
+    with st.container(border=True):
+        st.markdown('<div class="label">Session timeline</div>', unsafe_allow_html=True)
+        st.markdown(TIMELINE_LEGEND, unsafe_allow_html=True)
+        timeline_placeholder = st.empty()
+        summary_placeholder = st.empty()
 
     # ---------- CALIBRATION ----------
     if st.session_state.calibrating:
+        video_placeholder.markdown('', unsafe_allow_html=True)
         cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.FRAME_WIDTH)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.FRAME_HEIGHT)
@@ -840,12 +1014,10 @@ def main():
                     cv2.cvtColor(frame, cv2.COLOR_BGR2RGB),
                     channels="RGB", width='stretch',
                 )
-
                 elapsed = time.time() - calib_start
                 progress = min(1.0, elapsed / CALIBRATION_SECONDS)
-                bar_placeholder.progress(progress, text=f"Calibrating: {int(progress*100)}%")
                 level_placeholder.markdown(
-                    '<div style="color:#2F6FED;font-size:24px;font-weight:800;">Calibrating&hellip;</div>',
+                    render_calib_ring(progress, max(0.0, CALIBRATION_SECONDS - elapsed)),
                     unsafe_allow_html=True,
                 )
 
@@ -862,7 +1034,7 @@ def main():
                         st.warning("Partial calibration — try again with a clearer view.")
                     else:
                         st.error("Calibration failed.")
-                    time.sleep(1.5)
+                    time.sleep(1.2)
                     st.rerun()
                 time.sleep(0.01)
         finally:
@@ -885,7 +1057,6 @@ def main():
         smoother = TemporalSmoother(window_size=SMOOTHING_WINDOW)
         hyst = HysteresisLevel(confirm_frames=config.HYSTERESIS_CONFIRM_FRAMES)
 
-        # LSTM gets a fresh buffer per session (clears stale frames from previous session)
         if lstm_inf.is_available():
             lstm_inf.reset()
 
@@ -901,14 +1072,14 @@ def main():
             _known = {}
         agent = InterventionAgent(stats=_known)
         agent.start_session(time.time())
-        intervention_placeholder = st.empty()
-        agent_status_placeholder = st.empty()
         last_agent_status_update = 0.0
 
         last_daisee_probs = None
         frame_idx = 0
         last_timeline_update = 0.0
         last_sidebar_update  = 0.0
+        last_header_update = 0.0
+        session_started_at = time.time()
 
         try:
             while st.session_state.running:
@@ -924,7 +1095,9 @@ def main():
                 face_crop, bbox = crop_face(frame, face_mesh_results)
 
                 if face_crop is None:
-                    status_placeholder.info("No face detected — please face the camera")
+                    status_placeholder.markdown(
+                        '<div class="face-status">No face detected — please face the camera</div>',
+                        unsafe_allow_html=True)
                     video_placeholder.image(rgb, channels="RGB", width='stretch')
                     frame_idx += 1
                     continue
@@ -936,16 +1109,14 @@ def main():
                         (models['daisee_eff'], EFFICIENTNET_SIZE, efficientnet_preprocess),
                     ])
 
-                # LSTM: feed every frame to the buffer; predict() internally
-                # rate-limits how often the model actually runs.
                 lstm_score = None
                 if lstm_inf.is_available():
                     lstm_inf.add_frame(face_crop)
                     lstm_score = lstm_inf.predict()
 
-                # rPPG: cheap per frame (a couple of patch means). The heart
-                # rate is computed and shown even at W_RPPG = 0 so it can be
-                # sanity-checked against a wrist pulse before being trusted.
+                # rPPG: cheap per frame. Heart rate is computed and shown
+                # even at W_RPPG = 0 so it can be sanity-checked against a
+                # wrist pulse before being trusted.
                 rppg.add_frame(time.time(), frame, face_mesh_results)
                 rppg_score = rppg.stress_score()
 
@@ -963,26 +1134,14 @@ def main():
                 )
                 smoothed = smoother.update(result['stress_index'])
                 level = hyst.update(smoothed)
-                advice = stress_level_advice(level)
 
                 # ---- intervention agent: decide / act / measure ----
                 _iv = None
                 if st.session_state.agent_enabled:
-                    _iv = agent.update(time.time(), smoothed,
-                                       result['contributions'])
+                    _iv = agent.update(time.time(), smoothed, result['contributions'])
                 if _iv is not None and (time.time() - _iv.t_shown) <= config.INTERVENTION_SHOW_SECONDS:
                     intervention_placeholder.markdown(
-                        f'<div style="background:rgba(245,118,43,0.08);'
-                        f'border:1px solid rgba(245,118,43,0.45);'
-                        f'border-radius:10px;padding:12px 16px;margin:6px 0;">'
-                        f'<div style="color:#F5762B;font-size:10px;font-weight:800;'
-                        f'letter-spacing:.09em;margin-bottom:3px;">AI INTERVENTION</div>'
-                        f'<div style="color:#E6EBF2;font-weight:650;font-size:14px;">'
-                        f'{_iv.title}</div>'
-                        f'<div style="color:#B7C1CF;font-size:12px;margin-top:4px;">'
-                        f'{_iv.body}</div></div>',
-                        unsafe_allow_html=True,
-                    )
+                        render_intervention_card(_iv.title, _iv.body), unsafe_allow_html=True)
                 else:
                     intervention_placeholder.empty()
 
@@ -992,49 +1151,28 @@ def main():
                     channels="RGB", width='stretch',
                 )
 
-                color_map = {'LOW': '#2FBF71', 'MODERATE': '#F5A623', 'HIGH': '#E5484D'}
-                level_placeholder.markdown(
-                    f'<div class="vbsd-level-display">'
-                    f'  <div class="vbsd-level-dot" style="background:{color_map[level]};"></div>'
-                    f'  <div class="vbsd-level-text" style="color:{color_map[level]};">{level}</div>'
-                    f'</div>'
-                    f'<div class="vbsd-stress-num">'
-                    f'  Stress Index: <strong style="color:{color_map[level]};">{smoothed:.2f}</strong> / 1.00'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
-                bar_placeholder.progress(min(1.0, max(0.0, smoothed)))
-
-                features_placeholder.markdown(
-                    render_features(result['contributions']),
-                    unsafe_allow_html=True,
-                )
                 _hr, _q = rppg.estimate()
                 _hr_text = f"{_hr:.0f}" if _hr else "--"
-                _hr_note = " (bpm)" if _hr else ""
+                topbar_placeholder.markdown(
+                    render_video_topbar(_hr_text, behavioral_features.get('ear', 0.0)),
+                    unsafe_allow_html=True)
+                level_placeholder.markdown(render_level_block(level, smoothed),
+                                          unsafe_allow_html=True)
+                signals_placeholder.markdown(render_signal_rows(result['contributions']),
+                                            unsafe_allow_html=True)
                 tiles_placeholder.markdown(
-                    render_tiles(
-                        blink_rate=behavioral_features.get('blinks_per_minute', 0.0),
-                        ear_value=behavioral_features.get('ear', 0.0),
-                        hr_text=_hr_text, hr_note=_hr_note,
-                    ),
-                    unsafe_allow_html=True,
-                )
-                guidance_placeholder.markdown(
-                    render_guidance(level),
-                    unsafe_allow_html=True,
-                )
+                    render_tiles(behavioral_features.get('blinks_per_minute', 0.0),
+                                behavioral_features.get('ear', 0.0), _hr_text),
+                    unsafe_allow_html=True)
+                guidance_placeholder.markdown(render_guidance(level), unsafe_allow_html=True)
 
                 now = datetime.now()
                 if (not st.session_state.history or
                     (now - st.session_state.history[-1]['ts']).total_seconds() >= 0.5):
                     daisee_record = result.get('daisee_raw') or 0.0
                     _rec = {
-                        'ts': now,
-                        'stress_index': smoothed,
-                        'level': level,
-                        'daisee':   daisee_record,
-                        'behavior': result['behavior_stress'],
+                        'ts': now, 'stress_index': smoothed, 'level': level,
+                        'daisee': daisee_record, 'behavior': result['behavior_stress'],
                     }
                     # Per-signal values: without these the self-retraining
                     # loop has nothing to learn from.
@@ -1042,52 +1180,36 @@ def main():
                     st.session_state.history.append(_rec)
 
                 now_ts = time.time()
+
+                if now_ts - last_header_update > 1.0:
+                    elapsed_s = int(now_ts - session_started_at)
+                    render_header(
+                        f"SESSION {st.session_state.session_count:02d} &middot; "
+                        f"{elapsed_s // 60:02d}:{elapsed_s % 60:02d}"
+                    )
+                    last_header_update = now_ts
+
                 if now_ts - last_agent_status_update > 1.0:
                     if st.session_state.agent_enabled:
-                        _st = agent.status(now_ts)
-                        _colors = {'watching': ('#2FBF71', 'rgba(47,191,113,0.07)'),
-                                   'warming': ('#7C8CF8', 'rgba(124,140,248,0.07)'),
-                                   'showing': ('#F5762B', 'rgba(245,118,43,0.09)'),
-                                   'evaluating': ('#F5762B', 'rgba(245,118,43,0.09)'),
-                                   'cooldown': ('#8A96A8', 'rgba(138,150,168,0.07)')}
-                        _fg, _bg = _colors.get(_st['phase'], ('#8A96A8', '#121820'))
-                        agent_status_placeholder.markdown(
-                            f'<div style="background:{_bg};border-radius:8px;'
-                            f'padding:8px 12px;margin:4px 0;display:flex;'
-                            f'align-items:center;gap:8px;">'
-                            f'<span style="width:8px;height:8px;border-radius:50%;'
-                            f'background:{_fg};animation:pulse 2s infinite;"></span>'
-                            f'<span style="color:{_fg};font-size:12px;font-weight:700;">'
-                            f'AI AGENT · {_st["phase"].upper()}</span>'
-                            f'<span style="color:{_fg};font-size:11px;opacity:0.85;">'
-                            f'{_st["detail"]}</span></div>',
-                            unsafe_allow_html=True,
-                        )
+                        st_ = agent.status(now_ts)
+                        agent_panel_placeholder.markdown(
+                            render_agent_phases(st_['phase'], st_['detail']),
+                            unsafe_allow_html=True)
                     else:
-                        agent_status_placeholder.markdown(
-                            '<div style="background:#121820;border-radius:8px;'
-                            'padding:8px 12px;margin:4px 0;">'
-                            '<span style="color:#5C6878;font-size:12px;font-weight:700;">'
-                            'AI AGENT · OFF</span>'
-                            '<span style="color:#5C6878;font-size:11px;"> — '
-                            'monitoring only, no interventions, no learning</span></div>',
-                            unsafe_allow_html=True,
-                        )
+                        agent_panel_placeholder.markdown(
+                            '<div class="phase-reason" style="color:#5B6772;">'
+                            'Agent is off — monitoring only, no interventions, no learning.</div>',
+                            unsafe_allow_html=True)
                     last_agent_status_update = now_ts
 
                 if now_ts - last_sidebar_update > 0.5 and st.session_state.history:
-                    recent = [h['stress_index']
-                              for h in st.session_state.history[-LIVE_GRAPH_WINDOW:]]
-                    sidebar_graph_placeholder.markdown(
-                        render_mini_graph(recent), unsafe_allow_html=True,
-                    )
+                    recent = [h['stress_index'] for h in st.session_state.history[-LIVE_GRAPH_WINDOW:]]
+                    sidebar_graph_placeholder.markdown(render_mini_graph(recent), unsafe_allow_html=True)
                     last_sidebar_update = now_ts
 
                 if now_ts - last_timeline_update > 1.0 and len(st.session_state.history) > 1:
-                    timeline_placeholder.markdown(
-                        render_full_timeline(st.session_state.history),
-                        unsafe_allow_html=True,
-                    )
+                    timeline_placeholder.markdown(render_full_timeline(st.session_state.history),
+                                                  unsafe_allow_html=True)
                     last_timeline_update = now_ts
 
                 frame_idx += 1
@@ -1104,13 +1226,22 @@ def main():
             except Exception:
                 pass
     else:
+        video_placeholder.markdown(render_idle_view(), unsafe_allow_html=True)
+        signals_placeholder.markdown(
+            '<div style="color:#5B6772;font-size:11.5px;padding:6px 0;">'
+            'No session running.</div>', unsafe_allow_html=True)
+        guidance_placeholder.markdown(
+            '<div style="color:#5B6772;font-size:11.5px;padding:6px 0;">'
+            'Guidance appears once a session starts.</div>', unsafe_allow_html=True)
+        agent_panel_placeholder.empty()
+
         # ---------- SELF-REPORT PROMPT (Phase 3 labeling loop) ----------
         if st.session_state.pending_self_report is not None:
             _sid = st.session_state.pending_self_report
             with st.container(border=True):
                 st.markdown("**How stressed did you actually feel during that "
                             "session?** Your answer is stored with the session "
-                            "and is what the system learns from - be honest, "
+                            "and is what the system learns from — be honest, "
                             "not agreeable.")
                 _cols = st.columns(6)
                 _labels = ["1 · calm", "2", "3 · neutral", "4", "5 · very stressed"]
@@ -1127,38 +1258,40 @@ def main():
                     st.rerun()
 
         if st.session_state.history:
-            timeline_placeholder.markdown(
-                render_full_timeline(st.session_state.history),
-                unsafe_allow_html=True,
-            )
+            timeline_placeholder.markdown(render_full_timeline(st.session_state.history),
+                                          unsafe_allow_html=True)
             sidebar_values = [h['stress_index'] for h in st.session_state.history]
             sidebar_graph_placeholder.markdown(
-                render_mini_graph(sidebar_values[-LIVE_GRAPH_WINDOW:]),
-                unsafe_allow_html=True,
-            )
+                render_mini_graph(sidebar_values[-LIVE_GRAPH_WINDOW:]), unsafe_allow_html=True)
             history = st.session_state.history
             duration = (history[-1]['ts'] - history[0]['ts']).total_seconds()
             counts = {'LOW': 0, 'MODERATE': 0, 'HIGH': 0}
             for r in history:
                 counts[r['level']] = counts.get(r['level'], 0) + 1
-            st.write(f"**Session length:** {duration:.0f} s, **samples:** {len(history)}")
-            cols = st.columns(3)
-            for i, lvl in enumerate(['LOW', 'MODERATE', 'HIGH']):
-                pct = (counts[lvl] / len(history)) * 100 if history else 0
-                cols[i].metric(f"{lvl}", f"{pct:.0f}%")
-            csv_text = history_to_csv(history)
-            _fname = export_filename(
-                st.session_state.subject_id, st.session_state.condition,
-                st.session_state.task_mode, when=history[0]['ts'],
-            )
-            st.download_button(
-                f"Download session CSV",
-                csv_text, file_name=_fname, mime="text/csv",
-            )
-            st.caption(f"Saves as `{_fname}` — move it into `evaluation_data/`, "
-                       f"then re-run `python run_all_evaluations.py`.")
+            with summary_placeholder.container():
+                st.markdown(f'<span style="color:#8B98A5;font-size:12px;">Session length '
+                           f'<b style="color:#E6EDF3;">{duration:.0f}s</b> &middot; samples '
+                           f'<b style="color:#E6EDF3;">{len(history)}</b></span>',
+                           unsafe_allow_html=True)
+                cols = st.columns(3)
+                for i, lvl in enumerate(['LOW', 'MODERATE', 'HIGH']):
+                    pct = (counts[lvl] / len(history)) * 100 if history else 0
+                    cols[i].metric(lvl, f"{pct:.0f}%")
+                csv_text = history_to_csv(history)
+                _fname = export_filename(
+                    st.session_state.subject_id, st.session_state.condition,
+                    st.session_state.task_mode, when=history[0]['ts'],
+                )
+                st.download_button("Download session CSV", csv_text, file_name=_fname,
+                                   mime="text/csv")
+                st.caption(f"Saves as `{_fname}` — move it into `evaluation_data/`, "
+                           f"then re-run `python run_all_evaluations.py`.")
         else:
-            st.info("Press Calibrate, then Start to begin a session.")
+            level_placeholder.markdown('', unsafe_allow_html=True)
+            tiles_placeholder.markdown(render_tiles(0, 0), unsafe_allow_html=True)
+            guidance_placeholder.markdown(
+                '<div style="color:#5B6772;font-size:11.5px;">'
+                'Guidance appears once a session starts.</div>', unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
