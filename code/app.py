@@ -37,7 +37,7 @@ from stress_fusion import (
 from lstm_temporal import LSTMTemporalInference
 from app_naming import export_filename
 from rppg_live import get_live_rppg, reset_live_rppg
-from intervention_agent import InterventionAgent
+from intervention_agent import InterventionAgent, CATALOGUE
 import session_history
 import config
 
@@ -274,21 +274,36 @@ def inject_css():
       .state-pill.standby { color:var(--dim); border-color:var(--border2); background:var(--panel2); }
       .agent-desc { font-size:10.5px; color:var(--sub); line-height:1.45; margin-bottom:10px; }
 
-      .agent-core-row { display:flex; align-items:center; gap:10px; margin-bottom:9px;
-                        padding:8px 10px; background:var(--panel2); border:1px solid var(--border);
-                        border-radius:10px; }
-      .agent-core { width:38px; height:38px; border-radius:50%; position:relative;
-                    flex-shrink:0; display:flex; align-items:center; justify-content:center; }
-      .agent-core::before { content:''; position:absolute; inset:0; border-radius:50%;
-                            background:conic-gradient(from 0deg,var(--blue),#0d1117 40%,var(--blue) 80%,#0d1117);
-                            animation:spin 3.2s linear infinite; }
-      .agent-core::after { content:''; position:absolute; inset:3px; border-radius:50%; background:#0d1117; }
-      .agent-core svg { position:relative; z-index:2; width:15px; height:15px; stroke:var(--blue); }
-      .agent-core-row.off .agent-core::before { animation:none; background:#1C2733; }
-      .agent-core-row.off .agent-core svg { stroke:var(--dim); }
-      .agent-core-label .t { font-size:10.5px; font-weight:700; color:var(--text); }
-      .agent-core-row.off .agent-core-label .t { color:var(--dim); }
-      .agent-core-label .s { font-size:9.5px; color:var(--dim); margin-top:1px; }
+      /* Big circular power core. The marker div is invisible (0x0); it only
+         exists so :has() can tell whether the button that follows it should
+         render "on" (blue, spinning) or "off" (grey, still). See the Python
+         call site for why this indirection is needed - Streamlit gives no
+         other way to attach a per-instance CSS class to a real st.button. */
+      .agent-core-marker { width:0; height:0; overflow:hidden; display:block; }
+      div:has(.agent-core-marker) + div .stButton { display:flex; justify-content:center;
+                                                    margin:8px 0 4px 0; }
+      div:has(.agent-core-marker) + div .stButton button {
+        position:relative; width:108px !important; height:108px !important;
+        border-radius:50% !important; background:#0d1117 !important; border:none !important;
+        color:#fff !important; font-weight:800 !important; font-size:12.5px !important;
+        letter-spacing:.09em !important; padding:0 !important; z-index:1;
+        transition:none !important;
+      }
+      div:has(.agent-core-marker) + div .stButton button::before {
+        content:''; position:absolute; inset:-5px; border-radius:50%; z-index:-1;
+      }
+      div:has(.agent-core-marker.on) + div .stButton button::before {
+        background:conic-gradient(from 0deg,var(--blue),#0d1117 40%,var(--blue) 80%,#0d1117);
+        animation:spin 3s linear infinite;
+      }
+      div:has(.agent-core-marker.off) + div .stButton button::before {
+        background:#1C2733; animation:none;
+      }
+      div:has(.agent-core-marker.off) + div .stButton button { color:var(--dim) !important; }
+      div:has(.agent-core-marker) + div .stButton button:hover { border-color:transparent !important; }
+      .agent-core-caption { text-align:center; font-size:10px; color:var(--dim);
+                            line-height:1.5; margin:2px 0 10px 0; }
+      .agent-core-caption b { color:var(--sub); }
       @keyframes spin { to { transform:rotate(360deg); } }
       @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
 
@@ -520,15 +535,40 @@ def render_tiles(blink_rate, ear_value, hr_text="--"):
     )
 
 
-def render_guidance(level):
+def render_guidance(level, contributions=None):
+    """
+    When one signal clearly dominates, lead with the SAME specific advice the
+    intervention agent would give ("unclench your jaw", not "reduce stress")
+    - reusing intervention_agent.CATALOGUE rather than maintaining a second,
+    vaguer copy of the same knowledge. Falls back to the generic per-level
+    tips when nothing stands out, so idle/low-signal states still show
+    something useful.
+    """
     level_labels = {
         'LOW':      ('Stay relaxed', '#22C55E'),
         'MODERATE': ('Reduce stress', '#F59E0B'),
         'HIGH':     ('Act now', '#EF4444'),
     }
     sub_label, sub_color = level_labels[level]
+
+    lead_html = ''
+    if contributions:
+        top_signal, top_value = max(contributions.items(), key=lambda kv: kv[1])
+        if top_value >= config.INTERVENTION_SIGNAL_THRESHOLD and top_signal in CATALOGUE:
+            entry = CATALOGUE[top_signal]
+            lead_html = (
+                f'<div style="background:rgba(245,118,43,.06);border:1px solid '
+                f'rgba(245,118,43,.3);border-radius:8px;padding:8px 10px;margin-bottom:8px;">'
+                f'<div style="color:#F5762B;font-size:9.5px;font-weight:800;'
+                f'letter-spacing:.07em;margin-bottom:2px;">DRIVEN BY {top_signal.replace("_"," ").upper()}</div>'
+                f'<div style="color:#E6EDF3;font-weight:700;font-size:12.5px;">{entry["title"]}</div>'
+                f'<div style="color:#8B98A5;font-size:11px;margin-top:2px;">{entry["body"]}</div>'
+                f'</div>'
+            )
+
     items = ''.join(f'<span>{tip}</span>' for tip in GUIDANCE_TIPS[level])
     return (
+        f'{lead_html}'
         f'<div class="glist-sub" style="color:{sub_color};">{sub_label}</div>'
         f'<div class="glist">{items}</div>'
     )
@@ -585,19 +625,10 @@ def render_idle_view():
     )
 
 
-def render_agent_core(active):
-    off = "" if active else "off"
-    label = "Agent engaged" if active else "Agent powered down"
+def render_agent_core_caption(active):
     sub = "Monitoring all seven signals" if active else "Interventions and learning paused"
-    return (
-        f'<div class="agent-core-row {off}">'
-        f'<div class="agent-core"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" '
-        f'stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8'
-        f'M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8"/>'
-        f'<circle cx="12" cy="12" r="3"/></svg></div>'
-        f'<div class="agent-core-label"><div class="t">{label}</div><div class="s">{sub}</div></div>'
-        f'</div>'
-    )
+    tap = "Tap the core to power down" if active else "Tap the core to power up"
+    return f'<div class="agent-core-caption"><b>{sub}</b><br>{tap}</div>'
 
 
 def render_agent_phases(current_phase, reason):
@@ -644,6 +675,16 @@ def init_state():
     if 'viewing_session_id' not in st.session_state: st.session_state.viewing_session_id = None
     if 'viewing_session_label' not in st.session_state: st.session_state.viewing_session_label = None
     if 'task_mode' not in st.session_state: st.session_state.task_mode = 'Default'
+    # A header context button sets this on the rerun it triggers, then this
+    # block (which runs before the sidebar "Context" selectbox is
+    # instantiated) applies it to both the real state and the selectbox's own
+    # widget key. Setting task_select directly from the button handler would
+    # raise StreamlitAPIException because that widget has already been
+    # instantiated earlier in that same script run.
+    if 'pending_task_mode' in st.session_state:
+        _pending = st.session_state.pop('pending_task_mode')
+        st.session_state.task_mode = _pending
+        st.session_state.task_select = _pending
     if 'subject_id' not in st.session_state: st.session_state.subject_id = ''
     if 'condition' not in st.session_state: st.session_state.condition = 'unlabeled'
     if 'pending_self_report' not in st.session_state: st.session_state.pending_self_report = None
@@ -804,16 +845,23 @@ def main():
                 f'<div class="agent-desc">Decides when an interruption is worth it, targets the '
                 f'signal driving the stress, then measures whether it helped and learns what '
                 f'works for you. Runs entirely on this device.</div>'
-                + render_agent_core(_on) +
-                f'<div class="mem">{_mem}</div>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
-            if st.button("Power down agent" if _on else "Power up agent",
-                         width='stretch', key="agent_btn",
-                         disabled=st.session_state.running or st.session_state.calibrating):
+            # The big circle IS the toggle. A marker element immediately
+            # precedes the real button so CSS can style that specific button
+            # as a large spinning core (blue + rotating = on, grey + still =
+            # off) without touching every other button on the page.
+            st.markdown(f'<div class="agent-core-marker {"on" if _on else "off"}"></div>',
+                       unsafe_allow_html=True)
+            if st.button("ACTIVE" if _on else "STANDBY", key="agent_core_btn",
+                         disabled=st.session_state.running or st.session_state.calibrating,
+                         help="Click to power the agent down" if _on else
+                              "Click to power the agent up"):
                 st.session_state.agent_enabled = not _on
                 st.rerun()
+            st.markdown(render_agent_core_caption(_on) + f'<div class="mem">{_mem}</div>',
+                       unsafe_allow_html=True)
 
         # ---------- Past Sessions ----------
         st.divider()
@@ -895,11 +943,6 @@ def main():
     else:
         sess_text = "No active session"
 
-    _ctx_chips = ''.join(
-        f'<span class="chip{" on" if k == st.session_state.task_mode else ""}">'
-        f'{v[0].upper()}</span>'
-        for k, v in TASK_LABELS.items()
-    )
     _cal_html = ('<span class="cal-pill ok">&#10003; CALIBRATED</span>' if is_fully_calibrated
                 else '<span class="cal-pill warn">&#9679; NOT CALIBRATED</span>')
 
@@ -916,10 +959,31 @@ def main():
             f'<div class="app-subtitle">Camera only &middot; on-device &middot; no wearables</div></div>'
             f'<span class="{pill_class}">{pill_label}</span>{rec}'
             f'<span class="sess-title">{session_text}</span>'
-            f'<div class="chips"><span class="ctx-label">Context</span>{_ctx_chips}{_cal_html}</div>'
             f'</div>', unsafe_allow_html=True)
 
     render_header(sess_text)
+
+    # ---------- Context switcher (REAL buttons, not decorative HTML) ----------
+    # This used to be a row of <span> chips rendered via st.markdown, which
+    # cannot fire a Python callback - Streamlit has no way to route a click on
+    # raw HTML back into the script. These are actual st.button widgets in the
+    # same visual position, so clicking them actually changes task_mode.
+    _ctx_row = st.columns([1, 1, 1, 1, 2.2])
+    for _i, (_k, (_label, _tag)) in enumerate(TASK_LABELS.items()):
+        _is_current = (_k == st.session_state.task_mode)
+        if _ctx_row[_i].button(
+            _label, key=f"ctxbtn_{_k}", width='stretch',
+            type="primary" if _is_current else "secondary",
+            disabled=st.session_state.running or st.session_state.calibrating,
+            help=f"Switch to {_label} context",
+        ):
+            # Applied in init_state() on the next rerun, before the sidebar
+            # selectbox is instantiated - see comment there.
+            st.session_state.pending_task_mode = _k
+            st.rerun()
+    with _ctx_row[4]:
+        st.markdown(f'<div style="text-align:right;padding-top:6px;">{_cal_html}</div>',
+                   unsafe_allow_html=True)
 
     if st.session_state.calibrating:
         st.markdown(
@@ -1164,7 +1228,8 @@ def main():
                     render_tiles(behavioral_features.get('blinks_per_minute', 0.0),
                                 behavioral_features.get('ear', 0.0), _hr_text),
                     unsafe_allow_html=True)
-                guidance_placeholder.markdown(render_guidance(level), unsafe_allow_html=True)
+                guidance_placeholder.markdown(render_guidance(level, result['contributions']),
+                                             unsafe_allow_html=True)
 
                 now = datetime.now()
                 if (not st.session_state.history or
