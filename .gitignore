@@ -1,11 +1,26 @@
 # ---------------------------------------------------------------------------
-# Datasets — 33 GB, and BOTH are licensed research datasets that may not be
-# redistributed. DaiSEE and WESAD each require the user to agree to their own
-# licence and download them from the original authors. Never commit these.
-#   DaiSEE: https://people.iith.ac.in/vineethnb/resources/daisee/
-#   WESAD:  https://ubicomp.eti.uni-siegen.de/home/datasets/icmi18/
+# Raw licensed research datasets — never commit these; each requires
+# agreeing to its own licence and downloading from the original authors.
+#   DaiSEE:     https://people.iith.ac.in/vineethnb/resources/daisee/
+#   WESAD:      https://ubicomp.eti.uni-siegen.de/home/datasets/icmi18/
+#   UBFC-Phys:  requested from the dataset authors
+# fer2013 is the removed emotion branch's dataset (see README "Documented
+# negative results") - unused, and large. feature_traces_BEFORE_calibfix is a
+# stale local snapshot kept only as a personal diff reference.
+#
+# datasets/feature_traces/ and datasets/rppg_traces/ are deliberately NOT
+# listed here: they are per-frame signal traces WE derived from UBFC-Phys
+# videos, not the videos themselves. Per the recording protocol, each video
+# is processed once and then deleted - these traces are the only remaining
+# record of that processing, so they must be committed or that work is
+# unrecoverable if the video can't be re-downloaded.
 # ---------------------------------------------------------------------------
-datasets/
+datasets/DaiSEE/
+datasets/WESAD/
+datasets/UBFC-Phys/
+datasets/processed_daisee/
+datasets/fer2013/
+datasets/feature_traces_BEFORE_calibfix/
 
 # ---------------------------------------------------------------------------
 # Trained model binaries (21 MB + 29 MB) ARE tracked, but via Git LFS — see
