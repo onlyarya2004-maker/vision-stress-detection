@@ -104,7 +104,10 @@ def inject_css():
       }
       html, body, [data-testid="stAppViewContainer"] {
         font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-        background:var(--bg);
+        background:
+          linear-gradient(rgba(47,111,237,.035) 1px, transparent 1px) 0 0/28px 28px,
+          linear-gradient(90deg, rgba(47,111,237,.035) 1px, transparent 1px) 0 0/28px 28px,
+          var(--bg);
       }
       #MainMenu, footer, [data-testid="stToolbar"], [data-testid="stDecoration"],
       [data-testid="stStatusWidget"], .stAppDeployButton { display:none !important; }
@@ -136,14 +139,32 @@ def inject_css():
                                             text-transform:uppercase; color:var(--sub); font-weight:700; }
       hr { border-color:var(--border) !important; }
 
-      /* native bordered containers become our "panel" primitive */
-      div[data-testid="stVerticalBlockBorderWrapper"] {
+      /* Native bordered containers become our "panel" primitive. Streamlit
+         1.56 gives st.container(border=True) no distinct testid - the
+         border lands directly on a plain stVerticalBlock, indistinguishable
+         by attribute from any other layout block on the page - so we key
+         off content that's already the first thing inside every one of
+         ours: a .label header, or one of the HUD/agent markers used below.
+         The `> [data-testid="stElementContainer"]` hop is load-bearing: a
+         bordered container is a stVerticalBlock wrapped in a further
+         (unbordered) stLayoutWrapper > stVerticalBlock - without that
+         direct-child hop, :has() also matches that outer wrapper, since
+         :has() looks at descendants of any depth, not just children. */
+      div[data-testid="stVerticalBlock"]:has(
+        > [data-testid="stElementContainer"] .label,
+        > [data-testid="stElementContainer"] .agent-wrap,
+        > [data-testid="stElementContainer"] .hud-frame-marker,
+        > [data-testid="stElementContainer"] .panel-marker
+      ) {
         background:var(--panel); border:1px solid var(--border) !important;
         border-radius:10px;
       }
 
       .label { font-size:10.5px; letter-spacing:.1em; text-transform:uppercase;
-               color:var(--sub); font-weight:700; margin-bottom:8px; }
+               color:var(--sub); font-weight:700; margin-bottom:8px;
+               display:flex; align-items:center; gap:7px; }
+      .label::before { content:''; width:3px; height:11px; background:var(--blue);
+                        border-radius:1px; display:inline-block; flex-shrink:0; }
       .mono { font-family:var(--mono); font-variant-numeric:tabular-nums; }
 
       /* ---- header ---- */
@@ -168,7 +189,9 @@ def inject_css():
                  background:rgba(239,68,68,.12); border:1px solid rgba(239,68,68,.4);
                  padding:4px 9px; border-radius:6px; }
       .sess-title { font-size:12.5px; letter-spacing:.03em; color:var(--sub); font-weight:600;
-                    font-family:var(--mono); }
+                    font-family:var(--mono); font-variant-numeric:tabular-nums;
+                    background:var(--panel2); border:1px solid var(--border);
+                    padding:5px 11px; border-radius:6px; }
       .chips { display:flex; gap:6px; margin-left:auto; align-items:center; flex-wrap:wrap; }
       .ctx-label { font-size:9.5px; color:var(--dim); letter-spacing:.07em;
                    text-transform:uppercase; margin-right:2px; }
@@ -181,14 +204,69 @@ def inject_css():
       .cal-pill.ok { color:var(--green); border-color:#1e4430; background:#0f2417; }
       .cal-pill.warn { color:var(--amber); border-color:#5c4416; background:#241a08; }
 
-      /* ---- calibration banner ---- */
-      .calib-banner { background:rgba(47,111,237,.06); border:1px solid rgba(47,111,237,.35);
-                      border-radius:10px; padding:12px 16px; margin-bottom:10px; }
-      .cb-title { color:var(--blue); font-size:12.5px; font-weight:700; margin-bottom:3px; }
-      .cb-body { color:var(--sub); font-size:12px; line-height:1.5; }
-      .cb-body .warn { color:var(--amber); font-weight:600; }
+      /* ---- calibration HUD ----
+         The primary, always-visible progress readout. Rendered above the
+         video columns so it can never end up below the fold - the ring
+         inside the video panel is a secondary flourish, not the only way
+         to see progress. */
+      .calib-hud { background:rgba(47,111,237,.06); border:1px solid rgba(47,111,237,.35);
+                   border-radius:10px; padding:12px 16px; margin-bottom:10px; }
+      .chud-row { display:flex; align-items:center; justify-content:space-between;
+                  gap:12px; margin-bottom:9px; }
+      .chud-label { font-size:11px; font-weight:800; letter-spacing:.09em; color:var(--blue);
+                    display:flex; align-items:center; gap:8px; white-space:nowrap; }
+      .chud-dot { width:7px; height:7px; border-radius:50%; background:var(--blue);
+                  flex-shrink:0; box-shadow:0 0 8px var(--blue); animation:pulse 1.2s infinite; }
+      .chud-time { font-family:var(--mono); font-size:22px; font-weight:700; color:var(--text);
+                   letter-spacing:.02em; font-variant-numeric:tabular-nums; }
+      .chud-bar { display:flex; gap:3px; margin-bottom:9px; }
+      .chud-bar i { flex:1; height:6px; border-radius:1px; background:#1C2733; display:block; }
+      .chud-bar i.on { background:var(--blue); box-shadow:0 0 6px rgba(47,111,237,.55); }
+      .chud-note { color:var(--sub); font-size:11.5px; line-height:1.5; }
+      .chud-note .warn { color:var(--amber); font-weight:600; }
 
       /* ---- video panel ---- */
+      /* Viewfinder-style corner brackets on the two "hero" panels (video
+         feed, agent core) - selected via :has() on content that's already
+         unconditionally present, no extra markup needed for the agent
+         panel since .agent-wrap always renders there. The video panel has
+         no such always-present class (its placeholders start empty), so
+         it gets one dedicated invisible marker div - see the Python call
+         site. Brackets sit 8px inset so the rounded panel border never
+         clips them. */
+      .hud-frame-marker, .panel-marker { width:0; height:0; overflow:hidden; display:block; }
+      div[data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .hud-frame-marker),
+      div[data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .agent-wrap) {
+        position:relative;
+      }
+      div[data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .hud-frame-marker)::before,
+      div[data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .agent-wrap)::before {
+        content:''; position:absolute; inset:8px; pointer-events:none; z-index:6; opacity:.5;
+        background:
+          linear-gradient(to right, var(--blue) 2px, transparent 0) top left / 14px 2px no-repeat,
+          linear-gradient(to bottom, var(--blue) 2px, transparent 0) top left / 2px 14px no-repeat,
+          linear-gradient(to left, var(--blue) 2px, transparent 0) top right / 14px 2px no-repeat,
+          linear-gradient(to bottom, var(--blue) 2px, transparent 0) top right / 2px 14px no-repeat,
+          linear-gradient(to right, var(--blue) 2px, transparent 0) bottom left / 14px 2px no-repeat,
+          linear-gradient(to top, var(--blue) 2px, transparent 0) bottom left / 2px 14px no-repeat,
+          linear-gradient(to left, var(--blue) 2px, transparent 0) bottom right / 14px 2px no-repeat,
+          linear-gradient(to top, var(--blue) 2px, transparent 0) bottom right / 2px 14px no-repeat;
+      }
+      /* Slow ambient scan sweep - video feed only, always running, very
+         subtle so it never fights with reading the numbers. */
+      div[data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .hud-frame-marker)::after {
+        content:''; position:absolute; left:8px; right:8px; top:8px; height:2px;
+        pointer-events:none; z-index:6; opacity:0;
+        background:linear-gradient(90deg, transparent, var(--blue), transparent);
+        animation:scan-sweep 5s linear infinite;
+      }
+      @keyframes scan-sweep {
+        0%   { top:8px; opacity:0; }
+        8%   { opacity:.4; }
+        92%  { opacity:.4; }
+        100% { top:calc(100% - 10px); opacity:0; }
+      }
+
       .vid-topbar { display:flex; gap:8px; padding:10px 12px 0 12px; }
       .hr-chip { background:var(--panel2); border:1px solid var(--border); border-radius:7px;
                  padding:5px 10px; font-size:11px; color:var(--sub); }
@@ -213,9 +291,8 @@ def inject_css():
                             background:#0d1117; }
       .calib-ring span { position:relative; font-family:var(--mono); font-size:19px;
                          font-weight:700; color:var(--text); }
-      .calib-instr { max-width:360px; color:var(--sub); font-size:12px; line-height:1.6; }
-      .calib-instr b { color:var(--text); }
-      .calib-instr .warn { color:var(--amber); }
+      .calib-instr-mini { color:var(--sub); font-size:11.5px; margin-top:2px;
+                          font-family:var(--mono); font-variant-numeric:tabular-nums; }
 
       .face-status { font-size:12px; color:var(--amber); padding:8px 12px; }
 
@@ -602,10 +679,33 @@ def render_calib_ring(progress, seconds_left):
         f'<div class="calib-view">'
         f'<div class="calib-ring" style="background:conic-gradient(#2F6FED {deg:.0f}%, #1C2733 0);">'
         f'<span>{deg:.0f}%</span></div>'
-        f'<div class="calib-instr"><b>Personal baseline calibration &mdash; {CALIBRATION_SECONDS}s</b><br>'
-        f'Sit naturally with a relaxed, neutral expression. Look at the camera and breathe '
-        f'normally &mdash; <span class="warn">do not smile</span>: a smiling baseline skews the '
-        f'jaw and brow signals for the whole session. {seconds_left:.0f}s remaining.</div>'
+        f'<div class="calib-instr-mini">Hold steady &mdash; {seconds_left:.0f}s remaining</div>'
+        f'</div>'
+    )
+
+
+def render_calib_hud(progress, seconds_left):
+    """
+    The primary calibration readout - see the .calib-hud CSS comment for
+    why this exists as a separate, always-above-the-fold element rather
+    than relying on the ring inside the video panel.
+    """
+    n_segments = 28
+    filled = int(round(n_segments * max(0.0, min(1.0, progress))))
+    segs = ''.join(
+        f'<i class="{"on" if i < filled else ""}"></i>' for i in range(n_segments)
+    )
+    mins, secs = divmod(max(0, int(round(seconds_left))), 60)
+    return (
+        f'<div class="calib-hud">'
+        f'<div class="chud-row">'
+        f'<div class="chud-label"><span class="chud-dot"></span>PERSONAL BASELINE ACQUISITION</div>'
+        f'<div class="chud-time mono">{mins:02d}:{secs:02d}</div>'
+        f'</div>'
+        f'<div class="chud-bar">{segs}</div>'
+        f'<div class="chud-note">Sit naturally, neutral expression, look at the camera &mdash; '
+        f'<span class="warn">do not smile</span>: a smiling baseline skews the jaw and brow '
+        f'signals for the whole session.</div>'
         f'</div>'
     )
 
@@ -985,18 +1085,22 @@ def main():
         st.markdown(f'<div style="text-align:right;padding-top:6px;">{_cal_html}</div>',
                    unsafe_allow_html=True)
 
+    # Lives directly under the context row, above the video columns, so it
+    # is never scrolled out of view - see the .calib-hud CSS comment.
+    calib_hud_placeholder = st.empty()
     if st.session_state.calibrating:
-        st.markdown(
-            '<div class="calib-banner"><div class="cb-title">Personal baseline calibration</div>'
-            f'<div class="cb-body">Sit naturally, neutral expression, {CALIBRATION_SECONDS}s. '
-            'Do not pose or smile &mdash; a smiling baseline skews the jaw and brow signals for '
-            'the whole session.</div></div>', unsafe_allow_html=True)
+        calib_hud_placeholder.markdown(
+            render_calib_hud(0.0, CALIBRATION_SECONDS), unsafe_allow_html=True)
 
     col_video, col_right = st.columns([2, 1])
 
     with col_video:
         video_container = st.container(border=True)
         with video_container:
+            # Invisible - only exists so CSS :has() can frame this specific
+            # panel with corner brackets and the ambient scan sweep. See
+            # the .hud-frame-marker CSS comment.
+            st.markdown('<div class="hud-frame-marker"></div>', unsafe_allow_html=True)
             topbar_placeholder = st.empty()
             video_placeholder = st.empty()
             level_placeholder = st.empty()
@@ -1080,9 +1184,12 @@ def main():
                 )
                 elapsed = time.time() - calib_start
                 progress = min(1.0, elapsed / CALIBRATION_SECONDS)
+                seconds_left = max(0.0, CALIBRATION_SECONDS - elapsed)
                 level_placeholder.markdown(
-                    render_calib_ring(progress, max(0.0, CALIBRATION_SECONDS - elapsed)),
-                    unsafe_allow_html=True,
+                    render_calib_ring(progress, seconds_left), unsafe_allow_html=True,
+                )
+                calib_hud_placeholder.markdown(
+                    render_calib_hud(progress, seconds_left), unsafe_allow_html=True,
                 )
 
                 if elapsed >= CALIBRATION_SECONDS:
@@ -1304,6 +1411,7 @@ def main():
         if st.session_state.pending_self_report is not None:
             _sid = st.session_state.pending_self_report
             with st.container(border=True):
+                st.markdown('<div class="panel-marker"></div>', unsafe_allow_html=True)
                 st.markdown("**How stressed did you actually feel during that "
                             "session?** Your answer is stored with the session "
                             "and is what the system learns from — be honest, "
