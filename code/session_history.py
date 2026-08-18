@@ -373,6 +373,12 @@ def clear_all_sessions():
     """Delete every saved session and all its samples."""
     conn = _get_conn()
     try:
+        # interventions.session_id has no ON DELETE CASCADE, so it must be
+        # cleared before sessions or PRAGMA foreign_keys=ON (set in
+        # _get_conn) raises IntegrityError the moment any session has a
+        # logged intervention - which any live session with the agent
+        # enabled can produce.
+        conn.execute("DELETE FROM interventions")
         conn.execute("DELETE FROM samples")
         conn.execute("DELETE FROM sessions")
         conn.commit()
@@ -384,8 +390,9 @@ def delete_session(session_id: int):
     """Delete a specific session and its samples."""
     conn = _get_conn()
     try:
-        conn.execute("DELETE FROM samples  WHERE session_id = ?", (session_id,))
-        conn.execute("DELETE FROM sessions WHERE id = ?",         (session_id,))
+        conn.execute("DELETE FROM interventions WHERE session_id = ?", (session_id,))
+        conn.execute("DELETE FROM samples       WHERE session_id = ?", (session_id,))
+        conn.execute("DELETE FROM sessions      WHERE id = ?",         (session_id,))
         conn.commit()
     finally:
         conn.close()

@@ -38,7 +38,10 @@ Usage
     # whole directory, inferring condition from UBFC-Phys T1/T2/T3 naming
     python evaluate_video_file.py --dir ../datasets/UBFC-Phys/s1 --ubfc
 
-Output goes to ../evaluation_data/ using the canonical naming scheme, so
+Output goes to ../evaluation_data/ubfc_phys/ with --ubfc (kept apart from the
+single-subject live recordings in ../evaluation_data/ - the two must never
+merge, see run_all_evaluations.py's own comment on this), else
+../evaluation_data/, using the canonical naming scheme so
 run_all_evaluations.py picks it up with no further work.
 """
 
@@ -519,8 +522,11 @@ def main():
                     help='stop after N seconds of media (useful for smoke tests)')
     ap.add_argument('--skip-cnn', action='store_true',
                     help='behavioural branch only; skips loading TensorFlow')
-    ap.add_argument('--out-dir', default='../evaluation_data',
-                    help='where stress-index CSVs are written')
+    ap.add_argument('--out-dir', default=None,
+                    help='where stress-index CSVs are written (default: '
+                         '../evaluation_data/ubfc_phys with --ubfc, else '
+                         '../evaluation_data - these must never merge, see '
+                         "run_all_evaluations.py's own UBFC-Phys section)")
     ap.add_argument('--rppg-dir', default='../datasets/rppg_traces',
                     help='where per-frame face RGB traces are written '
                          '(Phase 2 input; lets the raw video be deleted)')
@@ -531,6 +537,8 @@ def main():
                     help='skip rPPG extraction (NOT recommended - you would '
                          'have to re-download the video for Phase 2)')
     args = ap.parse_args()
+    if args.out_dir is None:
+        args.out_dir = '../evaluation_data/ubfc_phys' if args.ubfc else '../evaluation_data'
 
     videos = []
     if args.video:

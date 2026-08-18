@@ -11,7 +11,7 @@ from datetime import datetime
 
 import pytest
 
-from app_naming import export_filename
+from app_naming import export_filename, parse_filename
 
 
 WHEN = datetime(2026, 8, 12, 14, 30, 0)
@@ -67,3 +67,44 @@ def test_subject_ids_with_spaces_are_collapsed():
     name = export_filename("S 01", "relaxed", "Default", WHEN)
     assert " " not in name
     assert name == "relaxed_S01_default_2026-08-12.csv"
+
+
+def test_subject_ids_with_underscores_are_stripped():
+    """
+    A subject/mode containing '_' would otherwise produce a filename
+    parse_filename can't invert (extra split points shift every field
+    after condition) - stripped at the source so the app's own export
+    path can never generate a name it can't later parse back correctly.
+    """
+    name = export_filename("S_01", "relaxed", "Default", WHEN)
+    assert name == "relaxed_S01_default_2026-08-12.csv"
+
+
+def test_parse_filename_round_trips_export_filename():
+    for subject, condition, mode in [
+        ("S01", "relaxed", "Default"), ("S07", "stressed", "Hospital"),
+    ]:
+        name = export_filename(subject, condition, mode, WHEN)
+        meta = parse_filename(name)
+        assert meta == {
+            'condition': condition, 'subject': subject,
+            'mode': mode.lower(), 'date': '2026-08-12',
+        }
+
+
+def test_parse_filename_rejects_names_it_cannot_invert():
+    """
+    A hand-renamed or foreign file with an extra underscore must be
+    rejected outright (None), not silently mis-parsed into wrong fields -
+    this used to accept 5-part names by truncating/shifting everything
+    after condition, corrupting the per-subject breakdown table with no
+    error raised anywhere.
+    """
+    assert parse_filename("relaxed_S_01_default_2026-08-12.csv") is None
+    assert parse_filename("relaxed_S01_default_2026-08-12.csv") is not None
+
+
+def test_parse_filename_rejects_non_canonical_names():
+    assert parse_filename("relaxed_1.csv") is None
+    assert parse_filename("stress_session_2026-08-12_143000.csv") is None
+    assert parse_filename("unlabelled_S01_default_2026-08-12.csv") is None

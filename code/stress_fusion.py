@@ -255,7 +255,12 @@ def compute_stress_index(daisee_probs, behavioral_features,
     # the user is moving or talking - so its weight is redistributed rather
     # than a motion artefact being fused in.
     w_r = W_RPPG if (rppg_score is not None and W_RPPG > 0.0) else 0.0
-    total_w = w_d + w_b + w_l + w_r
+    # W_BEHAVIOR alone keeps total_w > 0 under the shipped defaults, but an
+    # ablation run (config.py's whole reason to exist) can set it to 0 - if
+    # that coincides with DaiSEE failing to load, this would otherwise be an
+    # uncaught ZeroDivisionError on every single frame of the live capture
+    # loop. Same guard as behavioral_stress_score()'s total_w a few lines up.
+    total_w = max(w_d + w_b + w_l + w_r, 1e-6)
     w_d, w_b = w_d / total_w, w_b / total_w
     w_l, w_r = w_l / total_w, w_r / total_w
 

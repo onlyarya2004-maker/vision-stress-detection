@@ -167,10 +167,20 @@ class InterventionAgent:
             signal, entry = None, CATALOGUE['general']
 
         # 4. Retire interventions that demonstrably do not work on this user.
-        if self.success_rate(entry['kind']) < config.INTERVENTION_RETIRE_BELOW \
-                and self._total_outcomes(entry['kind']) >= config.INTERVENTION_RETIRE_MIN_TRIALS:
+        # Falling back to 'general' must not skip re-checking IT against the
+        # same retirement rule - otherwise a user for whom BOTH the targeted
+        # intervention AND the general break have independently failed
+        # keeps getting shown the general break forever, contradicting the
+        # "even the break does nothing; stop nagging" guarantee below (that
+        # branch only fired when 'general' was the first pick, never when
+        # reached via this fallback).
+        def _retired(kind):
+            return (self.success_rate(kind) < config.INTERVENTION_RETIRE_BELOW
+                    and self._total_outcomes(kind) >= config.INTERVENTION_RETIRE_MIN_TRIALS)
+
+        if _retired(entry['kind']):
             fallback = CATALOGUE['general']
-            if entry['kind'] != fallback['kind']:
+            if entry['kind'] != fallback['kind'] and not _retired(fallback['kind']):
                 entry, signal = fallback, None
             else:
                 return None             # even the break does nothing; stop nagging

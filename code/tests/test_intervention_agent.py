@@ -125,6 +125,22 @@ def test_failing_intervention_is_retired_for_this_user():
         f"retired intervention still suggested: {iv.kind}")
 
 
+def test_general_break_is_also_retired_when_it_has_also_failed():
+    """
+    If BOTH the targeted intervention and the general break have
+    independently failed enough times, falling back from the retired
+    targeted one must not skip re-checking the fallback itself - the agent
+    must stop nagging entirely, not keep re-suggesting an equally-proven-
+    useless general break forever.
+    """
+    a = _agent(stats={
+        'unclench_jaw':  {'helped': 0, 'no_effect': 8},
+        'short_break':   {'helped': 0, 'no_effect': 8},
+    })
+    stressed = dict(CALM, jaw_tension=0.95)
+    assert a.update(warmed(), 0.80, stressed) is None
+
+
 def test_finish_session_hands_over_the_log():
     a, _ = _run_outcome(0.60)
     log = a.finish_session(1000.0, 0.60)

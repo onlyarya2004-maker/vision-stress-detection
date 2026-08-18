@@ -32,14 +32,18 @@ def export_filename(subject, condition, task_mode, when=None):
     mislabelled as ground truth.
     """
     when = when or datetime.now()
-    subject = (subject or '').strip().replace(' ', '')
+    # Underscores are the field separator, so one inside subject/mode would
+    # produce a name parse_filename can't invert (see its own guard) -
+    # strip them here too so the app's own export path can never generate
+    # a filename it can't later parse back correctly.
+    subject = (subject or '').strip().replace(' ', '').replace('_', '')
     condition = (condition or '').strip().lower()
+    task_mode = str(task_mode).strip().lower().replace('_', '')
 
     if condition not in VALID_CONDITIONS or not subject:
         return f"stress_session_{when:%Y-%m-%d_%H%M%S}.csv"
 
-    return (f"{condition}_{subject}_{str(task_mode).strip().lower()}_"
-            f"{when:%Y-%m-%d}.csv")
+    return f"{condition}_{subject}_{task_mode}_{when:%Y-%m-%d}.csv"
 
 
 def parse_filename(name):
@@ -50,7 +54,14 @@ def parse_filename(name):
     """
     stem = name[:-4] if name.lower().endswith('.csv') else name
     parts = stem.split('_')
-    if len(parts) < 4 or parts[0].lower() not in VALID_CONDITIONS:
+    # Exactly 4, not "at least 4": a subject or mode containing an
+    # underscore produces >4 parts, which used to be silently accepted
+    # with every field after condition shifted/truncated - a subject "S_01"
+    # would parse as subject="S", mode="01", date="default", corrupting the
+    # per-subject breakdown table with no error. Reject it instead, so it's
+    # obviously unparsed rather than quietly wrong - same principle as the
+    # unlabelled-recording fallback below.
+    if len(parts) != 4 or parts[0].lower() not in VALID_CONDITIONS:
         return None
     return {'condition': parts[0].lower(), 'subject': parts[1],
             'mode': parts[2].lower(), 'date': parts[3]}

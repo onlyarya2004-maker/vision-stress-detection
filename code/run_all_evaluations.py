@@ -39,6 +39,8 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
+from app_naming import parse_filename
+
 # ---------------------------------------------------------------------------
 # Wilson score interval — degrades gracefully if statsmodels is absent.
 # ---------------------------------------------------------------------------
@@ -88,11 +90,39 @@ def load_csv(path):
     return rows
 
 
-def collect(folder, relaxed_glob, stressed_glob):
-    """Return (relaxed_files, stressed_files) as [(name, rows), ...]."""
+def collect(folder, relaxed_glob, stressed_glob, mode=None):
+    """
+    Return (relaxed_files, stressed_files) as [(name, rows), ...].
+
+    `mode`, when given, filters to files whose canonical name (see
+    app_naming.export_filename) actually encodes that task mode - e.g.
+    mode="default" excludes a "..._studying_..." file even though it still
+    matches relaxed_*/stressed_* (condition is mode-blind by design, so the
+    glob alone cannot tell Default and Studying data apart). Files that
+    don't parse as canonical names (the older 2-part relaxed_1.csv style)
+    are treated as Default only, since that scheme predates per-mode
+    recording and was always Default-mode data - it must NOT also match
+    mode="studying"/"hospital"/"driving", or every mode section would show
+    identical legacy data.
+
+    Without this filter, any Studying/Hospital/Driving-mode recording
+    dropped into evaluation_data/ per RECORDING_PROTOCOL.md would silently
+    count as Default-mode ground truth here - the exact "which files were
+    really in this number" corruption this project's audit was written to
+    stop happening again.
+    """
     folder = Path(folder)
-    relaxed = [(p.name, load_csv(p)) for p in sorted(folder.glob(relaxed_glob))]
-    stressed = [(p.name, load_csv(p)) for p in sorted(folder.glob(stressed_glob))]
+
+    def matches_mode(path):
+        if mode is None:
+            return True
+        meta = parse_filename(path.name)
+        return meta['mode'] == mode if meta else mode == 'default'
+
+    relaxed = [(p.name, load_csv(p)) for p in sorted(folder.glob(relaxed_glob))
+               if matches_mode(p)]
+    stressed = [(p.name, load_csv(p)) for p in sorted(folder.glob(stressed_glob))
+                if matches_mode(p)]
     return relaxed, stressed
 
 
@@ -179,8 +209,8 @@ def ci_str(ci):
     return f"[{ci[0] * 100:.1f}%, {ci[1] * 100:.1f}%]"
 
 
-def render_config(title, folder, relaxed_glob, stressed_glob, out):
-    relaxed_files, stressed_files = collect(folder, relaxed_glob, stressed_glob)
+def render_config(title, folder, relaxed_glob, stressed_glob, out, mode=None):
+    relaxed_files, stressed_files = collect(folder, relaxed_glob, stressed_glob, mode=mode)
     if not relaxed_files and not stressed_files:
         out.append(f"\n### {title}\n  (no matching CSVs in {folder})")
         return None
@@ -239,13 +269,10 @@ def render_per_subject(relaxed_files, stressed_files, out):
     Break results down per subject, when filenames follow the canonical
     scheme (see RECORDING_PROTOCOL.md). Silent for PP1's single-subject
     data; becomes the headline table once Phase 1 multi-subject recordings
-    land, which is the gap the papers admit to.
+    land, which is the gap the papers admit to. relaxed_files/stressed_files
+    are already mode-filtered by the caller's collect(mode=...), so no
+    further mode handling is needed here.
     """
-    try:
-        from app_naming import parse_filename
-    except ImportError:
-        return
-
     by_subject = {}
     for name, rows in relaxed_files + stressed_files:
         meta = parse_filename(name)
@@ -294,7 +321,7 @@ def render_artifacts(root, out):
         out.append(f"  JSON cutoffs       : {cuts.get('low_to_moderate', 0):.3f}"
                    f" / {cuts.get('moderate_to_high', 0):.3f}")
         out.append("  WARNING: those JSON cutoffs are NOT what the live system uses.")
-        out.append("           stress_fusion.py hardcodes 0.36 / 0.55. See PLAN_FOR_PP2.md.")
+        out.append("           config.py sets 0.36 / 0.55. See PLAN_FOR_PP2.md.")
     else:
         out.append("\n### WESAD calibration: calibrated_thresholds.json not found")
 
@@ -335,10 +362,27 @@ def main():
     out.append("LIVE SYSTEM — END-TO-END EVALUATION")
     out.append("=" * 78)
 
+    # mode="default" matters here, not just as documentation: relaxed_*/
+    # stressed_* is condition-only and mode-blind by design (see
+    # app_naming.export_filename), so without this filter a Studying/
+    # Hospital/Driving recording dropped straight into evaluation_data/ per
+    # RECORDING_PROTOCOL.md would silently count as Default-mode ground
+    # truth. Legacy 2-part filenames (relaxed_1.csv) predate per-mode
+    # recording and are kept as Default regardless - see collect()'s
+    # docstring.
     render_config("Default mode (current evaluation_data/)",
-                  eval_dir, "relaxed_*.csv", "stressed_*.csv", out)
-    render_config("Studying mode (baseline_v1/study*)",
-                  eval_dir / "baseline_v1",
+                  eval_dir, "relaxed_*.csv", "stressed_*.csv", out, mode="default")
+    for _mode, _label in (("studying", "Studying"), ("hospital", "Hospital"),
+                          ("driving", "Driving")):
+        render_config(f"{_label} mode (current evaluation_data/)",
+                      eval_dir, "relaxed_*.csv", "stressed_*.csv", out, mode=_mode)
+
+    out.append("\n### Studying mode (archived baseline_v1/study*)")
+    out.append("  CAUTION: RECORDING_PROTOCOL.md documents this folder as unreconciled")
+    out.append("  provenance - do not cite without re-checking which files were really")
+    out.append("  in the original run. Kept for reference only, not the current number;")
+    out.append("  see the 'Studying mode (current evaluation_data/)' section above for that.")
+    render_config("  (detail)", eval_dir / "baseline_v1",
                   "studyrelaxed_*.csv", "studystressed_*.csv", out)
     render_config("Archived baseline_v1 non-study recordings",
                   eval_dir / "baseline_v1",

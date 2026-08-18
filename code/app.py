@@ -795,6 +795,30 @@ def init_state():
         st.session_state.db_initialized = True
 
 
+def save_current_session():
+    """
+    Persist st.session_state.history to the DB and queue the self-report
+    prompt. Shared by the Stop button and the mid-session camera-failure
+    path, so a session ending abnormally is saved exactly like one ending
+    normally rather than silently dropping its data.
+    """
+    if not st.session_state.history:
+        return
+    try:
+        sid = session_history.save_session(
+            st.session_state.history, task_mode=st.session_state.task_mode,
+        )
+        # Queue the self-report prompt for this session. The user's answer -
+        # not the system's prediction - is the ground-truth label the
+        # adaptation loop trains on.
+        st.session_state.pending_self_report = sid
+        ivlog = st.session_state.pop('pending_interventions', [])
+        if ivlog:
+            session_history.log_interventions(sid, ivlog)
+    except Exception as e:
+        st.warning(f"Could not save session to history DB: {e}")
+
+
 # =============================================================================
 # MAIN
 # =============================================================================
@@ -870,34 +894,24 @@ def main():
             st.session_state.running = False
             st.session_state.calibrating = False
             engine._calibrating = False
-            # Persist the just-ended session to the local DB
-            if st.session_state.history:
-                try:
-                    _sid = session_history.save_session(
-                        st.session_state.history,
-                        task_mode=st.session_state.task_mode,
-                    )
-                    # Queue the self-report prompt for this session. The
-                    # user's answer - not the system's prediction - is the
-                    # ground-truth label the adaptation loop trains on.
-                    st.session_state.pending_self_report = _sid
-                    _ivlog = st.session_state.pop('pending_interventions', [])
-                    if _ivlog:
-                        session_history.log_interventions(_sid, _ivlog)
-                except Exception as e:
-                    st.warning(f"Could not save session to history DB: {e}")
+            save_current_session()
             st.rerun()
 
         col_c, col_d = st.columns(2)
         with col_c:
             if st.button("Clear view", width='stretch',
+                         disabled=st.session_state.running or st.session_state.calibrating,
                          help="Clears the on-screen timeline. Saved sessions in the DB are not affected."):
                 st.session_state.history = []
                 st.session_state.viewing_session_id = None
                 st.session_state.viewing_session_label = None
                 st.rerun()
         with col_d:
-            if st.button("Reset baseline", width='stretch'):
+            if st.button("Reset baseline", width='stretch',
+                         disabled=st.session_state.running or st.session_state.calibrating,
+                         help="Wipes the personal baseline back to generic defaults. "
+                              "Stop first - resetting mid-session would silently "
+                              "degrade the rest of that session's scoring."):
                 engine.reset_baseline()
                 reset_daisee_baseline()
                 st.rerun()
@@ -1018,6 +1032,7 @@ def main():
 
             st.markdown('<div class="del-btn">', unsafe_allow_html=True)
             if st.button("Delete all history", width='stretch', key="clear_db",
+                         disabled=st.session_state.running or st.session_state.calibrating,
                          help="Deletes every saved session from the local DB. Cannot be undone."):
                 session_history.clear_all_sessions()
                 st.session_state.history = []
@@ -1087,10 +1102,17 @@ def main():
 
     # Lives directly under the context row, above the video columns, so it
     # is never scrolled out of view - see the .calib-hud CSS comment.
+    # Streamlit does not clear a placeholder just because a later rerun
+    # skips writing to it - whatever was last displayed here persists
+    # until something explicitly overwrites it - so the not-calibrating
+    # branch must clear it itself, or the HUD freezes on screen forever
+    # after the calibration that produced it ends.
     calib_hud_placeholder = st.empty()
     if st.session_state.calibrating:
         calib_hud_placeholder.markdown(
             render_calib_hud(0.0, CALIBRATION_SECONDS), unsafe_allow_html=True)
+    else:
+        calib_hud_placeholder.empty()
 
     col_video, col_right = st.columns([2, 1])
 
@@ -1159,6 +1181,12 @@ def main():
             while st.session_state.calibrating:
                 ok, frame = cap.read()
                 if not ok:
+                    # Symmetric with the isOpened() guard above this loop -
+                    # without resetting the flag here too, a mid-calibration
+                    # camera glitch leaves the app stuck believing it's
+                    # still calibrating (Start/Calibrate disabled) after the
+                    # camera handle is already gone, until Stop is clicked.
+                    st.session_state.calibrating = False
                     break
                 frame = cv2.flip(frame, 1)
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -1257,6 +1285,16 @@ def main():
                 ok, frame = cap.read()
                 if not ok:
                     status_placeholder.warning("Frame read failed")
+                    # Symmetric with the isOpened() guard above this loop -
+                    # without resetting the flag here too, a mid-session
+                    # camera glitch leaves the app stuck believing a
+                    # session is still running (Start/Calibrate disabled,
+                    # no loop actually active) until Stop is clicked. Also
+                    # save whatever the session accumulated so far, same as
+                    # the Stop button - otherwise resetting the flag here
+                    # would silently drop that data instead.
+                    st.session_state.running = False
+                    save_current_session()
                     break
 
                 frame = cv2.flip(frame, 1)

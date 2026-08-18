@@ -60,7 +60,23 @@ def load_index(path):
 
 
 def load_eda(path):
-    return np.array([float(l) for l in open(path) if l.strip()])
+    """
+    One EDA reading per line. Skips any line that doesn't parse (a header
+    row, a dropout marker, a truncated download) rather than crashing -
+    matching load_index()'s pattern. A single bad EDA file used to abort
+    the whole run and lose every already-computed subject's results with
+    it, since output was only ever written once, at the very end.
+    """
+    vals = []
+    for l in open(path):
+        l = l.strip()
+        if not l:
+            continue
+        try:
+            vals.append(float(l))
+        except ValueError:
+            continue
+    return np.array(vals)
 
 
 def align(t_idx, x_idx, eda):
@@ -68,6 +84,8 @@ def align(t_idx, x_idx, eda):
     Resample the stress index onto the EDA clock (4 Hz). The index trace
     starts after the calibration window, so EDA is trimmed to the overlap.
     """
+    if len(eda) == 0:
+        return None, None
     t_eda = np.arange(len(eda)) / EDA_FS
     lo, hi = max(t_idx[0], t_eda[0]), min(t_idx[-1], t_eda[-1])
     keep = (t_eda >= lo) & (t_eda <= hi)
@@ -114,10 +132,14 @@ def main():
         if not m:
             continue
         subj, task = int(m.group(1)), int(m.group(2))
+        # Padding the whole label, not just `task`, so two-digit subjects
+        # (s10+, the very next batch) don't push the column one character
+        # too wide relative to the header.
+        label = f"s{subj}_T{task}"
         eda_path = (Path(args.ubfc) / f"s{subj}" / f"s{subj}"
                     / f"eda_s{subj}_T{task}.csv")
         if not eda_path.exists():
-            out.append(f"  s{subj}_T{task:<18} (no EDA file)")
+            out.append(f"  {label:<22} (no EDA file)")
             continue
 
         t_idx, x_idx = load_index(tr)
@@ -127,9 +149,17 @@ def main():
         if x is None:
             continue
 
-        pr = stats.pearsonr(x, e)[0] if np.std(x) > 0 and np.std(e) > 0 else np.nan
-        sr = stats.spearmanr(x, e)[0] if np.std(x) > 0 and np.std(e) > 0 else np.nan
-        out.append(f"  s{subj}_T{task:<18}{len(x):>6}{pr:>+10.2f}{sr:>+10.2f}")
+        # NaN std (an unparsed dropout marker survived as a literal "nan")
+        # must not look identical to genuinely-zero variance, so it's
+        # called out explicitly instead of falling through to the same
+        # blank-looking "N/A" the zero-variance case would print.
+        sx, se = np.std(x), np.std(e)
+        if np.isnan(sx) or np.isnan(se):
+            out.append(f"  {label:<22}{len(x):>6}  (NaN in EDA - dropout marker?)")
+            continue
+        pr = stats.pearsonr(x, e)[0] if sx > 0 and se > 0 else np.nan
+        sr = stats.spearmanr(x, e)[0] if sx > 0 and se > 0 else np.nan
+        out.append(f"  {label:<22}{len(x):>6}{pr:>+10.2f}{sr:>+10.2f}")
 
         d = per_subject.setdefault(subj, {})
         d[task] = {'idx_mean': float(np.mean(x)), 'eda_mean': float(np.mean(e))}
