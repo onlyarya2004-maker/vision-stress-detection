@@ -22,17 +22,22 @@ Inputs are all already on disk (video long deleted):
   datasets/feature_traces/features_vid_s{N}_T{K}.csv   stress index over time
   datasets/UBFC-Phys/s{N}/s{N}/eda_s{N}_T{K}.csv       EDA @ 4 Hz
 
+Output (like run_all_evaluations.py, never hand-transcribed):
+  evaluation_data/CORRELATION_RESULTS_<date>.txt
+
 Usage
 -----
-    python correlate_physiology.py
+    cd code && python correlate_physiology.py
     python correlate_physiology.py --traces ../datasets/feature_traces \
         --ubfc ../datasets/UBFC-Phys
+    python correlate_physiology.py --out ../evaluation_data/CORRELATION.txt
 """
 
 import argparse
 import csv
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -77,6 +82,11 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--traces', default='../datasets/feature_traces')
     ap.add_argument('--ubfc', default='../datasets/UBFC-Phys')
+    ap.add_argument('--root', default='..',
+                    help="project root (default: .. when run from code/)")
+    ap.add_argument('--out', default=None,
+                    help="output file (default: <root>/evaluation_data/"
+                         "CORRELATION_RESULTS_<date>.txt)")
     args = ap.parse_args()
 
     traces = sorted(Path(args.traces).glob('features_*.csv'))
@@ -84,15 +94,21 @@ def main():
         print("no feature traces found")
         return 1
 
-    print("=" * 74)
-    print("STRESS INDEX vs EDA  (UBFC-Phys ground truth)")
-    print("=" * 74)
-    print("Within-task r is indicative only - EDA drifts and both series are")
-    print("autocorrelated. The between-task direction test is the real claim.\n")
+    out = []
+    out.append("=" * 74)
+    out.append("STRESS INDEX vs EDA  (UBFC-Phys ground truth)")
+    out.append("=" * 74)
+    out.append(f"generated : {datetime.now().isoformat(timespec='seconds')}")
+    out.append(f"traces    : {Path(args.traces).resolve()}")
+    out.append(f"ubfc      : {Path(args.ubfc).resolve()}")
+    out.append("")
+    out.append("Within-task r is indicative only - EDA drifts and both series are")
+    out.append("autocorrelated. The between-task direction test is the real claim.")
+    out.append("")
 
     per_subject = {}
-    print(f"  {'trace':22s}{'n':>6}{'Pearson':>10}{'Spearman':>10}")
-    print("  " + "-" * 50)
+    out.append(f"  {'trace':22s}{'n':>6}{'Pearson':>10}{'Spearman':>10}")
+    out.append("  " + "-" * 50)
     for tr in traces:
         m = NAME_RE.search(tr.stem)
         if not m:
@@ -101,7 +117,7 @@ def main():
         eda_path = (Path(args.ubfc) / f"s{subj}" / f"s{subj}"
                     / f"eda_s{subj}_T{task}.csv")
         if not eda_path.exists():
-            print(f"  s{subj}_T{task:<18} (no EDA file)")
+            out.append(f"  s{subj}_T{task:<18} (no EDA file)")
             continue
 
         t_idx, x_idx = load_index(tr)
@@ -113,16 +129,17 @@ def main():
 
         pr = stats.pearsonr(x, e)[0] if np.std(x) > 0 and np.std(e) > 0 else np.nan
         sr = stats.spearmanr(x, e)[0] if np.std(x) > 0 and np.std(e) > 0 else np.nan
-        print(f"  s{subj}_T{task:<18}{len(x):>6}{pr:>+10.2f}{sr:>+10.2f}")
+        out.append(f"  s{subj}_T{task:<18}{len(x):>6}{pr:>+10.2f}{sr:>+10.2f}")
 
         d = per_subject.setdefault(subj, {})
         d[task] = {'idx_mean': float(np.mean(x)), 'eda_mean': float(np.mean(e))}
 
     # ---- between-task: does the index move the way EDA moves? ----
-    print("\n  BETWEEN-TASK (rest T1 -> stressors T2/T3): direction agreement")
-    print(f"  {'subject':10s}{'EDA rest':>10}{'EDA stress':>12}"
-          f"{'idx rest':>10}{'idx stress':>12}   agree?")
-    print("  " + "-" * 62)
+    out.append("")
+    out.append("  BETWEEN-TASK (rest T1 -> stressors T2/T3): direction agreement")
+    out.append(f"  {'subject':10s}{'EDA rest':>10}{'EDA stress':>12}"
+               f"{'idx rest':>10}{'idx stress':>12}   agree?")
+    out.append("  " + "-" * 62)
     agree = total = 0
     for subj in sorted(per_subject):
         d = per_subject[subj]
@@ -135,13 +152,23 @@ def main():
         same = (eda_stress - eda_rest) * (idx_stress - idx_rest) > 0
         agree += int(same)
         total += 1
-        print(f"  s{subj:<9}{eda_rest:>10.3f}{eda_stress:>12.3f}"
-              f"{idx_rest:>10.3f}{idx_stress:>12.3f}   {'YES' if same else 'NO'}")
+        out.append(f"  s{subj:<9}{eda_rest:>10.3f}{eda_stress:>12.3f}"
+                   f"{idx_rest:>10.3f}{idx_stress:>12.3f}   {'YES' if same else 'NO'}")
 
     if total:
-        print(f"\n  direction agreement: {agree}/{total} subjects")
-        print("  (chance is ~50%; this is the number that grows meaningful as")
-        print("   more subjects are processed - target s15-s20)")
+        out.append(f"\n  direction agreement: {agree}/{total} subjects")
+        out.append("  (chance is ~50%; this is the number that grows meaningful as")
+        out.append("   more subjects are processed - target s6-s10 next)")
+
+    text = "\n".join(out)
+    print(text)
+
+    root = Path(args.root).resolve()
+    out_path = (Path(args.out) if args.out else
+                root / "evaluation_data" / f"CORRELATION_RESULTS_{datetime.now():%Y-%m-%d}.txt")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(text + "\n", encoding="utf-8")
+    print(f"\n\nwritten to: {out_path}")
     return 0
 
 
