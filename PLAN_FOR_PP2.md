@@ -252,10 +252,10 @@ memory) on 2026-08-18. ✅ done · 🟡 partial · ❌ not started.
 | **0 (100%)** | 0.1 Repo + deps + GPU (git/LFS, requirements ×2, PyTorch sm_120) | ✅ |
 | | 0.2 Tests + harness + data fix (135 tests; CIs + session-level; relaxed_2 → 99.11% n=224) | ✅ |
 | | 0.3 Config centralization + honest thresholds + recording protocol/naming | ✅ |
-| **1 (~60%)** | 1.1 UBFC-Phys download | 🟡 s1–s5 of 10 target downloaded, processed, traces backed up to git; videos deleted per protocol; s6–s10 next |
+| **1 (~60%)** | 1.1 UBFC-Phys download | 🟡 s1–s5 of 10 target downloaded, processed, traces backed up to git; s6–s10 next |
 | | 1.2 Offline video pipeline (media clock, feature dump, rPPG traces) | ✅ |
 | | 1.3 Cross-subject validation + calibration fixes (posture/blink/blink-rate) | ✅ for 5 subjects |
-| | 1.4 Stress-index ↔ EDA/BVP continuous correlation | 🟡 script exists and runs, but writes no output file — results aren't persisted anywhere |
+| | 1.4 Stress-index ↔ EDA/BVP continuous correlation | 🟡 script fixed to persist output (2026-08-18); but s1–s5's EDA/BVP ground truth was deleted along with the folders (never git-tracked, by design — same as DaiSEE/WESAD) and won't be re-downloaded. Correlation will only ever cover whichever subjects still have their ground truth on disk when the script runs — s6–s10 onward. |
 | | 1.5 Team recordings + multi-user profiles | ❌ **user-gated — biggest blocker** (evaluation_data/ root still only has the original single-subject PP1 recordings) |
 | **2 (~30%)** | 2.1 Feature-based temporal model (GRU/TCN) | ❌ |
 | | 2.2 rPPG branch (offline 3.52 bpm POS; live module, quality-gated, W_RPPG=0) | ✅ pending webcam validation |
@@ -285,8 +285,15 @@ calibrated blink rate) — found via 1.3, regression-tested. Also: the git backu
 `.gitignore` rule (fixed 2026-08-17) — the s1–s5 processing work is now actually recoverable
 if the machine is lost, which it was not before.
 
+Data loss note (2026-08-18): the `datasets/UBFC-Phys/s1`–`s5` folders were deleted in full,
+not just the (already-gone) videos. The derived traces were unaffected (backed up to git
+per above), but the EDA/BVP/self-report ground-truth CSVs were never git-tracked — same
+licensing caution as DaiSEE/WESAD — and are gone for good; decided not to re-download them.
+Phase 1.4 correlation now only ever runs against whichever subjects still have their ground
+truth on disk at the time — s6–s10 onward.
+
 Next actions: (user) download s6–s10 · (user) team recordings · (code) temporal model 2.1,
-ablations 4.2, save correlate_physiology.py output to a file (1.4/4.4).
+ablations 4.2.
 
 ---
 
