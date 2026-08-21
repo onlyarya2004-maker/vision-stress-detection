@@ -104,6 +104,19 @@ def test_parse_filename_rejects_names_it_cannot_invert():
     assert parse_filename("relaxed_S01_default_2026-08-12.csv") is not None
 
 
+def test_parse_filename_tolerates_the_ubfc_traceability_suffix():
+    """
+    evaluate_video_file.py legitimately appends "_vid_s{N}_T{K}" to the
+    canonical name for UBFC-Phys traceability - a real 7-part name that
+    must still parse. A too-strict "exactly 4 parts" guard (an earlier,
+    broken version of this fix) silently dropped the entire per-subject
+    breakdown for UBFC-Phys data by rejecting every one of these.
+    """
+    meta = parse_filename("relaxed_U01_default_2026-08-15_vid_s1_T1.csv")
+    assert meta == {'condition': 'relaxed', 'subject': 'U01',
+                    'mode': 'default', 'date': '2026-08-15'}
+
+
 def test_parse_filename_rejects_non_canonical_names():
     assert parse_filename("relaxed_1.csv") is None
     assert parse_filename("stress_session_2026-08-12_143000.csv") is None

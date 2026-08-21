@@ -200,7 +200,11 @@ def report_learned_weights(model, names):
         hand = config.BEHAVIOR_WEIGHTS.get(n)
         hand_s = f"{hand:.2f}" if hand is not None else "  -"
         learned = abs(coef[i]) / total
-        direction = "stress↑" if coef[i] > 0 else "stress↓ (INVERTED)"
+        # Plain ASCII, not an arrow glyph - Windows' default console
+        # codepage (cp1252) can't encode U+2191/U+2193 and print() crashes
+        # partway through this table, which used to also skip the --save
+        # step entirely since it runs later in main() than this report.
+        direction = "stress up" if coef[i] > 0 else "stress down (INVERTED)"
         print(f"  {n:18s}{hand_s:>12}{learned:>10.2f}{coef[i]:>+9.2f}"
               f"   {direction}")
 
@@ -255,14 +259,13 @@ def main():
     sc = StandardScaler().fit(X)
     final = LogisticRegression(max_iter=2000, class_weight='balanced')
     final.fit(sc.transform(X), y)
-    print(f"\n{'-' * 74}\nWHAT IT LEARNED (fitted on all subjects)\n{'-' * 74}")
-    report_learned_weights(final, names)
 
-    print("\n  Signals marked INVERTED carry a NEGATIVE learned coefficient:")
-    print("  the model found them anti-correlated with stress on this data,")
-    print("  which the hand-picked weights could not express - they are all")
-    print("  positive by construction.")
-
+    # Save before the diagnostic report below, not after - the model is
+    # the actually-important output; the printed table is just commentary
+    # on it. A crash while printing (this table's direction labels used to
+    # be non-ASCII arrows, which crash mid-print on Windows' default
+    # console codepage) used to also silently skip --save, since it ran
+    # later in the function and this exact thing already happened once.
     if args.save:
         try:
             import joblib
@@ -273,6 +276,14 @@ def main():
             print(f"\n  saved: {out}")
         except ImportError:
             print("\n  joblib not available; model not saved")
+
+    print(f"\n{'-' * 74}\nWHAT IT LEARNED (fitted on all subjects)\n{'-' * 74}")
+    report_learned_weights(final, names)
+
+    print("\n  Signals marked INVERTED carry a NEGATIVE learned coefficient:")
+    print("  the model found them anti-correlated with stress on this data,")
+    print("  which the hand-picked weights could not express - they are all")
+    print("  positive by construction.")
     return 0
 
 

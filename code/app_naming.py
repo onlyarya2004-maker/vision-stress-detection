@@ -51,17 +51,23 @@ def parse_filename(name):
     Inverse of export_filename: recover (condition, subject, mode) from a
     canonical name, or None if it is not one. Used by the evaluation harness
     to group results per subject for multi-subject reporting.
+
+    Tolerates trailing fields after the date - evaluate_video_file.py
+    legitimately appends "_vid_s{N}_T{K}" for UBFC-Phys traceability, e.g.
+    relaxed_U01_default_2026-08-15_vid_s1_T1.csv is 7 parts, not 4, and must
+    still parse. What must NOT parse is a genuinely malformed name where an
+    embedded underscore (a subject "S_01", say) shifts every field after
+    condition - the fix for that is anchored on parts[3] actually looking
+    like a date, not on the total part count, since both good and bad names
+    can have more than 4 parts.
     """
     stem = name[:-4] if name.lower().endswith('.csv') else name
     parts = stem.split('_')
-    # Exactly 4, not "at least 4": a subject or mode containing an
-    # underscore produces >4 parts, which used to be silently accepted
-    # with every field after condition shifted/truncated - a subject "S_01"
-    # would parse as subject="S", mode="01", date="default", corrupting the
-    # per-subject breakdown table with no error. Reject it instead, so it's
-    # obviously unparsed rather than quietly wrong - same principle as the
-    # unlabelled-recording fallback below.
-    if len(parts) != 4 or parts[0].lower() not in VALID_CONDITIONS:
+    if len(parts) < 4 or parts[0].lower() not in VALID_CONDITIONS:
+        return None
+    try:
+        datetime.strptime(parts[3], '%Y-%m-%d')
+    except ValueError:
         return None
     return {'condition': parts[0].lower(), 'subject': parts[1],
             'mode': parts[2].lower(), 'date': parts[3]}

@@ -59,15 +59,15 @@ writes a timestamped file to `evaluation_data/`. Nothing here is transcribed by 
 |---|---|---|---|
 | Live system, Default mode (single subject, own webcam) | 224 frames (100 relaxed + 124 stressed) | **99.11%** | [96.8%, 99.8%] |
 | Live system, Studying mode (single subject) | 293 frames (147 + 146) | **94.54%** | [91.3%, 96.6%] |
-| **Cross-subject (UBFC-Phys, 5 subjects), hand-tuned fusion** | 9,859 frames, LOSO | **57.73%** | — |
-| **Cross-subject, learned fusion (logistic / gradient boosting)** | same data, LOSO | **68.22% / 75.19%** | — |
+| **Cross-subject (UBFC-Phys, 10 subjects), hand-tuned fusion** | 123,728 frames, LOSO | **55.19%** | — |
+| **Cross-subject, learned fusion (logistic / gradient boosting)** | same data, LOSO | **66.74% / 77.06%** | — |
 | rPPG heart rate vs Empatica E4 BVP (POS method) | 15 traces | **3.52 bpm** mean abs. error | — |
 | WESAD physiological validation (LOSO, 15 subjects) | 877 windows | **91.86%** (F1 0.874) | — |
 | DaiSEE CNN ensemble, held-out test split | — | ~82-84% | — |
 
-The gap between 99.11% (single-subject) and 57.73% (cross-subject) is the central finding of
+The gap between 99.11% (single-subject) and 55.19% (cross-subject) is the central finding of
 the PP2 work so far: hand-tuned constants measure the person they were tuned on. Learning the
-fusion weights recovers +10 to +17 points out-of-fold, and the calibration fixes it prompted
+fusion weights recovers +11 to +22 points out-of-fold, and the calibration fixes it prompted
 (posture baseline, relative blink threshold, calibrated blink rate) are regression-tested.
 
 Default mode: relaxed→LOW recall 100% (100/100), stressed→MOD/HIGH recall 98.39% (122/124).

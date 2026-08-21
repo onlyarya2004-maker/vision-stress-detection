@@ -188,7 +188,7 @@ def main():
     if total:
         out.append(f"\n  direction agreement: {agree}/{total} subjects")
         out.append("  (chance is ~50%; this is the number that grows meaningful as")
-        out.append("   more subjects are processed - target s6-s10 next)")
+        out.append("   more subjects are processed)")
 
     text = "\n".join(out)
     print(text)

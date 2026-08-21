@@ -242,21 +242,21 @@ outcome in the same honest style, positive or negative.
 
 ---
 
-## Status snapshot — 2026-08-18
+## Status snapshot — 2026-08-21
 
 Checked line-by-line against the phases above, verified against disk/config/DB state (not
-memory) on 2026-08-18. ✅ done · 🟡 partial · ❌ not started.
+memory) on 2026-08-21. ✅ done · 🟡 partial · ❌ not started.
 
 | Phase | Part | Status |
 |---|---|---|
 | **0 (100%)** | 0.1 Repo + deps + GPU (git/LFS, requirements ×2, PyTorch sm_120) | ✅ |
 | | 0.2 Tests + harness + data fix (135 tests; CIs + session-level; relaxed_2 → 99.11% n=224) | ✅ |
 | | 0.3 Config centralization + honest thresholds + recording protocol/naming | ✅ |
-| **1 (~60%)** | 1.1 UBFC-Phys download | 🟡 s1–s5 of 10 target downloaded, processed, traces backed up to git; s6–s10 next |
+| **1 (~80%)** | 1.1 UBFC-Phys download | ✅ all 10 of 10 subjects (s1–s10) downloaded, processed, traces backed up to git |
 | | 1.2 Offline video pipeline (media clock, feature dump, rPPG traces) | ✅ |
-| | 1.3 Cross-subject validation + calibration fixes (posture/blink/blink-rate) | ✅ for 5 subjects |
-| | 1.4 Stress-index ↔ EDA/BVP continuous correlation | 🟡 script fixed to persist output (2026-08-18); but s1–s5's EDA/BVP ground truth was deleted along with the folders (never git-tracked, by design — same as DaiSEE/WESAD) and won't be re-downloaded. Correlation will only ever cover whichever subjects still have their ground truth on disk when the script runs — s6–s10 onward. |
-| | 1.5 Team recordings + multi-user profiles | ❌ **user-gated — biggest blocker** (evaluation_data/ root still only has the original single-subject PP1 recordings) |
+| | 1.3 Cross-subject validation + calibration fixes (posture/blink/blink-rate) | ✅ for all 10 subjects |
+| | 1.4 Stress-index ↔ EDA/BVP continuous correlation | ✅ real results for s6–s10 (4/5 subjects direction-agree, well above ~50% chance) - s1–s5's ground truth was deleted (never git-tracked, by design) and won't be re-downloaded, so those 5 will never have this |
+| | 1.5 Team recordings + multi-user profiles | ❌ **user-gated — the only remaining blocker in this phase** (evaluation_data/ root still only has the original single-subject PP1 recordings) |
 | **2 (~30%)** | 2.1 Feature-based temporal model (GRU/TCN) | ❌ |
 | | 2.2 rPPG branch (offline 3.52 bpm POS; live module, quality-gated, W_RPPG=0) | ✅ pending webcam validation |
 | | 2.3 PERCLOS for Driving | ❌ |
@@ -269,8 +269,8 @@ memory) on 2026-08-18. ✅ done · 🟡 partial · ❌ not started.
 | | 3.5 Intervention effectiveness tracking | ✅ agent built, wired into the live loop, schema + tests in place — 0 interventions logged yet since no real session has crossed the trigger threshold |
 | **4 (~40%)** | 4.1 One regenerating script | 🟡 missing rows: DaiSEE re-run, learned-vs-hand-tuned, temporal old-vs-new |
 | | 4.2 Ablation table | ❌ |
-| | 4.3 Per-subject breakdown | 🟡 active for UBFC; team data absent |
-| | 4.4 UBFC correlation row in harness | 🟡 standalone script; fold into harness; also see 1.4 |
+| | 4.3 Per-subject breakdown | 🟡 active for all 10 UBFC subjects; team data absent |
+| | 4.4 UBFC correlation row in harness | 🟡 standalone script, now with real s6–s10 results; not yet folded into the harness; see 1.4 |
 | | 4.5 Frame + session metrics with Wilson CIs | ✅ |
 | **5 (~50%)** | 5.1 Analytics dashboard | ❌ |
 | | 5.2 PDF export | ❌ |
@@ -289,11 +289,32 @@ Data loss note (2026-08-18): the `datasets/UBFC-Phys/s1`–`s5` folders were del
 not just the (already-gone) videos. The derived traces were unaffected (backed up to git
 per above), but the EDA/BVP/self-report ground-truth CSVs were never git-tracked — same
 licensing caution as DaiSEE/WESAD — and are gone for good; decided not to re-download them.
-Phase 1.4 correlation now only ever runs against whichever subjects still have their ground
-truth on disk at the time — s6–s10 onward.
+Phase 1.4 correlation only ever runs against whichever subjects still have their ground
+truth on disk at the time — s1–s5 never will, s6–s10 now do.
 
-Next actions: (user) download s6–s10 · (user) team recordings · (code) temporal model 2.1,
-ablations 4.2.
+UBFC-Phys download complete (2026-08-21): s6–s10 processed (much larger source videos than
+s1–s5, 1024x1024 vs whatever s1–s5 was - ~0.35x realtime, ~9 min/video). All 30 feature/rPPG
+traces (10 subjects x 3 tasks) verified on disk and backed up to git. Two real bugs found and
+fixed while regenerating the numbers on the full dataset, both pre-existing, neither new:
+- `app_naming.parse_filename` briefly regressed (from the 2026-08-18 underscore-corruption
+  fix) into rejecting the legitimate 7-part UBFC filenames
+  (`relaxed_U01_default_2026-08-15_vid_s1_T1.csv`), which silently emptied the per-subject
+  breakdown table. Fixed by anchoring the guard on the date field's format instead of the
+  total part count - caught only because the breakdown table went missing on re-run, not by
+  reasoning alone.
+- `train_meta_learner.py --save` was silently skipped whenever the diagnostic weight table
+  printed after it crashed - which it always did on Windows, since two of its labels were
+  non-ASCII arrow glyphs (`stress↑`/`stress↓`) that cp1252 can't encode. Fixed the encoding
+  (ASCII labels) and reordered so save happens before the report, not after, so a future
+  print-only bug can't take the actual output down with it again.
+
+Canonical cross-subject numbers regenerated with the full 10-subject dataset (LOSO,
+123,728 frames): hand-tuned 55.19%, learned (logistic/gradient-boosting) 66.74%/77.06% -
+README updated. EDA direction-agreement for s6–s10: 4/5 subjects, above the ~50% chance
+baseline.
+
+Next actions: (user) team recordings - now the only blocker in Phase 1 · (code) temporal
+model 2.1, ablations 4.2, fold the UBFC correlation into the harness (4.4).
 
 ---
 
