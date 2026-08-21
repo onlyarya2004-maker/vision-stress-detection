@@ -90,8 +90,17 @@ Discrimination gap **+0.320** (relaxed mean 0.235 vs stressed mean 0.554).
   accuracy (82.4% with vs 89.1% without). Scripts kept in `code/_archive/` for reproducibility.
 - **CNN+LSTM temporal branch — disabled.** Trained on 5,356 DaiSEE sequences; reached 71.1%
   test accuracy, *below* the 86.6% trivial-majority-class floor. It collapsed to the majority
-  class because frozen ImageNet features are not stress-discriminative. Wired into the fusion
-  with weight 0.0. PP2 retrains it on behavioral feature sequences instead of raw pixels.
+  class because frozen ImageNet features are not stress-discriminative. Retired to
+  `code/_archive/lstm_temporal.py`, kept as a documented negative result.
+- **Feature-sequence GRU temporal branch — also disabled.** PP2's planned fix for the above:
+  retrained on `BehavioralFeatureEngine` signal sequences (the same 7-signal vocabulary the
+  rest of the system uses) instead of raw pixels, over all 5,356/1,429/1,784 DaiSEE
+  train/val/test clips. Result: 45.74% accuracy, *still below* the 86.60% floor (balanced
+  accuracy 54.17%, barely above chance) — a gradient-boosted-trees baseline on the same
+  features scored 84.59%, closer to but also below the floor. Reported as-is, no tuning
+  performed to force either model above the floor. See
+  `models/temporal_gru_test_report.txt`. Wired into fusion with weight 0.0
+  (`config.W_TEMPORAL`).
 
 ---
 

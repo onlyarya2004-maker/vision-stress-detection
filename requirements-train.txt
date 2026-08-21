@@ -39,3 +39,12 @@ pandas
 scipy
 statsmodels
 pytest
+
+# train_temporal_model.py extracts behavioral-feature sequences from the
+# processed_daisee/ JPEG crops via BehavioralFeatureEngine, which needs
+# these two - unpinned opencv-python resolved cleanly against this venv's
+# numpy 2.x; mediapipe pinned to match requirements.txt's own version
+# (0.10.14, needed for protobuf 4.25.x compatibility) even though this venv
+# has no TensorFlow to conflict with, just for one less moving part.
+mediapipe==0.10.14
+opencv-python

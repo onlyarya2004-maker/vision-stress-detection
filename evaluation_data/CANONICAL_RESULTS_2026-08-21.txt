@@ -1,7 +1,7 @@
 ==============================================================================
 CANONICAL EVALUATION RESULTS
 ==============================================================================
-generated : 2026-08-21T17:47:02
+generated : 2026-08-21T22:42:19
 root      : C:\Users\Arya\Desktop\stress_project
 
 Every number this project reports must come from this file.
@@ -193,13 +193,40 @@ OFFLINE STAGE ARTIFACTS (read from generated files, not retyped)
   WARNING: those JSON cutoffs are NOT what the live system uses.
            config.py sets 0.36 / 0.55. See PLAN_FOR_PP2.md.
 
-### CNN+LSTM temporal branch (DISABLED in the live system)
+### CNN+LSTM pixel temporal branch (RETIRED - code/_archive/lstm_temporal.py)
   source: models\lstm_test_report.txt
   Test set size: 1784 sequences
   Test accuracy: 71.13%
   Test loss: 0.6059
   Majority-class floor for DaiSEE (~6.4:1) is 86.6% - the model
-  is BELOW it, which is why W_LSTM = 0.0.
+  was BELOW it. Replaced in Phase 2.1 by a feature-sequence GRU -
+  see the next section.
+
+### Feature-sequence GRU temporal branch (Phase 2.1, DISABLED via W_TEMPORAL=0.0)
+  source: models\temporal_gru_test_report.txt
+  generated : 2026-08-21 22:35:00
+  clips     : train=5356 val=1429 test=1784
+  GRU (feature-sequence temporal model)
+  n                    : 1784
+  accuracy             : 45.74%
+  balanced accuracy    : 54.17%
+  precision (stressed) : 0.151
+  recall (stressed)    : 0.657
+  f1 (stressed)        : 0.245
+  majority-class floor : 86.60%
+  verdict              : BELOW the majority-class floor
+  GBT baseline (mean/std/slope summary stats)
+  n                    : 1784
+  accuracy             : 84.59%
+  balanced accuracy    : 49.37%
+  precision (stressed) : 0.071
+  recall (stressed)    : 0.013
+  f1 (stressed)        : 0.021
+  majority-class floor : 86.60%
+  verdict              : BELOW the majority-class floor
+  old pixel-LSTM : 71.13% accuracy, BELOW its 86.6% majority floor
+  new GRU        : 45.74% accuracy, BELOW its 86.60% floor
+  GBT baseline   : 84.59% accuracy, BELOW its 86.60% floor
 
 ==============================================================================
 READING THESE NUMBERS

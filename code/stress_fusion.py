@@ -72,7 +72,7 @@ _CAL = {
 # ---------------- BRANCH WEIGHTS ----------------
 W_DAISEE   = config.W_DAISEE
 W_BEHAVIOR = config.W_BEHAVIOR
-W_LSTM     = config.W_LSTM
+W_TEMPORAL = config.W_TEMPORAL
 W_RPPG     = config.W_RPPG
 
 
@@ -88,8 +88,8 @@ if _WESAD and _WESAD.get('accuracy') is not None:
 else:
     print("[stress_fusion] no WESAD calibration artifact found "
           "(cutoffs are unaffected either way)")
-if W_LSTM == 0.0:
-    print("[stress_fusion] LSTM branch disabled (W_LSTM = 0.0)")
+if W_TEMPORAL == 0.0:
+    print("[stress_fusion] Temporal branch disabled (W_TEMPORAL = 0.0)")
 
 
 BEHAVIOR_WEIGHTS = config.BEHAVIOR_WEIGHTS
@@ -215,16 +215,16 @@ def behavioral_stress_score(features, task_mode='Default'):
 # ---------------- MAIN FUSION ----------------
 def compute_stress_index(daisee_probs, behavioral_features,
                          emotion_probs=None, emotion_class_names=None,
-                         lstm_score=None, task_mode='Default',
+                         temporal_score=None, task_mode='Default',
                          rppg_score=None):
     """
     daisee_probs:        ndarray (2,) softmax [not_stressed, stressed]; None if absent
     behavioral_features: dict from BehavioralFeatureEngine.extract()
     emotion_probs:       deprecated, ignored. Kept for backward call signature compat.
     emotion_class_names: deprecated, ignored.
-    lstm_score:          float in [0,1] from LSTMTemporalInference.predict(), or None
-                         if LSTM not available / buffer not full. Contributes only
-                         when W_LSTM > 0.
+    temporal_score:      float in [0,1] from GRUTemporalInference.predict(), or None
+                         if the temporal model is unavailable / buffer not full.
+                         Contributes only when W_TEMPORAL > 0.
     task_mode:           one of TASK_MODES keys ('Default', 'Studying', 'Hospital',
                          'Driving'). Reweights behavioral signals to emphasize
                          those most diagnostic of stress in the given context.
@@ -240,17 +240,17 @@ def compute_stress_index(daisee_probs, behavioral_features,
             'daisee_stress': daisee_s, 'daisee_raw': daisee_raw,
             'emotion_stress': None, 'emotion_raw': None,   # kept for CSV compat
             'behavior_stress': beh_s,
-            'lstm_stress': lstm_score,
+            'temporal_stress': temporal_score,
             'rppg_stress': rppg_score,
             'active_signals': 0, 'boost_applied': False,
             'contributions': beh_contribs, 'calibrating': True,
         }
 
-    # Branch weight allocation - LSTM only enters fusion if W_LSTM > 0
-    # AND lstm_score is not None
+    # Branch weight allocation - the temporal branch only enters fusion if
+    # W_TEMPORAL > 0 AND temporal_score is not None
     w_d = W_DAISEE if daisee_s is not None else 0.0
     w_b = W_BEHAVIOR
-    w_l = W_LSTM if (lstm_score is not None and W_LSTM > 0.0) else 0.0
+    w_l = W_TEMPORAL if (temporal_score is not None and W_TEMPORAL > 0.0) else 0.0
     # rPPG abstains (None) whenever signal quality is poor - typically while
     # the user is moving or talking - so its weight is redistributed rather
     # than a motion artefact being fused in.
@@ -267,8 +267,8 @@ def compute_stress_index(daisee_probs, behavioral_features,
     raw = w_b * beh_s
     if daisee_s is not None:
         raw += w_d * daisee_s
-    if lstm_score is not None and W_LSTM > 0.0:
-        raw += w_l * float(lstm_score)
+    if temporal_score is not None and W_TEMPORAL > 0.0:
+        raw += w_l * float(temporal_score)
     if rppg_score is not None and W_RPPG > 0.0:
         raw += w_r * float(rppg_score)
 
@@ -286,7 +286,7 @@ def compute_stress_index(daisee_probs, behavioral_features,
         'emotion_stress':  None,
         'emotion_raw':     None,
         'behavior_stress': beh_s,
-        'lstm_stress':     lstm_score,
+        'temporal_stress': temporal_score,
         'rppg_stress':     rppg_score,
         'active_signals':  active,
         'boost_applied':   boost,

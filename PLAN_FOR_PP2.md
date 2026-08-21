@@ -250,14 +250,14 @@ memory) on 2026-08-21. ✅ done · 🟡 partial · ❌ not started.
 | Phase | Part | Status |
 |---|---|---|
 | **0 (100%)** | 0.1 Repo + deps + GPU (git/LFS, requirements ×2, PyTorch sm_120) | ✅ |
-| | 0.2 Tests + harness + data fix (135 tests; CIs + session-level; relaxed_2 → 99.11% n=224) | ✅ |
+| | 0.2 Tests + harness + data fix (141 tests; CIs + session-level; relaxed_2 → 99.11% n=224) | ✅ |
 | | 0.3 Config centralization + honest thresholds + recording protocol/naming | ✅ |
 | **1 (~80%)** | 1.1 UBFC-Phys download | ✅ all 10 of 10 subjects (s1–s10) downloaded, processed, traces backed up to git |
 | | 1.2 Offline video pipeline (media clock, feature dump, rPPG traces) | ✅ |
 | | 1.3 Cross-subject validation + calibration fixes (posture/blink/blink-rate) | ✅ for all 10 subjects |
 | | 1.4 Stress-index ↔ EDA/BVP continuous correlation | ✅ real results for s6–s10 (4/5 subjects direction-agree, well above ~50% chance) - s1–s5's ground truth was deleted (never git-tracked, by design) and won't be re-downloaded, so those 5 will never have this |
 | | 1.5 Team recordings + multi-user profiles | ❌ **user-gated — the only remaining blocker in this phase** (evaluation_data/ root still only has the original single-subject PP1 recordings) |
-| **2 (~30%)** | 2.1 Feature-based temporal model (GRU/TCN) | ❌ |
+| **2 (~45%)** | 2.1 Feature-based temporal model (GRU/TCN) | ✅ built, trained, wired in, honest negative result — 45.74% acc (GBT baseline 84.59%), both below the 86.60% floor; W_TEMPORAL=0.0 |
 | | 2.2 rPPG branch (offline 3.52 bpm POS; live module, quality-gated, W_RPPG=0) | ✅ pending webcam validation |
 | | 2.3 PERCLOS for Driving | ❌ |
 | | 2.4 (Stretch) affect-pretrained pixel branch | ❌ |
@@ -313,8 +313,29 @@ Canonical cross-subject numbers regenerated with the full 10-subject dataset (LO
 README updated. EDA direction-agreement for s6–s10: 4/5 subjects, above the ~50% chance
 baseline.
 
-Next actions: (user) team recordings - now the only blocker in Phase 1 · (code) temporal
-model 2.1, ablations 4.2, fold the UBFC correlation into the harness (4.4).
+Phase 2.1 complete (2026-08-21): feature-sequence GRU built (`code/temporal_model.py` for
+live NumPy-only inference, `code/train_temporal_model.py` for PyTorch training in
+`.venv-train`), trained on all 5,356/1,429/1,784 DaiSEE train/val/test clips via
+`BehavioralFeatureEngine` over `processed_daisee/` crops (10-dim feature vector: the 7
+canonical signals + ear/ear_asymmetry/blinks_per_minute). Split/subject-leakage validated
+clean (69/19/21 distinct subjects, no overlap). Honest negative result: 45.74% accuracy
+(balanced 54.17%), GBT-on-summary-stats baseline 84.59% - both below the 86.60% majority
+floor. `W_TEMPORAL=0.0`, matching the pixel-LSTM's own disabled-on-arrival precedent; old
+LSTM retired to `code/_archive/lstm_temporal.py`. Two real things found and fixed along the
+way, neither obvious in advance:
+- `.venv-train` was missing `mediapipe`/`opencv-python` entirely (only needed once feature
+  extraction, not just PyTorch training, was added to that venv) - installed and pinned in
+  `requirements-train.txt`.
+- The NumPy/PyTorch parity check initially failed on the *trained* model (20/20 sequences
+  mismatched at ~1e-5, though a fresh untrained model matched to 1e-8) - not a gate-order
+  bug, but the verification comparing NumPy float64 against the model's normal float32
+  forward pass. Fixed by running the comparison in float64 on both sides (a dedicated
+  `deepcopy(model).double()` for the check only; the shipped `.pt`/training path stays
+  float32). A reminder that "looks like a logic bug" and "is a precision mismatch" can print
+  identically and need separating by evidence, not assumption.
+
+Next actions: (user) team recordings - now the only blocker in Phase 1 · (code) PERCLOS 2.3,
+ablations 4.2, fold the UBFC correlation into the harness (4.4).
 
 ---
 

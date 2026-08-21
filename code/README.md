@@ -15,7 +15,7 @@
 | `stress_fusion.py` | Branch fusion, task modes, rule boost, smoothing, hysteresis |
 | `rppg_live.py` | Heart rate from the camera (POS), quality-gated, abstains when noisy |
 | `learned_fusion.py` | Data-fitted fusion weights (meta-learner inference) |
-| `lstm_temporal.py` | LSTM inference wrapper (disabled — see below) |
+| `temporal_model.py` | GRU temporal inference wrapper (disabled — see below). NumPy-only by design — the model trains in PyTorch (`.venv-train`) but this module has to load cleanly in the live app's TensorFlow venv, so a hand-verified NumPy replica of the GRU forward pass runs live instead of torch itself |
 | `session_history.py` | SQLite persistence: sessions, per-frame samples, self-reports |
 | `app_naming.py` | Canonical evaluation-CSV naming + parsing |
 | `stress_detector.py` | OpenCV-only runner (no Streamlit) |
@@ -25,7 +25,7 @@
 | Switch | Default | Meaning |
 |---|---|---|
 | `W_DAISEE / W_BEHAVIOR` | 0.20 / 0.80 | Hand-tuned branch weights (PP1 values) |
-| `W_LSTM` | **0.0** | LSTM disabled: scored 71.1% vs an 86.6% majority-class floor |
+| `W_TEMPORAL` | **0.0** | Temporal branch disabled: the Phase 2.1 feature-sequence GRU that replaced the old pixel-LSTM also scored below the majority-class floor (45.74% vs 86.60%; balanced accuracy 54.17%, barely above chance). See `../models/temporal_gru_test_report.txt` |
 | `W_RPPG` | **0.0** | rPPG validated offline (POS 3.52 bpm on UBFC-Phys) but unproven on compressed webcam video. HR is still computed and displayed; raise to 0.15–0.25 only after it tracks reality on your hardware |
 | `USE_LEARNED_FUSION` | **False** | Meta-learner beats hand-tuned by 10–17 points on UBFC-Phys (LOSO), but was trained on that camera/cohort. Enable only after retraining on recordings made under `../RECORDING_PROTOCOL.md` |
 | `USE_WESAD_CUTOFFS` | **False** | The LOW/MOD/HIGH cutoffs (0.36/0.55) are **empirically tuned, not WESAD-derived**. The JSON's cutoffs are percentiles of a physiological classifier's probabilities — a different scale — and are deliberately unused. `calibrated_thresholds.json` is read for provenance/reporting only |
@@ -40,7 +40,8 @@ duration in WESAD's protocol, not per-frame vision noise).
 |---|---|
 | `daisee_preprocessing.py` → `rebucket_to_binary.py` → `train_daisee_stress.py` | DaiSEE face crops → binary labels → CNN ensemble (.h5) |
 | `wesad_calibration.py` | WESAD LOSO (91.86%) → `calibrated_thresholds.json` (provenance) |
-| `lstm_preprocessing.py` / `train_lstm.py` | The failed pixel-LSTM (kept as the documented negative result) |
+| `lstm_preprocessing.py` / `train_lstm.py` | The failed pixel-LSTM, retired to `_archive/lstm_temporal.py` (kept as the documented negative result) |
+| `train_temporal_model.py` | Phase 2.1 GRU: DaiSEE `processed_daisee/` crops → behavioral-feature sequences → GRU + GBT-baseline ablation → `../models/temporal_gru.npz`. Run only via `.venv-train\Scripts\python`; also below the majority floor (kept as a second documented negative result) |
 | `train_meta_learner.py` | Learned fusion weights, LOSO over subjects → `../models/meta_learner.joblib` |
 
 ## Evaluation & analysis

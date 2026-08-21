@@ -59,9 +59,14 @@ CALIBRATION_JSON_CANDIDATES = (
 # Hand-chosen during PP1, not fitted. PP2 Phase 3 learns these.
 W_DAISEE = 0.20
 W_BEHAVIOR = 0.80
-W_LSTM = 0.0        # LSTM disabled: 71.1% test accuracy is BELOW the 86.6%
-                    # majority-class floor. See models/lstm_test_report.txt.
-                    # Retrained on feature sequences in PP2 Phase 2.
+W_TEMPORAL = 0.0    # Temporal branch disabled: the Phase 2.1 feature-sequence
+                    # GRU that replaced the old pixel-LSTM (see
+                    # code/_archive/lstm_temporal.py) also came in BELOW the
+                    # majority-class floor - 45.74% vs 86.60%, balanced
+                    # accuracy 54.17% (barely above chance). See
+                    # models/temporal_gru_test_report.txt. Reported honestly,
+                    # not tuned to cross the floor - kept disabled like the
+                    # pixel-LSTM before it.
 
 # ===========================================================================
 # BEHAVIORAL SIGNAL WEIGHTS (Default mode; must sum to 1.0)
@@ -315,15 +320,18 @@ FACE_CROP_PADDING = 0.15
 
 DAISEE_MOBILENET_PATH = '../models/daisee_mobilenet_stress.h5'
 DAISEE_EFFICIENTNET_PATH = '../models/daisee_efficientnet_stress.h5'
-LSTM_MODEL_PATH = '../models/lstm_stress.h5'
 DB_PATH = '../data/sessions.db'
 
 # ===========================================================================
-# LSTM INFERENCE (currently disabled via W_LSTM = 0.0)
+# TEMPORAL MODEL (Phase 2.1). Feature-sequence GRU, replacing the old
+# pixel-based LSTM (retired to code/_archive/lstm_temporal.py; its negative
+# result stays documented at models/lstm_test_report.txt). Also came in
+# below the majority-class floor - see the W_TEMPORAL comment above and
+# models/temporal_gru_test_report.txt.
 # ===========================================================================
-LSTM_SEQ_LEN = 16
-LSTM_IMG_SIZE = 96
-LSTM_PREDICT_EVERY_N_FRAMES = 8
+TEMPORAL_MODEL_PATH = '../models/temporal_gru.npz'
+TEMPORAL_SEQ_LEN = 16
+TEMPORAL_PREDICT_EVERY_N_FRAMES = 8
 
 
 def summary():
@@ -331,4 +339,4 @@ def summary():
     return (f"cutoffs {LOW_TO_MODERATE_CUTOFF:.2f}/{MODERATE_TO_HIGH_CUTOFF:.2f} "
             f"(empirically tuned; WESAD JSON cutoffs deliberately unused) | "
             f"weights DaiSEE={W_DAISEE:.2f} Behavior={W_BEHAVIOR:.2f} "
-            f"LSTM={W_LSTM:.2f}")
+            f"Temporal={W_TEMPORAL:.2f}")

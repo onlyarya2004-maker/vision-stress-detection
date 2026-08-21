@@ -45,7 +45,7 @@ FEATURE_ORDER = ['eye_strain', 'blink_stress', 'brow_tension', 'jaw_tension',
 
 class LearnedFusion:
     """
-    Wraps the persisted meta-learner. Mirrors LSTMTemporalInference's
+    Wraps the persisted meta-learner. Mirrors GRUTemporalInference's
     contract: if the model is missing or unloadable, is_available() returns
     False and the caller falls back to the hand-tuned path unchanged.
     """

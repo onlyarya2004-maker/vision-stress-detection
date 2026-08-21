@@ -128,7 +128,7 @@ class LiveRPPG:
     """
     Rolling-window rPPG estimator.
 
-    Contract mirrors LSTMTemporalInference and LearnedFusion: when it cannot
+    Contract mirrors GRUTemporalInference and LearnedFusion: when it cannot
     produce a trustworthy number it says so (None) rather than guessing, and
     the fusion redistributes its weight.
     """

@@ -34,7 +34,7 @@ from stress_fusion import (
     set_daisee_baseline, reset_daisee_baseline, is_daisee_calibrated,
     VALID_TASK_MODES,
 )
-from lstm_temporal import LSTMTemporalInference
+from temporal_model import GRUTemporalInference
 from app_naming import export_filename
 from rppg_live import get_live_rppg, reset_live_rppg
 from intervention_agent import InterventionAgent, CATALOGUE
@@ -430,11 +430,12 @@ def get_feature_engine():
     return BehavioralFeatureEngine()
 
 
-@st.cache_resource(show_spinner="Loading LSTM (if available)...")
-def get_lstm_inference():
-    """Returns LSTMTemporalInference - safe even if LSTM model not trained yet.
-    is_available() returns False in that case and fusion ignores it."""
-    return LSTMTemporalInference()
+@st.cache_resource(show_spinner="Loading temporal model (if available)...")
+def get_temporal_inference():
+    """Returns GRUTemporalInference - safe even if the model is unavailable
+    or fails self-verification. is_available() returns False in that case
+    and fusion ignores it."""
+    return GRUTemporalInference()
 
 
 # =============================================================================
@@ -828,7 +829,7 @@ def main():
 
     models = load_models()
     engine = get_feature_engine()
-    lstm_inf = get_lstm_inference()
+    temporal_inf = get_temporal_inference()
 
     is_fully_calibrated = engine.baseline.calibrated and is_daisee_calibrated()
 
@@ -1256,8 +1257,8 @@ def main():
         smoother = TemporalSmoother(window_size=SMOOTHING_WINDOW)
         hyst = HysteresisLevel(confirm_frames=config.HYSTERESIS_CONFIRM_FRAMES)
 
-        if lstm_inf.is_available():
-            lstm_inf.reset()
+        if temporal_inf.is_available():
+            temporal_inf.reset()
 
         rppg = get_live_rppg()
         rppg.reset()
@@ -1318,11 +1319,6 @@ def main():
                         (models['daisee_eff'], EFFICIENTNET_SIZE, efficientnet_preprocess),
                     ])
 
-                lstm_score = None
-                if lstm_inf.is_available():
-                    lstm_inf.add_frame(face_crop)
-                    lstm_score = lstm_inf.predict()
-
                 # rPPG: cheap per frame. Heart rate is computed and shown
                 # even at W_RPPG = 0 so it can be sanity-checked against a
                 # wrist pulse before being trusted.
@@ -1334,10 +1330,20 @@ def main():
                     frame_idx += 1
                     continue
 
+                # Must come AFTER behavioral_features exists - the temporal
+                # model consumes the features dict, not a pixel crop (the
+                # old LSTM took face_crop directly, which is why this used
+                # to run earlier in the loop, before engine.extract() had
+                # even been called yet).
+                temporal_score = None
+                if temporal_inf.is_available():
+                    temporal_inf.add_frame(behavioral_features)
+                    temporal_score = temporal_inf.predict()
+
                 result = compute_stress_index(
                     daisee_probs=last_daisee_probs,
                     behavioral_features=behavioral_features,
-                    lstm_score=lstm_score,
+                    temporal_score=temporal_score,
                     task_mode=st.session_state.task_mode,
                     rppg_score=rppg_score,
                 )

@@ -327,13 +327,30 @@ def render_artifacts(root, out):
 
     lstm = root / "models" / "lstm_test_report.txt"
     if lstm.exists():
-        out.append("\n### CNN+LSTM temporal branch (DISABLED in the live system)")
+        out.append("\n### CNN+LSTM pixel temporal branch (RETIRED - code/_archive/lstm_temporal.py)")
         out.append(f"  source: {lstm.relative_to(root)}")
         for line in lstm.read_text(encoding="utf-8", errors="replace").splitlines():
             if any(k in line for k in ("Test accuracy", "Test set size", "Test loss")):
                 out.append(f"  {line.strip()}")
         out.append("  Majority-class floor for DaiSEE (~6.4:1) is 86.6% - the model")
-        out.append("  is BELOW it, which is why W_LSTM = 0.0.")
+        out.append("  was BELOW it. Replaced in Phase 2.1 by a feature-sequence GRU -")
+        out.append("  see the next section.")
+
+    gru = root / "models" / "temporal_gru_test_report.txt"
+    if gru.exists():
+        out.append("\n### Feature-sequence GRU temporal branch (Phase 2.1, DISABLED via W_TEMPORAL=0.0)")
+        out.append(f"  source: {gru.relative_to(root)}")
+        for line in gru.read_text(encoding="utf-8", errors="replace").splitlines():
+            stripped = line.strip()
+            # "key : value" metric lines and the model-name section headers -
+            # skip separators, blank lines, and the multi-line prose blocks
+            # (limitation note, comparison footer) that don't fit this
+            # summary echo.
+            if stripped and (" : " in stripped or stripped in (
+                "GRU (feature-sequence temporal model)",
+                "GBT baseline (mean/std/slope summary stats)",
+            )):
+                out.append(f"  {stripped}")
 
 
 def main():
