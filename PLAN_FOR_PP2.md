@@ -265,10 +265,10 @@ memory) on 2026-08-22. ✅ done · 🟡 partial · ❌ not started.
 | | 2.3 PERCLOS for Driving | ✅ computed always, displayed in Driving mode only, not fused |
 | | 2.4 (Stretch) affect-pretrained pixel branch | ❌ |
 | | 2.5 Inference off the UI thread | ❌ |
-| **3 (~65%)** | 3.1 Self-report labeling loop in app | ✅ 1 session labeled so far |
+| **3 (~70%)** | 3.1 Self-report labeling loop in app | ✅ 1 session labeled so far |
 | | 3.2 Meta-learner fusion (trainer + LOSO + live integration, default-off) | 🟡 `USE_LEARNED_FUSION=False`; enable after own-data retrain |
 | | 3.3 Continual adaptation (retrain_from_sessions.py) | 🟡 built and tested, but needs 6 labeled sessions minimum (`MIN_LABELED_SESSIONS`) — only 1 exists, so it can't run yet. Calendar-gated, not code-gated. |
-| | 3.4 Uncertainty/abstention | 🟡 rPPG abstains internally; no visible UI "uncertain" state |
+| | 3.4 Uncertainty/abstention | ✅ rPPG's `status()` now drives the HR topbar chip live, dimmed when abstaining ("warming up", "hold still", etc.) instead of a bare "--" |
 | | 3.5 Intervention effectiveness tracking | ✅ agent built, wired into the live loop, schema + tests in place — 0 interventions logged yet since no real session has crossed the trigger threshold |
 | **4 (~90%)** | 4.1 One regenerating script | ✅ learned-vs-hand-tuned, temporal old-vs-new, and DaiSEE held-out re-run all now regenerated/echoed rows |
 | | 4.2 Ablation table | ✅ each branch removed once, regenerated every run — see README |
@@ -487,8 +487,28 @@ suit isolated unit tests the way the rest of the codebase does), so live verific
 the appropriate method here, same as the PERCLOS tile and capture-loop reordering earlier.
 217/217 tests passing.
 
+Uncertainty/abstention (2026-08-22, Phase 3.4): `LiveRPPG.status()` already produced exactly
+the right human-readable states ("no face" / "warming up (8/20s)" / "signal too noisy - hold
+still" / "72 bpm (resting baseline 3/8)" / "72 bpm (rest 68)") but was never actually called
+anywhere in `app.py` - the live HR display just showed a bare number or "--", with no way to
+tell "camera hasn't found your face" from "hold still" from "still building your resting
+baseline". `render_video_topbar()`'s HR chip now shows `rppg.status()` directly, dimmed via a
+new `.hr-uncertain` CSS class whenever the text doesn't lead with a digit (i.e. whenever it
+isn't yet a trustworthy bpm reading). Wiring this up immediately surfaced a real,
+previously-dead bug: the "resting baseline N/M" branch of `status()` was an incomplete
+f-string (`f"{hr:.0f} bpm (resting baseline {n}/"`- missing the denominator and closing
+paren) that had shipped silently because nothing ever called that code path. Fixed, and the
+existing `test_status_is_informative_at_each_stage` test (which only exercised the first two
+stages) extended with two new tests that actually reach the resting-baseline-building and
+fully-calibrated states, so this can't silently regress again. Verified logic correctness by
+exec'ing just the render function's AST node against representative status strings (app.py
+can't be imported standalone outside a Streamlit run, and the topbar itself only renders
+inside the live capture loop, which needs the camera) - confirmed live boot still clean with
+zero console/server errors. 2 new tests, 219/219 passing.
+
 Next actions: (user) team recordings - the only blocker left in Phase 1, and the thing
-everything in Phase 3 and 4.3 is actually waiting on.
+everything in Phase 3 and 4.3 is actually waiting on. (code) inference off the UI thread
+(2.5), analytics dashboard (5.1), or PDF export (5.2) are the remaining startable-now items.
 
 ---
 

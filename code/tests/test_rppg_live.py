@@ -179,3 +179,39 @@ def test_status_is_informative_at_each_stage():
     assert "no face" in est.status()
     _feed(est, seconds=3.0)
     assert "warming up" in est.status() or "low frame rate" in est.status()
+
+
+def test_status_shows_resting_baseline_progress():
+    """
+    Regression test: this branch used to read
+    f"{hr:.0f} bpm (resting baseline {n}/" - missing the denominator and
+    closing paren entirely, an incomplete f-string that shipped because
+    status() was never actually called anywhere in app.py (see Phase 3.4:
+    it's wired into the UI now, which is how this got caught).
+    """
+    est = LiveRPPG()
+    t = 0.0
+    for i in range(config.RPPG_RESTING_SAMPLES - 1):
+        t = _feed(est, bpm=70.0, seconds=15.0, t0=t, seed=i)
+        est.estimate(force=True)
+    assert est.has_resting_baseline() is False
+
+    s = est.status()
+    assert s.endswith(f"/{config.RPPG_RESTING_SAMPLES})")
+    assert "bpm (resting baseline" in s
+    n = len(est._resting_samples)
+    assert s == f"{est._last_hr:.0f} bpm (resting baseline {n}/{config.RPPG_RESTING_SAMPLES})"
+
+
+def test_status_shows_bpm_and_resting_rate_once_calibrated():
+    est = LiveRPPG()
+    t = 0.0
+    for i in range(config.RPPG_RESTING_SAMPLES):
+        t = _feed(est, bpm=70.0, seconds=15.0, t0=t, seed=i)
+        est.estimate(force=True)
+    assert est.has_resting_baseline() is True
+
+    s = est.status()
+    assert "bpm (rest" in s
+    assert "resting baseline" not in s
+    assert s == f"{est._last_hr:.0f} bpm (rest {est._resting_hr:.0f})"

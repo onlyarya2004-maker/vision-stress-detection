@@ -273,6 +273,7 @@ def inject_css():
       .hr-chip { background:var(--panel2); border:1px solid var(--border); border-radius:7px;
                  padding:5px 10px; font-size:11px; color:var(--sub); }
       .hr-chip .v { font-family:var(--mono); font-weight:700; font-size:13px; color:var(--text); }
+      .hr-chip .hr-uncertain { color:var(--dim); font-weight:600; }
       .level-block { margin:10px 12px 12px 12px; background:var(--panel2);
                      border:1px solid var(--border); border-radius:10px; padding:14px 16px; }
       .index-row { display:flex; align-items:baseline; gap:12px; margin-bottom:8px; }
@@ -666,10 +667,26 @@ def render_guidance(level, contributions=None):
     )
 
 
-def render_video_topbar(hr_text, ear_value):
+def render_video_topbar(rppg_status, ear_value):
+    """
+    rppg_status: LiveRPPG.status()'s own text - "no face" / "warming up
+    (8/20s)" / "signal too noisy - hold still" / "72 bpm (resting baseline
+    3/8)" / "72 bpm (rest 68)". Showing this instead of a bare number (or
+    "--" when unavailable) is the point: rPPG abstains internally whenever
+    the estimate would be unreliable, and previously nothing surfaced WHY -
+    a user watching a blank "--" HR reading had no way to tell "camera
+    hasn't found your face yet" from "your face is fine, just hold still"
+    from "still building your resting baseline". See PLAN_FOR_PP2.md 3.4.
+    """
+    # status() always leads with the bpm number ("72 bpm (rest 68)") once it
+    # has one - every abstaining state ("no face", "warming up (8/20s)",
+    # "signal too noisy - hold still") leads with a word instead. That's a
+    # reliable enough signal to dim the reading rather than parsing state
+    # out of the string a second time.
+    hr_class = "v mono" if rppg_status[:1].isdigit() else "v mono hr-uncertain"
     return (
         f'<div class="vid-topbar">'
-        f'<span class="hr-chip">HR <span class="v mono">{hr_text}</span> bpm</span>'
+        f'<span class="hr-chip">HR <span class="{hr_class}">{rppg_status}</span></span>'
         f'<span class="hr-chip">Eye open <span class="v mono">{ear_value:.2f}</span></span>'
         f'</div>'
     )
@@ -1492,7 +1509,7 @@ def main():
                 _hr, _q = rppg.estimate()
                 _hr_text = f"{_hr:.0f}" if _hr else "--"
                 topbar_placeholder.markdown(
-                    render_video_topbar(_hr_text, behavioral_features.get('ear', 0.0)),
+                    render_video_topbar(rppg.status(), behavioral_features.get('ear', 0.0)),
                     unsafe_allow_html=True)
                 level_placeholder.markdown(render_level_block(level, smoothed),
                                           unsafe_allow_html=True)

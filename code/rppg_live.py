@@ -246,7 +246,7 @@ class LiveRPPG:
             return "signal too noisy - hold still"
         if self._resting_hr is None:
             n = len(self._resting_samples)
-            return f"{self._last_hr:.0f} bpm (resting baseline {n}/"
+            return f"{self._last_hr:.0f} bpm (resting baseline {n}/{config.RPPG_RESTING_SAMPLES})"
         return f"{self._last_hr:.0f} bpm (rest {self._resting_hr:.0f})"
 
 
