@@ -245,10 +245,10 @@ outcome in the same honest style, positive or negative.
 
 ---
 
-## Status snapshot — 2026-08-21
+## Status snapshot — 2026-08-22
 
 Checked line-by-line against the phases above, verified against disk/config/DB state (not
-memory) on 2026-08-21. ✅ done · 🟡 partial · ❌ not started.
+memory) on 2026-08-22. ✅ done · 🟡 partial · ❌ not started.
 
 | Phase | Part | Status |
 |---|---|---|
@@ -260,7 +260,7 @@ memory) on 2026-08-21. ✅ done · 🟡 partial · ❌ not started.
 | | 1.3 Cross-subject validation + calibration fixes (posture/blink/blink-rate) | ✅ for all 10 subjects |
 | | 1.4 Stress-index ↔ EDA/BVP continuous correlation | ✅ real results for s6–s10 (4/5 subjects direction-agree, well above ~50% chance) - s1–s5's ground truth was deleted (never git-tracked, by design) and won't be re-downloaded, so those 5 will never have this |
 | | 1.5 Team recordings + multi-user profiles | ❌ **user-gated — the only remaining blocker in this phase** (evaluation_data/ root still only has the original single-subject PP1 recordings) |
-| **2 (~45%)** | 2.1 Feature-based temporal model (GRU/TCN) | ✅ built, trained, wired in, honest negative result — 45.74% acc (GBT baseline 84.59%), both below the 86.60% floor; W_TEMPORAL=0.0 |
+| **2 (~60%)** | 2.1 Feature-based temporal model (GRU/TCN) | ✅ built, trained, wired in, honest negative result — 45.74% acc (GBT baseline 84.59%), both below the 86.60% floor; W_TEMPORAL=0.0 |
 | | 2.2 rPPG branch (offline 3.52 bpm POS; live module, quality-gated, W_RPPG=0) | ✅ pending webcam validation |
 | | 2.3 PERCLOS for Driving | ✅ computed always, displayed in Driving mode only, not fused |
 | | 2.4 (Stretch) affect-pretrained pixel branch | ❌ |
@@ -270,7 +270,7 @@ memory) on 2026-08-21. ✅ done · 🟡 partial · ❌ not started.
 | | 3.3 Continual adaptation (retrain_from_sessions.py) | 🟡 built and tested, but needs 6 labeled sessions minimum (`MIN_LABELED_SESSIONS`) — only 1 exists, so it can't run yet. Calendar-gated, not code-gated. |
 | | 3.4 Uncertainty/abstention | 🟡 rPPG abstains internally; no visible UI "uncertain" state |
 | | 3.5 Intervention effectiveness tracking | ✅ agent built, wired into the live loop, schema + tests in place — 0 interventions logged yet since no real session has crossed the trigger threshold |
-| **4 (~85%)** | 4.1 One regenerating script | ✅ learned-vs-hand-tuned, temporal old-vs-new, and DaiSEE held-out re-run all now regenerated/echoed rows |
+| **4 (~90%)** | 4.1 One regenerating script | ✅ learned-vs-hand-tuned, temporal old-vs-new, and DaiSEE held-out re-run all now regenerated/echoed rows |
 | | 4.2 Ablation table | ✅ each branch removed once, regenerated every run — see README |
 | | 4.3 Per-subject breakdown | 🟡 active for all 10 UBFC subjects; team data absent |
 | | 4.4 UBFC correlation row in harness | ✅ `correlate_physiology.py` folded into `run_all_evaluations.py`, regenerated every run; still standalone-runnable too — see 1.4 |
