@@ -46,6 +46,7 @@ from eval_scoring import wilson, pct, ci_str, frame_scores, session_scores, STRE
 # still keeping the scoring code itself in exactly one place.
 from ablation_study import run_ablation_study, render as render_ablation_table
 from correlate_physiology import run_correlation_study, render as render_correlation
+from train_meta_learner import run_learned_fusion_study, render as render_learned_fusion
 
 
 # ---------------------------------------------------------------------------
@@ -346,6 +347,14 @@ def main():
     # truth, no reason for this to live only in its own separate report.
     render_correlation(run_correlation_study(
         root / "datasets" / "feature_traces", root / "datasets" / "UBFC-Phys"), out)
+
+    # Phase 4.1: the behavioral-signals-only LOSO comparison (hand-tuned vs
+    # logistic regression vs gradient boosting) that the 55.19%/66.74%/
+    # 77.06% figures in the README come from. Never writes
+    # models/meta_learner.joblib - that stays a deliberate, separate --save
+    # step (see train_meta_learner.py), not a side effect of regenerating
+    # reported numbers.
+    render_learned_fusion(run_learned_fusion_study(root / "datasets" / "feature_traces"), out)
 
     render_artifacts(root, out)
 

@@ -48,7 +48,7 @@ it does not carry a `W_*` switch because it doesn't feed the fusion score at all
 | `wesad_calibration.py` | WESAD LOSO (91.86%) → `calibrated_thresholds.json` (provenance) |
 | `lstm_preprocessing.py` / `train_lstm.py` | The failed pixel-LSTM, retired to `_archive/lstm_temporal.py` (kept as the documented negative result) |
 | `train_temporal_model.py` | Phase 2.1 GRU: DaiSEE `processed_daisee/` crops → behavioral-feature sequences → GRU + GBT-baseline ablation → `../models/temporal_gru.npz`. Run only via `.venv-train\Scripts\python`; also below the majority floor (kept as a second documented negative result) |
-| `train_meta_learner.py` | Learned fusion weights, LOSO over subjects → `../models/meta_learner.joblib` |
+| `train_meta_learner.py` | Learned fusion weights, LOSO over subjects → `../models/meta_learner.joblib` via `--save`. The LOSO comparison itself (Phase 4.1) is also called from `run_all_evaluations.py`, which never writes the model file — only `--save` does |
 
 ## Evaluation & analysis
 
@@ -70,7 +70,7 @@ it does not carry a `W_*` switch because it doesn't feed the fusion score at all
 python -m pytest tests -q        # from code/, or: python -m pytest code/tests from the root
 ```
 
-190+ tests. The load-bearing ones: Default-mode fusion equals the archived pre-task-aware
+202+ tests. The load-bearing ones: Default-mode fusion equals the archived pre-task-aware
 implementation **exactly** (diff 0.00e+00); uncalibrated posture/blink behaviour is
 byte-identical to PP1; rPPG methods recover a synthetic pulse of known frequency; every
 default-off switch above leaves output unchanged.

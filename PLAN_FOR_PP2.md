@@ -270,7 +270,7 @@ memory) on 2026-08-21. ✅ done · 🟡 partial · ❌ not started.
 | | 3.3 Continual adaptation (retrain_from_sessions.py) | 🟡 built and tested, but needs 6 labeled sessions minimum (`MIN_LABELED_SESSIONS`) — only 1 exists, so it can't run yet. Calendar-gated, not code-gated. |
 | | 3.4 Uncertainty/abstention | 🟡 rPPG abstains internally; no visible UI "uncertain" state |
 | | 3.5 Intervention effectiveness tracking | ✅ agent built, wired into the live loop, schema + tests in place — 0 interventions logged yet since no real session has crossed the trigger threshold |
-| **4 (~40%)** | 4.1 One regenerating script | 🟡 missing rows: DaiSEE re-run, learned-vs-hand-tuned, temporal old-vs-new |
+| **4 (~40%)** | 4.1 One regenerating script | 🟡 learned-vs-hand-tuned now folded in; temporal old-vs-new already present via the GRU report echo; DaiSEE held-out re-run still not a regenerated row |
 | | 4.2 Ablation table | ✅ each branch removed once, regenerated every run — see README |
 | | 4.3 Per-subject breakdown | 🟡 active for all 10 UBFC subjects; team data absent |
 | | 4.4 UBFC correlation row in harness | ✅ `correlate_physiology.py` folded into `run_all_evaluations.py`, regenerated every run; still standalone-runnable too — see 1.4 |
@@ -415,8 +415,23 @@ worked and had real, previously-verified results (4/5 s6-s10 direction agreement
 an investigation. 13 new tests (load/align edge cases, a perfect-correlation sanity check, a
 hand-computed direction-agreement case). 190/190 passing.
 
-Next actions: (user) team recordings - now the only blocker in Phase 1 · (code)
-learned-vs-hand-tuned as a regenerated row (4.1) is the remaining harness gap.
+Phase 4.1 (2026-08-22): `train_meta_learner.py` refactored the same way -
+`run_learned_fusion_study()` (compute) + `render()` (print) - and called from
+`run_all_evaluations.py`, closing the last of the three "missing rows" that item named
+(learned-vs-hand-tuned; temporal old-vs-new was already covered by the GRU report echo;
+DaiSEE held-out re-run remains a genuine gap, not touched here). Deliberately does NOT
+write `models/meta_learner.joblib` from the harness path - confirmed by checking the file's
+mtime was unchanged after a full `run_all_evaluations.py` run - since persisting a new model
+is `--save`'s job (a deliberate, separate action), not a side effect of regenerating
+reported numbers. `summarize()` and `report_learned_weights()` (renamed
+`compute_learned_weights_rows()`) had their `print()` calls removed so they're pure functions
+now; `main()`'s own CLI output is unchanged (verified byte-identical against the
+already-documented 55.19%/66.74%/77.06% + weights table before wiring anything into the
+harness). 12 new tests, including a cross-check against the existing hand-verified
+inverted-signal fixture rather than a fresh, unvalidated one. 202/202 passing.
+
+Next actions: (user) team recordings - now the only blocker in Phase 1 · (code) DaiSEE
+held-out re-run as a regenerated row is the one remaining piece of 4.1.
 
 ---
 

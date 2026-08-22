@@ -1,7 +1,7 @@
 ==============================================================================
 CANONICAL EVALUATION RESULTS
 ==============================================================================
-generated : 2026-08-22T10:17:21
+generated : 2026-08-22T10:28:06
 root      : C:\Users\Arya\Desktop\stress_project
 
 Every number this project reports must come from this file.
@@ -266,6 +266,41 @@ autocorrelated. The between-task direction test is the real claim.
   direction agreement: 4/5 subjects
   (chance is ~50%; this is the number that grows meaningful as
    more subjects are processed)
+
+==========================================================================
+LEARNED FUSION - leave-one-subject-out
+==========================================================================
+  123728 frames from 10 subject(s)
+  class balance: 41273 relaxed / 82455 stressed
+
+--------------------------------------------------------------------------
+BASELINE - current hand-tuned weights
+--------------------------------------------------------------------------
+  hand-tuned fusion      acc  55.19%   F1 0.575   relaxed-recall  74.5%   stressed-recall  45.5%   session 12/20
+
+--------------------------------------------------------------------------
+LEARNED (out-of-fold, 10 folds)
+--------------------------------------------------------------------------
+  logistic regression    acc  66.74%   F1 0.712   relaxed-recall  76.6%   stressed-recall  61.8%   session 17/20
+  gradient boosting      acc  77.06%   F1 0.834   relaxed-recall  58.8%   stressed-recall  86.2%   session 16/20
+
+--------------------------------------------------------------------------
+WHAT IT LEARNED (fitted on all subjects)
+--------------------------------------------------------------------------
+  signal              hand-tuned   learned     coef   direction
+  ------------------------------------------------------------
+  head_instability          0.05      0.56    +2.08   stress up
+  slouch                    0.10      0.13    +0.47   stress up
+  neck_strain               0.05      0.09    -0.34   stress down (INVERTED)
+  brow_tension              0.30      0.07    +0.26   stress up
+  jaw_tension               0.25      0.07    +0.25   stress up
+  eye_strain                0.10      0.06    +0.24   stress up
+  blink_stress              0.15      0.02    +0.09   stress up
+
+  Signals marked INVERTED carry a NEGATIVE learned coefficient:
+  the model found them anti-correlated with stress on this data,
+  which the hand-picked weights could not express - they are all
+  positive by construction.
 
 ==============================================================================
 OFFLINE STAGE ARTIFACTS (read from generated files, not retyped)

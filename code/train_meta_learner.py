@@ -32,6 +32,14 @@ named signals yields coefficients that ARE the new weights, readable in the
 same terms as the old ones. The system does not become a black box; it stops
 being a guess.
 
+Phase 4.1: run_learned_fusion_study()/render() below are called directly
+from run_all_evaluations.py (same compute/render split as ablation_study.py
+and correlate_physiology.py), so the LOSO comparison is a regenerated
+canonical-file row instead of only ever living in this script's own output.
+The harness path never writes models/meta_learner.joblib - saving a new
+model is this script's job (--save), not a side effect of regenerating
+reported numbers.
+
 Usage
 -----
     python train_meta_learner.py --dir ../datasets/feature_traces
@@ -121,6 +129,8 @@ def handtuned_predictions(X, names):
 # Evaluation
 # ---------------------------------------------------------------------------
 def summarize(y_true, y_pred, groups, label):
+    """Pure - returns the metrics dict, does not print. format_summary_line()
+    below renders it, so the CLI and the harness share one format."""
     from sklearn.metrics import accuracy_score, f1_score
 
     acc = accuracy_score(y_true, y_pred)
@@ -140,17 +150,25 @@ def summarize(y_true, y_pred, groups, label):
             sess_n += 1
             sess_ok += int((y_pred[m] == lab).mean() > 0.5)
 
-    print(f"  {label:22s} acc {acc*100:6.2f}%   F1 {f1:.3f}   "
-          f"relaxed-recall {rel_recall*100:5.1f}%   "
-          f"stressed-recall {stz_recall*100:5.1f}%   "
-          f"session {sess_ok}/{sess_n}")
-    return {'accuracy': acc, 'f1': f1, 'relaxed_recall': rel_recall,
-            'stressed_recall': stz_recall,
+    return {'label': label, 'accuracy': acc, 'f1': f1,
+            'relaxed_recall': rel_recall, 'stressed_recall': stz_recall,
             'session_correct': sess_ok, 'session_total': sess_n}
 
 
+def format_summary_line(stats):
+    return (f"  {stats['label']:22s} acc {stats['accuracy']*100:6.2f}%   "
+           f"F1 {stats['f1']:.3f}   "
+           f"relaxed-recall {stats['relaxed_recall']*100:5.1f}%   "
+           f"stressed-recall {stats['stressed_recall']*100:5.1f}%   "
+           f"session {stats['session_correct']}/{stats['session_total']}")
+
+
 def loso_evaluate(make_model, X, y, groups, label, scale=True):
-    """Leave-one-subject-out CV. Returns pooled out-of-fold predictions."""
+    """
+    Leave-one-subject-out CV. Returns (oof, stats), or (None, None) if fewer
+    than 2 subjects are present - LOSO is undefined with only one group, and
+    this must not silently "work" on the wrong protocol.
+    """
     from sklearn.model_selection import LeaveOneGroupOut
     from sklearn.preprocessing import StandardScaler
 
@@ -158,7 +176,6 @@ def loso_evaluate(make_model, X, y, groups, label, scale=True):
     oof = np.zeros_like(y)
     n_subjects = len(np.unique(groups))
     if n_subjects < 2:
-        print(f"  {label}: needs >=2 subjects for LOSO (have {n_subjects})")
         return None, None
 
     per_fold = []
@@ -181,32 +198,142 @@ def loso_evaluate(make_model, X, y, groups, label, scale=True):
 # ---------------------------------------------------------------------------
 # Reporting
 # ---------------------------------------------------------------------------
-def report_learned_weights(model, names):
+def compute_learned_weights_rows(model, names):
     """
     Turn logistic-regression coefficients into weights comparable with the
     hand-picked ones. Sign matters: a negative coefficient means the signal
-    genuinely points the other way.
+    genuinely points the other way. Returns [] if the model is degenerate
+    (all-zero coefficients).
     """
     coef = model.coef_[0]
     total = np.abs(coef).sum()
     if total < 1e-12:
-        return
-    print(f"\n  {'signal':18s}{'hand-tuned':>12}{'learned':>10}"
-          f"{'coef':>9}   direction")
-    print("  " + "-" * 60)
+        return []
+    rows = []
     order = np.argsort(-np.abs(coef))
     for i in order:
         n = names[i]
-        hand = config.BEHAVIOR_WEIGHTS.get(n)
-        hand_s = f"{hand:.2f}" if hand is not None else "  -"
-        learned = abs(coef[i]) / total
-        # Plain ASCII, not an arrow glyph - Windows' default console
-        # codepage (cp1252) can't encode U+2191/U+2193 and print() crashes
-        # partway through this table, which used to also skip the --save
-        # step entirely since it runs later in main() than this report.
-        direction = "stress up" if coef[i] > 0 else "stress down (INVERTED)"
-        print(f"  {n:18s}{hand_s:>12}{learned:>10.2f}{coef[i]:>+9.2f}"
-              f"   {direction}")
+        rows.append({
+            'name': n,
+            'hand_tuned': config.BEHAVIOR_WEIGHTS.get(n),
+            'learned': abs(coef[i]) / total,
+            'coef': float(coef[i]),
+            # Plain ASCII, not an arrow glyph - Windows' default console
+            # codepage (cp1252) can't encode U+2191/U+2193 and print()
+            # crashes partway through this table, which used to also skip
+            # the --save step entirely since it ran later in main() than
+            # this report.
+            'direction': "stress up" if coef[i] > 0 else "stress down (INVERTED)",
+        })
+    return rows
+
+
+def format_learned_weights_rows(rows):
+    lines = [f"  {'signal':18s}{'hand-tuned':>12}{'learned':>10}"
+            f"{'coef':>9}   direction",
+            "  " + "-" * 60]
+    for r in rows:
+        hand_s = f"{r['hand_tuned']:.2f}" if r['hand_tuned'] is not None else "  -"
+        lines.append(f"  {r['name']:18s}{hand_s:>12}{r['learned']:>10.2f}"
+                     f"{r['coef']:>+9.2f}   {r['direction']}")
+    return lines
+
+
+# ---------------------------------------------------------------------------
+# Computation - separated from rendering (and from --save) so
+# run_all_evaluations.py can call this directly and fold the LOSO comparison
+# into the one canonical file. Never writes to disk itself.
+# ---------------------------------------------------------------------------
+def run_learned_fusion_study(trace_dir, include_daisee=False, subsample=1):
+    """
+    Returns a results dict, or None if no trace CSVs are found (same
+    contract as ablation_study.run_ablation_study() /
+    correlate_physiology.run_correlation_study()).
+
+    'final_model'/'scaler' are the logistic regression fit on ALL subjects
+    (for the interpretable-weights table) - included so main()'s --save can
+    reuse them directly instead of fitting a second, possibly-divergent
+    copy. Both are None when there are fewer than 2 subjects, matching
+    loso_evaluate()'s "LOSO is undefined here" stance.
+    """
+    traces = sorted(Path(trace_dir).glob('features_*.csv'))
+    if not traces:
+        return None
+
+    X, y, groups, names = load_traces(trace_dir, include_daisee)
+    if subsample > 1:
+        X, y, groups = X[::subsample], y[::subsample], groups[::subsample]
+
+    handtuned_stats = summarize(y, handtuned_predictions(X, names), groups,
+                                "hand-tuned fusion")
+
+    results = {
+        'n_frames': len(X), 'n_subjects': len(np.unique(groups)),
+        'n_relaxed': int((y == 0).sum()), 'n_stressed': int((y == 1).sum()),
+        'subsample': subsample,
+        'handtuned': handtuned_stats,
+        'logistic_loso': None, 'gbt_loso': None, 'weights_rows': [],
+        'final_model': None, 'scaler': None, 'feature_names': names,
+    }
+    if results['n_subjects'] < 2:
+        return results
+
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.ensemble import GradientBoostingClassifier
+    from sklearn.preprocessing import StandardScaler
+
+    _, log_stats = loso_evaluate(
+        lambda: LogisticRegression(max_iter=2000, class_weight='balanced'),
+        X, y, groups, "logistic regression")
+    _, gbt_stats = loso_evaluate(
+        lambda: GradientBoostingClassifier(random_state=0),
+        X, y, groups, "gradient boosting", scale=False)
+    results['logistic_loso'] = log_stats
+    results['gbt_loso'] = gbt_stats
+
+    # Fit once on everything, purely to read off interpretable weights (and
+    # for --save to persist, if asked).
+    sc = StandardScaler().fit(X)
+    final = LogisticRegression(max_iter=2000, class_weight='balanced')
+    final.fit(sc.transform(X), y)
+    results['final_model'] = final
+    results['scaler'] = sc
+    results['weights_rows'] = compute_learned_weights_rows(final, names)
+    return results
+
+
+def render(results, out):
+    out.append("\n" + "=" * 74)
+    out.append("LEARNED FUSION - leave-one-subject-out")
+    out.append("=" * 74)
+    if results is None:
+        out.append("  (no feature traces found under datasets/feature_traces/ - skipped)")
+        return
+
+    out.append(f"  {results['n_frames']} frames from {results['n_subjects']} subject(s)"
+               + (f", subsampled every {results['subsample']}" if results['subsample'] > 1 else ""))
+    out.append(f"  class balance: {results['n_relaxed']} relaxed / "
+               f"{results['n_stressed']} stressed")
+
+    out.append(f"\n{'-' * 74}\nBASELINE - current hand-tuned weights\n{'-' * 74}")
+    out.append(format_summary_line(results['handtuned']))
+
+    if results['n_subjects'] < 2:
+        out.append("\n  Only one subject present - LOSO needs at least two.")
+        out.append("  Process more UBFC-Phys subjects, then re-run.")
+        return
+
+    out.append(f"\n{'-' * 74}\nLEARNED (out-of-fold, {results['n_subjects']} folds)\n{'-' * 74}")
+    out.append(format_summary_line(results['logistic_loso']))
+    out.append(format_summary_line(results['gbt_loso']))
+
+    if results['weights_rows']:
+        out.append(f"\n{'-' * 74}\nWHAT IT LEARNED (fitted on all subjects)\n{'-' * 74}")
+        out.extend(format_learned_weights_rows(results['weights_rows']))
+        out.append("\n  Signals marked INVERTED carry a NEGATIVE learned coefficient:")
+        out.append("  the model found them anti-correlated with stress on this data,")
+        out.append("  which the hand-picked weights could not express - they are all")
+        out.append("  positive by construction.")
 
 
 def main():
@@ -222,68 +349,31 @@ def main():
                          'subsampling speeds fitting without changing much)')
     args = ap.parse_args()
 
-    print("=" * 74)
-    print("LEARNED FUSION - leave-one-subject-out")
-    print("=" * 74)
-    X, y, groups, names = load_traces(args.dir, args.include_daisee)
-    if args.subsample > 1:
-        X, y, groups = X[::args.subsample], y[::args.subsample], groups[::args.subsample]
-        print(f"  subsampled to {len(X)} frames (every {args.subsample})")
-    print(f"  class balance: {int((y == 0).sum())} relaxed / "
-          f"{int((y == 1).sum())} stressed")
+    results = run_learned_fusion_study(args.dir, args.include_daisee, args.subsample)
+    if results is None:
+        raise SystemExit(f"no usable rows in {args.dir}")
 
-    print(f"\n{'-' * 74}\nBASELINE - current hand-tuned weights\n{'-' * 74}")
-    summarize(y, handtuned_predictions(X, names), groups,
-              "hand-tuned fusion")
+    out = []
+    render(results, out)
 
-    n_subjects = len(np.unique(groups))
-    if n_subjects < 2:
-        print("\n  Only one subject present - LOSO needs at least two.")
-        print("  Process more UBFC-Phys subjects, then re-run.")
-        return 0
-
-    print(f"\n{'-' * 74}\nLEARNED (out-of-fold, {n_subjects} folds)\n{'-' * 74}")
-
-    from sklearn.linear_model import LogisticRegression
-    from sklearn.ensemble import GradientBoostingClassifier
-
-    loso_evaluate(
-        lambda: LogisticRegression(max_iter=2000, class_weight='balanced'),
-        X, y, groups, "logistic regression")
-    loso_evaluate(
-        lambda: GradientBoostingClassifier(random_state=0),
-        X, y, groups, "gradient boosting", scale=False)
-
-    # Fit once on everything, purely to read off interpretable weights.
-    from sklearn.preprocessing import StandardScaler
-    sc = StandardScaler().fit(X)
-    final = LogisticRegression(max_iter=2000, class_weight='balanced')
-    final.fit(sc.transform(X), y)
-
-    # Save before the diagnostic report below, not after - the model is
-    # the actually-important output; the printed table is just commentary
-    # on it. A crash while printing (this table's direction labels used to
-    # be non-ASCII arrows, which crash mid-print on Windows' default
-    # console codepage) used to also silently skip --save, since it ran
-    # later in the function and this exact thing already happened once.
-    if args.save:
+    # Save before printing - the model is the actually-important output;
+    # the printed table is just commentary on it. A crash while printing
+    # (this table's direction labels used to be non-ASCII arrows, which
+    # crash mid-print on Windows' default console codepage) used to also
+    # silently skip --save, since it ran later in the function and this
+    # exact thing already happened once.
+    if args.save and results['final_model'] is not None:
         try:
             import joblib
-            out = Path(args.save)
-            out.parent.mkdir(parents=True, exist_ok=True)
-            joblib.dump({'model': final, 'scaler': sc, 'features': names},
-                        out)
-            print(f"\n  saved: {out}")
+            save_path = Path(args.save)
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            joblib.dump({'model': results['final_model'], 'scaler': results['scaler'],
+                        'features': results['feature_names']}, save_path)
+            out.append(f"\n  saved: {save_path}")
         except ImportError:
-            print("\n  joblib not available; model not saved")
+            out.append("\n  joblib not available; model not saved")
 
-    print(f"\n{'-' * 74}\nWHAT IT LEARNED (fitted on all subjects)\n{'-' * 74}")
-    report_learned_weights(final, names)
-
-    print("\n  Signals marked INVERTED carry a NEGATIVE learned coefficient:")
-    print("  the model found them anti-correlated with stress on this data,")
-    print("  which the hand-picked weights could not express - they are all")
-    print("  positive by construction.")
+    print("\n".join(out))
     return 0
 
 

@@ -17,7 +17,9 @@ import pytest
 
 import config
 from train_meta_learner import (
-    SIGNALS, handtuned_predictions, handtuned_scores, load_traces,
+    SIGNALS, compute_learned_weights_rows, format_learned_weights_rows,
+    format_summary_line, handtuned_predictions, handtuned_scores, load_traces,
+    render, run_learned_fusion_study, summarize,
 )
 
 
@@ -148,3 +150,136 @@ def test_single_subject_cannot_be_loso_evaluated(tmp_path):
     _write_trace(tmp_path, 1, 2, _rows(50, seed=2))
     _, _, groups, _ = load_traces(tmp_path)
     assert len(np.unique(groups)) == 1
+
+
+# --------------------------------------------------------------------------
+# Phase 4.1: compute/render split for the harness (run_all_evaluations.py)
+# --------------------------------------------------------------------------
+
+def test_summarize_is_pure_and_includes_the_label():
+    y_true = np.array([0, 0, 1, 1])
+    y_pred = np.array([0, 1, 1, 1])
+    groups = np.array(['s1', 's1', 's2', 's2'])
+    stats = summarize(y_true, y_pred, groups, 'my label')
+    assert stats['label'] == 'my label'
+    assert stats['accuracy'] == pytest.approx(0.75)
+    assert 0.0 <= stats['relaxed_recall'] <= 1.0
+    assert 0.0 <= stats['stressed_recall'] <= 1.0
+
+
+def test_format_summary_line_includes_key_fields():
+    stats = summarize(np.array([0, 1]), np.array([0, 1]), np.array(['s1', 's2']), 'x')
+    line = format_summary_line(stats)
+    assert 'x' in line
+    assert 'acc' in line and 'F1' in line and 'session' in line
+
+
+def test_compute_learned_weights_rows_sorted_by_magnitude_and_carries_direction():
+    class FakeModel:
+        coef_ = np.array([[0.1, -2.0, 0.5]])
+    names = ['eye_strain', 'brow_tension', 'slouch']
+    rows = compute_learned_weights_rows(FakeModel(), names)
+    assert [r['name'] for r in rows] == ['brow_tension', 'slouch', 'eye_strain']
+    assert rows[0]['direction'] == 'stress down (INVERTED)'
+    assert rows[1]['direction'] == 'stress up'
+    assert rows[0]['hand_tuned'] == config.BEHAVIOR_WEIGHTS['brow_tension']
+
+
+def test_compute_learned_weights_rows_degenerate_all_zero_returns_empty():
+    class FakeModel:
+        coef_ = np.array([[0.0, 0.0]])
+    assert compute_learned_weights_rows(FakeModel(), ['eye_strain', 'slouch']) == []
+
+
+def test_format_learned_weights_rows_uses_plain_ascii_only():
+    """Windows cp1252 crashed printing non-ASCII arrow glyphs here once -
+    the labels must stay plain ASCII, not a Unicode arrow."""
+    rows = [{'name': 'brow_tension', 'hand_tuned': 0.30, 'learned': 0.5,
+            'coef': -1.0, 'direction': 'stress down (INVERTED)'}]
+    lines = format_learned_weights_rows(rows)
+    text = "\n".join(lines)
+    text.encode('ascii')  # raises UnicodeEncodeError if anything non-ASCII slipped in
+    assert 'INVERTED' in text
+
+
+def test_run_learned_fusion_study_returns_none_for_empty_directory(tmp_path):
+    assert run_learned_fusion_study(tmp_path) is None
+
+
+def test_run_learned_fusion_study_single_subject_skips_loso_gracefully(tmp_path):
+    _write_trace(tmp_path, 1, 1, _rows(50, seed=1))
+    _write_trace(tmp_path, 1, 2, _rows(50, seed=2))
+    results = run_learned_fusion_study(tmp_path)
+    assert results['n_subjects'] == 1
+    assert results['handtuned'] is not None
+    assert results['logistic_loso'] is None
+    assert results['gbt_loso'] is None
+    assert results['weights_rows'] == []
+    assert results['final_model'] is None
+    assert results['scaler'] is None
+
+
+def test_run_learned_fusion_study_matches_manual_loso_on_inverted_data(synthetic_traces):
+    """
+    Cross-check against the same inverted-signal scenario
+    test_learned_fusion_beats_handtuned_on_inverted_data() already validates
+    manually - the harness-facing function must reproduce it, not a
+    different computation that happens to also look reasonable.
+    """
+    results = run_learned_fusion_study(synthetic_traces)
+    assert results['n_subjects'] == 3
+    assert results['logistic_loso'] is not None
+    assert results['gbt_loso'] is not None
+    assert results['logistic_loso']['accuracy'] > results['handtuned']['accuracy']
+    assert results['final_model'] is not None
+    assert results['scaler'] is not None
+    assert results['weights_rows'], "a non-degenerate fit must produce weight rows"
+    brow_row = next(r for r in results['weights_rows'] if r['name'] == 'brow_tension')
+    assert brow_row['direction'] == 'stress down (INVERTED)'
+
+
+def test_run_learned_fusion_study_never_touches_disk(synthetic_traces, tmp_path, monkeypatch):
+    """No models/ artifact is written by the compute path - only --save
+    (main()'s job, not run_learned_fusion_study()'s) persists anything."""
+    sentinel_models_dir = tmp_path / 'models_sentinel'
+    sentinel_models_dir.mkdir()
+    run_learned_fusion_study(synthetic_traces)
+    assert list(sentinel_models_dir.iterdir()) == []
+
+
+def test_render_none_results_shows_skip_message():
+    out = []
+    render(None, out)
+    assert any('no feature traces found' in line for line in out)
+
+
+def test_render_single_subject_stops_before_learned_section():
+    results = {
+        'n_frames': 10, 'n_subjects': 1, 'n_relaxed': 5, 'n_stressed': 5,
+        'subsample': 1,
+        'handtuned': summarize(np.array([0, 1]), np.array([0, 1]), np.array(['s1', 's1']), 'hand-tuned fusion'),
+        'logistic_loso': None, 'gbt_loso': None, 'weights_rows': [],
+        'final_model': None, 'scaler': None, 'feature_names': SIGNALS,
+    }
+    out = []
+    render(results, out)
+    text = "\n".join(out)
+    assert 'BASELINE' in text
+    assert 'Only one subject present' in text
+    # The title banner always says "LEARNED FUSION" - the per-section
+    # "LEARNED (out-of-fold, N folds)" header is the thing that must be
+    # absent here.
+    assert 'LEARNED (out-of-fold' not in text
+    assert 'WHAT IT LEARNED' not in text
+
+
+def test_render_multi_subject_includes_all_sections(synthetic_traces):
+    results = run_learned_fusion_study(synthetic_traces)
+    out = []
+    render(results, out)
+    text = "\n".join(out)
+    assert 'BASELINE' in text
+    assert 'logistic regression' in text
+    assert 'gradient boosting' in text
+    assert 'WHAT IT LEARNED' in text
+    assert 'INVERTED' in text
