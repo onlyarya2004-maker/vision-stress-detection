@@ -12,6 +12,7 @@ verified as implemented rather than as described:
 
 import pytest
 
+import config
 from conftest import (
     face_mesh_result, make_face_landmarks, make_pose_landmarks, pose_result,
 )
@@ -177,3 +178,120 @@ def test_baseline_reset_clears_calibration(engine):
     assert engine.baseline.calibrated is True
     engine.reset_baseline()
     assert engine.baseline.calibrated is False
+
+
+# --------------------------------------------------------------------------
+# 4. PERCLOS (Driving mode, Phase 2.3)
+# --------------------------------------------------------------------------
+# These need a controllable clock (real elapsed test time is a few
+# milliseconds, far too short to exercise a 60s window), so they build their
+# own engine with a synthetic time_source rather than using the shared
+# `engine` fixture - same clock-dict pattern train_temporal_model.py uses.
+
+def _clock_engine():
+    from behavioral_features import BehavioralFeatureEngine
+    clock = {'t': 0.0}
+    eng = BehavioralFeatureEngine(time_source=lambda: clock['t'])
+    return eng, clock
+
+
+def _feed(engine, monkeypatch, blank_frame, ear):
+    landmarks = make_face_landmarks(ear=ear)
+    monkeypatch.setattr(engine.face_mesh, "process",
+                        lambda _frame: face_mesh_result(landmarks))
+    feats, _bbox = engine._extract_face(blank_frame)
+    return feats
+
+
+def test_perclos_zero_when_eyes_stay_open(monkeypatch, blank_frame):
+    engine, clock = _clock_engine()
+    _calibrated(engine)
+    try:
+        feats = None
+        for i in range(10):
+            clock['t'] = i * 0.5
+            feats = _feed(engine, monkeypatch, blank_frame, ear=0.28)  # baseline, open
+        assert feats["perclos"] == pytest.approx(0.0)
+    finally:
+        engine.close()
+
+
+def test_perclos_high_when_eyes_stay_closed(monkeypatch, blank_frame):
+    engine, clock = _clock_engine()
+    _calibrated(engine)
+    try:
+        feats = None
+        for i in range(10):
+            clock['t'] = i * 0.5
+            # <=20% of the 0.28 baseline = <=0.056 - well past "closed".
+            feats = _feed(engine, monkeypatch, blank_frame, ear=0.02)
+        assert feats["perclos"] == pytest.approx(1.0)
+    finally:
+        engine.close()
+
+
+def test_perclos_reflects_mixed_open_closed_ratio(monkeypatch, blank_frame):
+    engine, clock = _clock_engine()
+    _calibrated(engine)
+    try:
+        feats = None
+        for i in range(10):
+            clock['t'] = i * 0.5
+            ear = 0.02 if i % 2 == 0 else 0.28   # alternating closed/open
+            feats = _feed(engine, monkeypatch, blank_frame, ear=ear)
+        assert feats["perclos"] == pytest.approx(0.5)
+    finally:
+        engine.close()
+
+
+def test_perclos_window_evicts_old_samples(monkeypatch, blank_frame):
+    """
+    A closed stretch that has scrolled out of the 60s window must stop
+    affecting PERCLOS - otherwise a single old drowsy moment would pin the
+    metric high for the rest of the session.
+    """
+    engine, clock = _clock_engine()
+    _calibrated(engine)
+    try:
+        clock['t'] = 0.0
+        for _ in range(5):
+            _feed(engine, monkeypatch, blank_frame, ear=0.02)  # closed, long ago
+
+        clock['t'] = 120.0  # 2 minutes later - the closed run is now stale
+        feats = None
+        for i in range(5):
+            clock['t'] = 120.0 + i
+            feats = _feed(engine, monkeypatch, blank_frame, ear=0.28)  # open
+        assert feats["perclos"] == pytest.approx(0.0)
+    finally:
+        engine.close()
+
+
+def test_perclos_present_during_calibration(monkeypatch, blank_frame):
+    """PERCLOS is a raw diagnostic like ear/blinks_per_minute - computed
+    during calibration too, unlike the zeroed derived stress signals."""
+    engine, clock = _clock_engine()
+    engine._calibrating = True
+    try:
+        clock['t'] = 0.0
+        feats = _feed(engine, monkeypatch, blank_frame, ear=0.28)
+        assert feats["calibrating"] is True
+        assert "perclos" in feats
+        assert 0.0 <= feats["perclos"] <= 1.0
+    finally:
+        engine.close()
+
+
+def test_finish_calibration_clears_perclos_window(monkeypatch, blank_frame):
+    """A stale pre-calibration window must not leak into calibrated scoring."""
+    engine, clock = _clock_engine()
+    engine.start_calibration()
+    try:
+        for i in range(config.MIN_CALIBRATION_SAMPLES + 5):
+            clock['t'] = i * 0.1
+            _feed(engine, monkeypatch, blank_frame, ear=0.02)  # closed throughout
+        assert len(engine.state.perclos_samples) > 0
+        engine.finish_calibration()
+        assert len(engine.state.perclos_samples) == 0
+    finally:
+        engine.close()

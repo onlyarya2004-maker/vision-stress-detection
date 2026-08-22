@@ -603,12 +603,24 @@ def render_signal_rows(contributions):
     return ''.join(rows)
 
 
-def render_tiles(blink_rate, ear_value, hr_text="--"):
+def render_tiles(blink_rate, ear_value, hr_text="--", perclos_pct=None):
+    """
+    perclos_pct: 0-100, or None to omit the tile entirely (only Driving mode
+    passes a value - PERCLOS is a drowsiness metric, not generally useful
+    outside that context; see config.PERCLOS_CLOSURE_RATIO).
+    """
+    tiles = [
+        f'<div class="mtile"><div class="v">{blink_rate:.0f}</div><div class="l">Blinks/min</div></div>',
+        f'<div class="mtile"><div class="v">{ear_value:.2f}</div><div class="l">Eye open</div></div>',
+        f'<div class="mtile"><div class="v">{hr_text}</div><div class="l">HR bpm</div></div>',
+    ]
+    if perclos_pct is not None:
+        tiles.append(
+            f'<div class="mtile"><div class="v">{perclos_pct:.0f}%</div><div class="l">PERCLOS</div></div>'
+        )
     return (
-        f'<div class="mtiles">'
-        f'<div class="mtile"><div class="v">{blink_rate:.0f}</div><div class="l">Blinks/min</div></div>'
-        f'<div class="mtile"><div class="v">{ear_value:.2f}</div><div class="l">Eye open</div></div>'
-        f'<div class="mtile"><div class="v">{hr_text}</div><div class="l">HR bpm</div></div>'
+        f'<div class="mtiles" style="grid-template-columns:repeat({len(tiles)},1fr);">'
+        + ''.join(tiles) +
         f'</div>'
     )
 
@@ -1375,9 +1387,12 @@ def main():
                                           unsafe_allow_html=True)
                 signals_placeholder.markdown(render_signal_rows(result['contributions']),
                                             unsafe_allow_html=True)
+                _perclos_pct = (behavioral_features.get('perclos', 0.0) * 100.0
+                               if st.session_state.task_mode == 'Driving' else None)
                 tiles_placeholder.markdown(
                     render_tiles(behavioral_features.get('blinks_per_minute', 0.0),
-                                behavioral_features.get('ear', 0.0), _hr_text),
+                                behavioral_features.get('ear', 0.0), _hr_text,
+                                perclos_pct=_perclos_pct),
                     unsafe_allow_html=True)
                 guidance_placeholder.markdown(render_guidance(level, result['contributions']),
                                              unsafe_allow_html=True)

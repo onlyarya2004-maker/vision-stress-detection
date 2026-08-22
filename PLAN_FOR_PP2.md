@@ -176,9 +176,12 @@ stress-relevant features instead of raw pixels (Phase 2).
       because PP1 had no way to sense it). Gate on signal quality (motion/lighting) like the
       pose-visibility gate; emit "unavailable" when poor. Validate against UBFC-Phys BVP
       ground truth (dataset-only, no device). ~4–6 days.
-- [ ] **PERCLOS for Driving mode** (% of time eyelids ≥80% closed over 60 s) — the standard
-      drowsiness metric; ~20 lines on top of existing EAR. Lets Driving mode cite an
-      established metric.
+- [x] **PERCLOS for Driving mode** (% of time eyelids ≥80% closed over 60 s) — the standard
+      drowsiness metric, built on top of existing EAR. Lets Driving mode cite an
+      established metric. Computed always, displayed only when task_mode == 'Driving' (a
+      fourth metric tile) — does not feed the fusion score, same treatment as rPPG's HR.
+      6 new tests. See `code/behavioral_features.py` (PERCLOS block in `_extract_face`)
+      and `config.PERCLOS_CLOSURE_RATIO`/`PERCLOS_WINDOW_SECONDS`.
 - [ ] (Stretch) Pixel-based temporal branch on a face/affect-pretrained backbone
       (VGGFace2 / AffectNet-finetuned) instead of frozen ImageNet — closes the loop the paper
       already flags as future work.
@@ -259,7 +262,7 @@ memory) on 2026-08-21. ✅ done · 🟡 partial · ❌ not started.
 | | 1.5 Team recordings + multi-user profiles | ❌ **user-gated — the only remaining blocker in this phase** (evaluation_data/ root still only has the original single-subject PP1 recordings) |
 | **2 (~45%)** | 2.1 Feature-based temporal model (GRU/TCN) | ✅ built, trained, wired in, honest negative result — 45.74% acc (GBT baseline 84.59%), both below the 86.60% floor; W_TEMPORAL=0.0 |
 | | 2.2 rPPG branch (offline 3.52 bpm POS; live module, quality-gated, W_RPPG=0) | ✅ pending webcam validation |
-| | 2.3 PERCLOS for Driving | ❌ |
+| | 2.3 PERCLOS for Driving | ✅ computed always, displayed in Driving mode only, not fused |
 | | 2.4 (Stretch) affect-pretrained pixel branch | ❌ |
 | | 2.5 Inference off the UI thread | ❌ |
 | **3 (~65%)** | 3.1 Self-report labeling loop in app | ✅ 1 session labeled so far |
@@ -377,8 +380,8 @@ agent reports alone) before fixing. Confirmed and fixed:
 Full suite re-run clean (151 passed) after all fixes; nothing here changed `W_TEMPORAL` or
 any architecture/hyperparameter from the Phase 2.1 plan.
 
-Next actions: (user) team recordings - now the only blocker in Phase 1 · (code) PERCLOS 2.3,
-ablations 4.2, fold the UBFC correlation into the harness (4.4).
+Next actions: (user) team recordings - now the only blocker in Phase 1 · (code) ablations
+4.2, fold the UBFC correlation into the harness (4.4).
 
 ---
 

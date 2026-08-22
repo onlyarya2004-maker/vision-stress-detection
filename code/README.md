@@ -11,7 +11,7 @@
 |---|---|
 | `app.py` | Streamlit dashboard — main entry point (`streamlit run app.py` from this folder) |
 | `config.py` | **Every tunable constant, with provenance.** Start here before changing behaviour |
-| `behavioral_features.py` | MediaPipe FaceMesh + Pose engine, 7 signals, personal calibration (face, posture, blink threshold, blink rate) |
+| `behavioral_features.py` | MediaPipe FaceMesh + Pose engine, 7 signals, personal calibration (face, posture, blink threshold, blink rate), PERCLOS (Driving mode, displayed only — see below) |
 | `stress_fusion.py` | Branch fusion, task modes, rule boost, smoothing, hysteresis |
 | `rppg_live.py` | Heart rate from the camera (POS), quality-gated, abstains when noisy |
 | `learned_fusion.py` | Data-fitted fusion weights (meta-learner inference) |
@@ -33,6 +33,12 @@
 The temporal smoother is a fixed **60 frames (~2 s at 30 fps)** from `config.py`. The
 11.1 s window recommended inside the WESAD JSON is **not** used (it describes stress-block
 duration in WESAD's protocol, not per-frame vision noise).
+
+**PERCLOS** (Phase 2.3): the standard drowsiness metric (% of the last 60s with the eye
+≥80% closed), computed from EAR the same way `blinks_per_minute` already is. Always
+computed, but only *displayed* — as a fourth metric tile — when `task_mode == 'Driving'`;
+it does not carry a `W_*` switch because it doesn't feed the fusion score at all, same
+"shown but not fused in" treatment as heart rate. See `config.PERCLOS_CLOSURE_RATIO`.
 
 ## Training & preprocessing (offline)
 
@@ -62,7 +68,7 @@ duration in WESAD's protocol, not per-frame vision noise).
 python -m pytest tests -q        # from code/, or: python -m pytest code/tests from the root
 ```
 
-113+ tests. The load-bearing ones: Default-mode fusion equals the archived pre-task-aware
+157+ tests. The load-bearing ones: Default-mode fusion equals the archived pre-task-aware
 implementation **exactly** (diff 0.00e+00); uncalibrated posture/blink behaviour is
 byte-identical to PP1; rPPG methods recover a synthetic pulse of known frequency; every
 default-off switch above leaves output unchanged.

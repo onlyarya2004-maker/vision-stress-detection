@@ -100,6 +100,10 @@ class BehavioralState:
         default_factory=lambda: deque(maxlen=config.EAR_HISTORY_FRAMES))
     head_tilt_history:  deque = field(
         default_factory=lambda: deque(maxlen=config.HEAD_TILT_HISTORY_FRAMES))
+    # (timestamp, is_closed) pairs over the last PERCLOS_WINDOW_SECONDS,
+    # evicted by time like LiveRPPG._buf rather than frame count, so it
+    # stays correct at any live frame rate.
+    perclos_samples:    deque = field(default_factory=deque)
 
 
 class BehavioralFeatureEngine:
@@ -223,6 +227,7 @@ class BehavioralFeatureEngine:
         self.state.blink_times.clear()
         self.state.ear_history.clear()
         self.state.head_tilt_history.clear()
+        self.state.perclos_samples.clear()
         return True
 
     def reset_baseline(self):
@@ -270,6 +275,19 @@ class BehavioralFeatureEngine:
         )
         blinks_per_minute = len(self.state.blink_times) * (60.0 / window_elapsed)
 
+        # PERCLOS: fraction of the last PERCLOS_WINDOW_SECONDS during which
+        # the eye was >=80% closed (EAR <= PERCLOS_CLOSURE_RATIO x baseline).
+        perclos_cutoff = config.PERCLOS_CLOSURE_RATIO * self.baseline.ear_baseline
+        self.state.perclos_samples.append((now, ear <= perclos_cutoff))
+        perclos_window_start = now - config.PERCLOS_WINDOW_SECONDS
+        while (self.state.perclos_samples
+               and self.state.perclos_samples[0][0] < perclos_window_start):
+            self.state.perclos_samples.popleft()
+        perclos = (
+            sum(1 for _, closed in self.state.perclos_samples if closed)
+            / len(self.state.perclos_samples)
+        ) if self.state.perclos_samples else 0.0
+
         self.state.ear_history.append(ear)
 
         lb = _p(lm, LEFT_INNER_BROW, w, h)
@@ -301,7 +319,7 @@ class BehavioralFeatureEngine:
             })
             return ({
                 'ear': ear, 'ear_asymmetry': ear_asymmetry,
-                'blinks_per_minute': blinks_per_minute,
+                'blinks_per_minute': blinks_per_minute, 'perclos': perclos,
                 'eye_strain': 0.0, 'blink_stress': 0.0,
                 'brow_tension': 0.0, 'jaw_tension': 0.0,
                 'head_instability': 0.0, 'calibrating': True,
@@ -348,7 +366,7 @@ class BehavioralFeatureEngine:
 
         return ({
             'ear': ear, 'ear_asymmetry': ear_asymmetry,
-            'blinks_per_minute': blinks_per_minute,
+            'blinks_per_minute': blinks_per_minute, 'perclos': perclos,
             'eye_strain': eye_strain, 'blink_stress': blink_stress,
             'brow_tension': brow_tension, 'jaw_tension': jaw_tension,
             'head_instability': head_instability, 'calibrating': False,

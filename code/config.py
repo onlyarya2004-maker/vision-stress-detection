@@ -257,6 +257,17 @@ HYSTERESIS_CONFIRM_FRAMES = 3         # consecutive frames before a level flips
 BLINK_THRESHOLD_RATIO = 0.75
 EAR_BLINK_THRESHOLD = 0.21       # fallback only; see BLINK_THRESHOLD_RATIO
 BLINK_WINDOW_SECONDS = 60        # sliding window for blinks-per-minute
+
+# PERCLOS (PERcentage of eyelid CLOSure over time) - the standard drowsiness
+# metric (Wierwille et al.), added for Driving mode (Phase 2.3). EAR has no
+# direct pupil-coverage measurement, so "eye >=80% closed" is approximated as
+# EAR dropping to PERCLOS_CLOSURE_RATIO of the calibrated open-eye baseline -
+# a stricter cutoff than BLINK_THRESHOLD_RATIO's 0.75 (a blink only needs to
+# dip below "mostly open" to count; PERCLOS needs near-complete closure).
+# Computed and displayed only - it does not feed the stress fusion weights,
+# same "computed and shown, not fused in" treatment as W_RPPG's heart rate.
+PERCLOS_CLOSURE_RATIO = 0.2
+PERCLOS_WINDOW_SECONDS = 60      # standard PERCLOS window
 POSE_VISIBILITY_THRESHOLD = 0.7  # both shoulders must exceed this, else
                                  # posture features report 0 rather than noise
 HAND_NEAR_FACE_DAMPING = 0.3     # posture x0.3 when a wrist is by the face
