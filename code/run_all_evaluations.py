@@ -45,6 +45,7 @@ from eval_scoring import wilson, pct, ci_str, frame_scores, session_scores, STRE
 # here (rather than the other way around) avoids a circular import while
 # still keeping the scoring code itself in exactly one place.
 from ablation_study import run_ablation_study, render as render_ablation_table
+from correlate_physiology import run_correlation_study, render as render_correlation
 
 
 # ---------------------------------------------------------------------------
@@ -339,6 +340,12 @@ def main():
     # venv as this script, so there is no reason for it to be anything but
     # regenerated here like every other number.
     render_ablation_table(run_ablation_study(root / "datasets" / "feature_traces"), out)
+
+    # Phase 1.4 / 4.4: stress index vs EDA correlation, folded in the same
+    # way - pure numpy/scipy over already-saved traces + UBFC-Phys ground
+    # truth, no reason for this to live only in its own separate report.
+    render_correlation(run_correlation_study(
+        root / "datasets" / "feature_traces", root / "datasets" / "UBFC-Phys"), out)
 
     render_artifacts(root, out)
 

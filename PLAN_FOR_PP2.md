@@ -273,7 +273,7 @@ memory) on 2026-08-21. ✅ done · 🟡 partial · ❌ not started.
 | **4 (~40%)** | 4.1 One regenerating script | 🟡 missing rows: DaiSEE re-run, learned-vs-hand-tuned, temporal old-vs-new |
 | | 4.2 Ablation table | ✅ each branch removed once, regenerated every run — see README |
 | | 4.3 Per-subject breakdown | 🟡 active for all 10 UBFC subjects; team data absent |
-| | 4.4 UBFC correlation row in harness | 🟡 standalone script, now with real s6–s10 results; not yet folded into the harness; see 1.4 |
+| | 4.4 UBFC correlation row in harness | ✅ `correlate_physiology.py` folded into `run_all_evaluations.py`, regenerated every run; still standalone-runnable too — see 1.4 |
 | | 4.5 Frame + session metrics with Wilson CIs | ✅ |
 | **5 (~50%)** | 5.1 Analytics dashboard | ❌ |
 | | 5.2 PDF export | ❌ |
@@ -405,8 +405,18 @@ agent reports alone) before fixing. Confirmed and fixed:
 Full suite re-run clean (151 passed) after all fixes; nothing here changed `W_TEMPORAL` or
 any architecture/hyperparameter from the Phase 2.1 plan.
 
-Next actions: (user) team recordings - now the only blocker in Phase 1 · (code) fold the
-UBFC correlation into the harness (4.4), learned-vs-hand-tuned as a regenerated row (4.1).
+Phase 4.4 (2026-08-22): `correlate_physiology.py` refactored into `run_correlation_study()`
+(compute) + `render()` (print) - same split as `ablation_study.py` a step earlier - and
+called directly from `run_all_evaluations.py`, so the EDA-correlation section now
+regenerates every run instead of living only in its own separate `CORRELATION_RESULTS_*.txt`
+file (still produced too, for standalone use). No surprises this time: the script already
+worked and had real, previously-verified results (4/5 s6-s10 direction agreement, matching
+1.4's existing number exactly after the refactor), so this was a mechanical move rather than
+an investigation. 13 new tests (load/align edge cases, a perfect-correlation sanity check, a
+hand-computed direction-agreement case). 190/190 passing.
+
+Next actions: (user) team recordings - now the only blocker in Phase 1 · (code)
+learned-vs-hand-tuned as a regenerated row (4.1) is the remaining harness gap.
 
 ---
 

@@ -60,7 +60,7 @@ it does not carry a `W_*` switch because it doesn't feed the fusion score at all
 | `evaluate_video_file.py` | Full pipeline over video files (UBFC-Phys etc.): stress CSVs + per-frame feature traces + rPPG RGB traces, then the video is disposable |
 | `diagnose_features.py` | Per-signal discriminability (Cohen's d, saturation, inversion); can diff two runs |
 | `analyze_rppg.py` | GREEN/CHROM/POS heart-rate recovery vs BVP ground truth |
-| `correlate_physiology.py` | Stress index ↔ EDA correlation per subject/task |
+| `correlate_physiology.py` | Phase 4.4: stress index ↔ EDA correlation per subject/task, within- and between-task. Called from `run_all_evaluations.py` (same compute/render split as `ablation_study.py`), still standalone-runnable |
 | `analyze_sessions.py` | Quick single-folder accuracy check (superseded by the harness) |
 | `evaluate_threshold_sweep.py` | DaiSEE decision-threshold sweep |
 
@@ -70,7 +70,7 @@ it does not carry a `W_*` switch because it doesn't feed the fusion score at all
 python -m pytest tests -q        # from code/, or: python -m pytest code/tests from the root
 ```
 
-177+ tests. The load-bearing ones: Default-mode fusion equals the archived pre-task-aware
+190+ tests. The load-bearing ones: Default-mode fusion equals the archived pre-task-aware
 implementation **exactly** (diff 0.00e+00); uncalibrated posture/blink behaviour is
 byte-identical to PP1; rPPG methods recover a synthetic pulse of known frequency; every
 default-off switch above leaves output unchanged.
