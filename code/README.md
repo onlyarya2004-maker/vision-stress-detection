@@ -45,6 +45,7 @@ it does not carry a `W_*` switch because it doesn't feed the fusion score at all
 | Module | Role |
 |---|---|
 | `daisee_preprocessing.py` → `rebucket_to_binary.py` → `train_daisee_stress.py` | DaiSEE face crops → binary labels → CNN ensemble (.h5) |
+| `daisee_test_eval.py` | Phase 4.1: loads the saved `.h5` ensemble and re-evaluates it on the held-out test split (inference only, never retrains) → `../models/daisee_test_report.txt`, echoed by `run_all_evaluations.py`. Not called from the harness directly — a few minutes of CPU inference over 28,531 images, unlike the cheap ablation/correlation/learned-fusion sections |
 | `wesad_calibration.py` | WESAD LOSO (91.86%) → `calibrated_thresholds.json` (provenance) |
 | `lstm_preprocessing.py` / `train_lstm.py` | The failed pixel-LSTM, retired to `_archive/lstm_temporal.py` (kept as the documented negative result) |
 | `train_temporal_model.py` | Phase 2.1 GRU: DaiSEE `processed_daisee/` crops → behavioral-feature sequences → GRU + GBT-baseline ablation → `../models/temporal_gru.npz`. Run only via `.venv-train\Scripts\python`; also below the majority floor (kept as a second documented negative result) |
@@ -70,7 +71,7 @@ it does not carry a `W_*` switch because it doesn't feed the fusion score at all
 python -m pytest tests -q        # from code/, or: python -m pytest code/tests from the root
 ```
 
-202+ tests. The load-bearing ones: Default-mode fusion equals the archived pre-task-aware
+208+ tests. The load-bearing ones: Default-mode fusion equals the archived pre-task-aware
 implementation **exactly** (diff 0.00e+00); uncalibrated posture/blink behaviour is
 byte-identical to PP1; rPPG methods recover a synthetic pulse of known frequency; every
 default-off switch above leaves output unchanged.

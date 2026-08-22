@@ -1,7 +1,7 @@
 ==============================================================================
 CANONICAL EVALUATION RESULTS
 ==============================================================================
-generated : 2026-08-22T10:28:06
+generated : 2026-08-22T19:51:31
 root      : C:\Users\Arya\Desktop\stress_project
 
 Every number this project reports must come from this file.
@@ -305,6 +305,46 @@ WHAT IT LEARNED (fitted on all subjects)
 ==============================================================================
 OFFLINE STAGE ARTIFACTS (read from generated files, not retyped)
 ==============================================================================
+
+### DaiSEE CNN ensemble (held-out test split)
+  source: models\daisee_test_report.txt
+  generated : 2026-08-22 19:49:46
+  data root : C:\Users\Arya\Desktop\stress_project\datasets\processed_daisee
+  n images  : 28531 (24708 not_stressed, 3823 stressed)
+
+  MobileNetV2 (alone)
+  n                    : 28531
+  accuracy             : 81.88%
+  balanced accuracy    : 57.25%
+  precision (stressed) : 0.286
+  recall (stressed)    : 0.236
+  f1 (stressed)        : 0.259
+  majority-class floor : 86.60%
+  verdict              : BELOW the majority-class floor
+
+  EfficientNetB0 (alone)
+  n                    : 28531
+  accuracy             : 81.11%
+  balanced accuracy    : 59.78%
+  precision (stressed) : 0.300
+  recall (stressed)    : 0.306
+  f1 (stressed)        : 0.303
+  majority-class floor : 86.60%
+  verdict              : BELOW the majority-class floor
+
+  Ensemble (mean of both - what the live system uses)
+  n                    : 28531
+  accuracy             : 81.89%
+  balanced accuracy    : 59.68%
+  precision (stressed) : 0.313
+  recall (stressed)    : 0.293
+  f1 (stressed)        : 0.303
+  majority-class floor : 86.60%
+  verdict              : BELOW the majority-class floor
+
+  Regenerate with: python daisee_test_eval.py (loads the saved .h5
+  checkpoints, runs inference only - takes a few minutes, not retrained
+  here, so this section is NOT called from this script directly).
 
 ### WESAD physiological calibration
   source: models\calibrated_thresholds.json

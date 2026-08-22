@@ -64,7 +64,7 @@ writes a timestamped file to `evaluation_data/`. Nothing here is transcribed by 
 | Cross-subject, same baseline with learned weights (logistic / gradient boosting) | same data, LOSO | 66.74% / 77.06% | — |
 | rPPG heart rate vs Empatica E4 BVP (POS method) | 15 traces | **3.52 bpm** mean abs. error | — |
 | WESAD physiological validation (LOSO, 15 subjects) | 877 windows | **91.86%** (F1 0.874) | — |
-| DaiSEE CNN ensemble, held-out test split | — | ~82-84% | — |
+| DaiSEE CNN ensemble, held-out test split | 28,531 images | 81.89% (*below* the 86.60% majority floor) | — |
 
 The gap between 99.11% (single-subject) and 49.75% (cross-subject, full system) is the
 central finding of the PP2 work so far: hand-tuned constants measure the person they were
@@ -132,6 +132,19 @@ Discrimination gap **+0.320** (relaxed mean 0.235 vs stressed mean 0.554).
   performed to force either model above the floor. See
   `models/temporal_gru_test_report.txt`. Wired into fusion with weight 0.0
   (`config.W_TEMPORAL`).
+- **DaiSEE CNN ensemble — below its own majority floor, but still live.** Unlike the three
+  branches above, this one is NOT disabled (`config.W_DAISEE = 0.20`): on the 28,531-image
+  held-out test split it scores 81.89% (MobileNetV2 alone 81.88%, EfficientNetB0 alone
+  81.11%), *below* the 86.60% trivial-majority-class floor — the same failure mode as the
+  pixel-LSTM and GRU above. It stays enabled because the personal-baseline re-centering
+  (`daisee_stress_score()`) that the live single-subject system applies is what makes the
+  branch useful, not its raw held-out classification accuracy — and this is consistent with
+  the [ablation table](#ablation-table-ubfc-phys-cross-subject) above, where removing this
+  same branch from the cross-subject evaluation (which has no per-subject personal baseline
+  to lean on) *improves* accuracy by 2.59pp. Regenerate with
+  `python daisee_test_eval.py` (loads the saved `.h5` checkpoints, inference only, a few
+  minutes on CPU — not called from `run_all_evaluations.py` directly for that reason, same
+  two-tier pattern as the GRU/LSTM reports). See `models/daisee_test_report.txt`.
 
 ---
 

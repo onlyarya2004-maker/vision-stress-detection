@@ -208,6 +208,23 @@ def render_artifacts(root, out):
     out.append("OFFLINE STAGE ARTIFACTS (read from generated files, not retyped)")
     out.append("=" * 78)
 
+    daisee = root / "models" / "daisee_test_report.txt"
+    if daisee.exists():
+        out.append("\n### DaiSEE CNN ensemble (held-out test split)")
+        out.append(f"  source: {daisee.relative_to(root)}")
+        for line in daisee.read_text(encoding="utf-8", errors="replace").splitlines():
+            stripped = line.strip()
+            if stripped in ("MobileNetV2 (alone)", "EfficientNetB0 (alone)",
+                            "Ensemble (mean of both - what the live system uses)"):
+                out.append("")
+                out.append(f"  {stripped}")
+            elif stripped and " : " in stripped:
+                out.append(f"  {stripped}")
+        out.append("")
+        out.append("  Regenerate with: python daisee_test_eval.py (loads the saved .h5")
+        out.append("  checkpoints, runs inference only - takes a few minutes, not retrained")
+        out.append("  here, so this section is NOT called from this script directly).")
+
     cal = root / "models" / "calibrated_thresholds.json"
     if cal.exists():
         with open(cal) as f:

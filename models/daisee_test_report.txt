@@ -1,0 +1,58 @@
+==========================================================================
+DAISEE CNN ENSEMBLE - HELD-OUT TEST REPORT
+==========================================================================
+generated : 2026-08-22 19:49:46
+data root : C:\Users\Arya\Desktop\stress_project\datasets\processed_daisee
+n images  : 28531 (24708 not_stressed, 3823 stressed)
+
+Never retrained here - loads the already-trained .h5 checkpoints and
+runs inference only. Re-run train_daisee_stress.py to change the
+underlying models; re-run this script afterward to refresh this report.
+
+--------------------------------------------------------------------------
+MobileNetV2 (alone)
+--------------------------------------------------------------------------
+  n                    : 28531
+  accuracy             : 81.88%
+  balanced accuracy    : 57.25%
+  precision (stressed) : 0.286
+  recall (stressed)    : 0.236
+  f1 (stressed)        : 0.259
+  majority-class floor : 86.60%
+  verdict              : BELOW the majority-class floor
+  confusion matrix (rows=true, cols=pred [not_stressed, stressed]):
+    [22459, 2249]
+    [2921, 902]
+
+--------------------------------------------------------------------------
+EfficientNetB0 (alone)
+--------------------------------------------------------------------------
+  n                    : 28531
+  accuracy             : 81.11%
+  balanced accuracy    : 59.78%
+  precision (stressed) : 0.300
+  recall (stressed)    : 0.306
+  f1 (stressed)        : 0.303
+  majority-class floor : 86.60%
+  verdict              : BELOW the majority-class floor
+  confusion matrix (rows=true, cols=pred [not_stressed, stressed]):
+    [21971, 2737]
+    [2652, 1171]
+
+--------------------------------------------------------------------------
+Ensemble (mean of both - what the live system uses)
+--------------------------------------------------------------------------
+  n                    : 28531
+  accuracy             : 81.89%
+  balanced accuracy    : 59.68%
+  precision (stressed) : 0.313
+  recall (stressed)    : 0.293
+  f1 (stressed)        : 0.303
+  majority-class floor : 86.60%
+  verdict              : BELOW the majority-class floor
+  confusion matrix (rows=true, cols=pred [not_stressed, stressed]):
+    [22241, 2467]
+    [2701, 1122]
+
+==========================================================================
+total time: 256s

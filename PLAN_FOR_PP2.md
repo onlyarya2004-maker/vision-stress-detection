@@ -270,7 +270,7 @@ memory) on 2026-08-21. ✅ done · 🟡 partial · ❌ not started.
 | | 3.3 Continual adaptation (retrain_from_sessions.py) | 🟡 built and tested, but needs 6 labeled sessions minimum (`MIN_LABELED_SESSIONS`) — only 1 exists, so it can't run yet. Calendar-gated, not code-gated. |
 | | 3.4 Uncertainty/abstention | 🟡 rPPG abstains internally; no visible UI "uncertain" state |
 | | 3.5 Intervention effectiveness tracking | ✅ agent built, wired into the live loop, schema + tests in place — 0 interventions logged yet since no real session has crossed the trigger threshold |
-| **4 (~40%)** | 4.1 One regenerating script | 🟡 learned-vs-hand-tuned now folded in; temporal old-vs-new already present via the GRU report echo; DaiSEE held-out re-run still not a regenerated row |
+| **4 (~85%)** | 4.1 One regenerating script | ✅ learned-vs-hand-tuned, temporal old-vs-new, and DaiSEE held-out re-run all now regenerated/echoed rows |
 | | 4.2 Ablation table | ✅ each branch removed once, regenerated every run — see README |
 | | 4.3 Per-subject breakdown | 🟡 active for all 10 UBFC subjects; team data absent |
 | | 4.4 UBFC correlation row in harness | ✅ `correlate_physiology.py` folded into `run_all_evaluations.py`, regenerated every run; still standalone-runnable too — see 1.4 |
@@ -430,8 +430,28 @@ already-documented 55.19%/66.74%/77.06% + weights table before wiring anything i
 harness). 12 new tests, including a cross-check against the existing hand-verified
 inverted-signal fixture rather than a fresh, unvalidated one. 202/202 passing.
 
-Next actions: (user) team recordings - now the only blocker in Phase 1 · (code) DaiSEE
-held-out re-run as a regenerated row is the one remaining piece of 4.1.
+Phase 4.1 finished (2026-08-22): new `code/daisee_test_eval.py` loads the two already-trained
+`.h5` checkpoints (never retrains) and re-evaluates them on the full 28,531-image held-out
+test split, writing `models/daisee_test_report.txt` - same two-tier pattern as the GRU/LSTM
+reports, NOT called from `run_all_evaluations.py` directly, since batched CNN inference over
+28k images takes real time (256s here) even without training, unlike the cheap
+ablation/correlation/learned-fusion sections. `run_all_evaluations.py` echoes it via the same
+filter pattern as the GRU block. Real, previously-undocumented finding: the ensemble scores
+**81.89% accuracy, BELOW the 86.60% majority-class floor** (MobileNetV2 alone 81.88%,
+EfficientNetB0 alone 81.11%) - the README's prior "~82-84%" figure had no floor comparison at
+all and read as a working result. This is NOT the same situation as the pixel-LSTM/GRU
+though: `config.W_DAISEE` stays at 0.20, live, because the personal-baseline re-centering the
+single-subject system applies is what makes the branch useful - its raw held-out accuracy was
+never the thing carrying it. Consistent with the ablation table's own finding a day earlier
+(removing this branch from the cross-subject evaluation, which has no personal baseline to
+lean on, *improves* accuracy by 2.59pp) - three independent measurements (held-out floor,
+cross-subject ablation, single-subject live number) now tell one coherent, honest story
+instead of three disconnected ones. README's results table and negative-results section
+updated. 6 new tests for `evaluate()`'s pure metric computation. 208/208 passing.
+
+This closes Phase 4 (4.1-4.5 all done or active-with-known-gaps). Next actions: (user) team
+recordings - the only blocker left in Phase 1, and the thing everything in Phase 3 and 4.3
+is actually waiting on.
 
 ---
 
