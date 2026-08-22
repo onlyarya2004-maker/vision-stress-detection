@@ -33,9 +33,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-import config
 from behavioral_features import BehavioralFeatureEngine
-from temporal_model import TEMPORAL_FEATURE_ORDER, gru_forward_numpy
+from temporal_model import TEMPORAL_FEATURE_ORDER, gru_forward_numpy, normalize_features
 
 import torch
 import torch.nn as nn
@@ -224,14 +223,22 @@ def extract_clip_features(frame_paths, tracker=None):
     return np.stack(vectors), had_fallback
 
 
-def build_feature_cache(index, split, cache_dir, force=False):
+def build_feature_cache(index, split, cache_dir, force=False, cache_suffix=''):
     """
     Returns (X, y, clip_ids, tracker). Caches to
-    temporal_features_{split}.npz, including the fallback diagnostics, so a
-    cache hit still carries the same diagnostic information a fresh build
-    would - not just the arrays.
+    temporal_features_{split}{cache_suffix}.npz, including the fallback
+    diagnostics, so a cache hit still carries the same diagnostic
+    information a fresh build would - not just the arrays.
+
+    cache_suffix exists so --smoke-test (a 40-clip subset) writes to a
+    DIFFERENT file than a full run. Without it, --smoke-test would silently
+    overwrite the real temporal_features_{split}.npz with a 40-clip version;
+    a later full run without --rebuild-features would then silently load
+    that stale 40-clip cache and train/report on a tiny fraction of the
+    real dataset with no error - exactly the kind of silent corruption this
+    script exists to prevent.
     """
-    cache_path = Path(cache_dir) / f"temporal_features_{split}.npz"
+    cache_path = Path(cache_dir) / f"temporal_features_{split}{cache_suffix}.npz"
     tracker = FallbackTracker()
 
     if cache_path.exists() and not force:
@@ -319,11 +326,6 @@ class GRUStressModel(nn.Module):
         return self.fc(self.dropout(h_n.squeeze(0))).squeeze(-1)
 
 
-def _normalize(X, feature_mean, feature_std):
-    safe_std = np.where(feature_std > 1e-8, feature_std, 1.0)
-    return (X - feature_mean) / safe_std
-
-
 def _weights_dict(model, hidden_size):
     """The exported/verified weight dict, pulled from the live PyTorch
     model - used identically by verify_export() and the final .npz write,
@@ -344,9 +346,9 @@ def train_model(Xtr, ytr, Xval, yval, feature_mean, feature_std, epochs, hidden_
                 lr, patience, batch_size, device, log_path, seed):
     torch.manual_seed(seed)
 
-    Xtr_n = torch.tensor(_normalize(Xtr, feature_mean, feature_std), dtype=torch.float32)
+    Xtr_n = torch.tensor(normalize_features(Xtr, feature_mean, feature_std), dtype=torch.float32)
     ytr_t = torch.tensor(ytr, dtype=torch.float32)
-    Xval_n = torch.tensor(_normalize(Xval, feature_mean, feature_std), dtype=torch.float32).to(device)
+    Xval_n = torch.tensor(normalize_features(Xval, feature_mean, feature_std), dtype=torch.float32).to(device)
     yval_np = yval
 
     train_loader = DataLoader(TensorDataset(Xtr_n, ytr_t), batch_size=batch_size, shuffle=True)
@@ -541,13 +543,17 @@ def main():
         args.epochs = 2
         print("SMOKE TEST: 40 clips/split, 2 epochs")
 
+    cache_suffix = '_smoke' if args.smoke_test else ''
     print("\nbuilding/loading feature caches...")
     Xtr, ytr, ids_tr, tr_tracker = build_feature_cache(
-        index, 'train', args.feature_cache_dir, force=args.rebuild_features or args.smoke_test)
+        index, 'train', args.feature_cache_dir, force=args.rebuild_features or args.smoke_test,
+        cache_suffix=cache_suffix)
     Xval, yval, ids_val, val_tracker = build_feature_cache(
-        index, 'val', args.feature_cache_dir, force=args.rebuild_features or args.smoke_test)
+        index, 'val', args.feature_cache_dir, force=args.rebuild_features or args.smoke_test,
+        cache_suffix=cache_suffix)
     Xte, yte, ids_te, te_tracker = build_feature_cache(
-        index, 'test', args.feature_cache_dir, force=args.rebuild_features or args.smoke_test)
+        index, 'test', args.feature_cache_dir, force=args.rebuild_features or args.smoke_test,
+        cache_suffix=cache_suffix)
 
     feature_mean = Xtr.reshape(-1, Xtr.shape[2]).mean(axis=0).astype(np.float64)
     feature_std = Xtr.reshape(-1, Xtr.shape[2]).std(axis=0).astype(np.float64)
@@ -566,7 +572,7 @@ def main():
 
     model.eval()
     with torch.no_grad():
-        Xte_n = torch.tensor(_normalize(Xte, feature_mean, feature_std), dtype=torch.float32).to(device)
+        Xte_n = torch.tensor(normalize_features(Xte, feature_mean, feature_std), dtype=torch.float32).to(device)
         gru_probs = torch.sigmoid(model(Xte_n)).cpu().numpy()
     gru_result = evaluate(yte, gru_probs)
 
@@ -582,6 +588,12 @@ def main():
     print("-" * 74)
 
     n_verify = min(args.n_verify, Xval.shape[0])
+    if n_verify < 1:
+        print("\nEXPORT FAILED: validation split is empty - cannot build a verify")
+        print("set. An empty verify set would otherwise 'pass' vacuously (zero")
+        print("comparisons run) and ship a completely unverified .npz. No .npz")
+        print("written. Fix the val split (or --dataset-root) before retrying.")
+        return 1
     verify_idx = list(np.linspace(0, Xval.shape[0] - 1, n_verify, dtype=int))
     fallback_idx = val_tracker.fallback_clip_indices()
     if fallback_idx and fallback_idx[0] not in verify_idx:
@@ -592,7 +604,7 @@ def main():
               else "  a fallback-containing val clip was already in the sampled verify set")
     verify_idx = sorted(set(verify_idx))
 
-    verify_X_norm = _normalize(Xval[verify_idx], feature_mean, feature_std).astype(np.float64)
+    verify_X_norm = normalize_features(Xval[verify_idx], feature_mean, feature_std).astype(np.float64)
     weights_for_check = _weights_dict(model, args.hidden_size)
     ok, verify_Y, detail = verify_export(model, weights_for_check, verify_X_norm, device)
 

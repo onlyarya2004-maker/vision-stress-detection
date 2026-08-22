@@ -67,6 +67,22 @@ W_TEMPORAL = 0.0    # Temporal branch disabled: the Phase 2.1 feature-sequence
                     # models/temporal_gru_test_report.txt. Reported honestly,
                     # not tuned to cross the floor - kept disabled like the
                     # pixel-LSTM before it.
+                    #
+                    # SEPARATE BLOCKER if this is ever revisited: training
+                    # sequences are 16 frames spaced ~0.625s apart (~10s of
+                    # DaiSEE clip at the synthetic FRAME_RATE_HZ=1.6 used by
+                    # train_temporal_model.py). Live app.py calls
+                    # temporal_inf.add_frame() on every processed webcam
+                    # frame with no timestamp-based pacing, so the live
+                    # "most recent 16 frames" window spans well under 2
+                    # seconds of real time at ~30fps - a temporal-dynamics
+                    # distribution shift the model was never trained on,
+                    # on top of the accuracy result above. The NumPy/PyTorch
+                    # weight-parity check only verifies the math replica is
+                    # correct, not that live input timing matches training -
+                    # this must be fixed (e.g. pace add_frame() to ~1.6Hz
+                    # using real timestamps) before W_TEMPORAL is raised
+                    # above 0.0, independent of the accuracy question.
 
 # ===========================================================================
 # BEHAVIORAL SIGNAL WEIGHTS (Default mode; must sum to 1.0)

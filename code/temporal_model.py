@@ -109,6 +109,17 @@ def gru_forward_numpy(x_seq, weights):
     return float(np.squeeze(W_out @ h + b_out))
 
 
+def normalize_features(raw, mean, std):
+    """
+    Shared normalization formula - the ONLY place this epsilon/fallback
+    logic is defined. train_temporal_model.py imports this same function
+    (rather than re-implementing it) so the training-time and
+    live-inference-time normalization can never silently drift apart.
+    """
+    safe_std = np.where(std > 1e-8, std, 1.0)
+    return (raw - mean) / safe_std
+
+
 def _verify_weights(weights):
     """
     Re-run the export-time parity check against every frozen sequence baked
@@ -118,6 +129,14 @@ def _verify_weights(weights):
     verify_Y = weights.get('verify_Y')
     if verify_X is None or verify_Y is None:
         return False, "artifact has no verify_X/verify_Y baked in"
+    if verify_X.shape[0] != verify_Y.shape[0]:
+        return False, (f"verify_X/verify_Y length mismatch "
+                       f"({verify_X.shape[0]} vs {verify_Y.shape[0]})")
+    if verify_X.shape[0] == 0:
+        # An empty verify set would otherwise "pass" vacuously (the loop
+        # below just never runs) and ship a completely unverified export -
+        # refuse to trust it instead.
+        return False, "verify set is empty - refusing to trust an unverified export"
     for i in range(verify_X.shape[0]):
         got = gru_forward_numpy(verify_X[i], weights)
         want = float(verify_Y[i])
@@ -155,22 +174,29 @@ class GRUTemporalInference:
             print(f"[temporal_model] model not found at {path} - "
                   f"temporal branch DISABLED (system will use single-frame fusion only)")
             return
+        # Entire load+verify sequence lives in one try/except, matching the
+        # pattern every sibling module uses (learned_fusion.py, rppg_live.py,
+        # the old lstm_temporal.py): a malformed .npz - missing a key,
+        # corrupted array, wrong dtype - must degrade to is_available()=False,
+        # never crash app startup or a live frame.
         try:
             data = np.load(path, allow_pickle=False)
             weights = {k: data[k] for k in data.files}
+            for key in ('feature_mean', 'feature_std'):
+                if key not in weights:
+                    raise KeyError(key)
+
+            ok, detail = _verify_weights(weights)
+            if not ok:
+                print(f"[temporal_model] self-verification FAILED ({detail}) - "
+                      f"temporal branch DISABLED. A corrupted file or a bad export "
+                      f"must never silently serve a score.")
+                return
+
+            self.weights = weights
+            print(f"[temporal_model] loaded {path}, self-verified ({detail})")
         except Exception as e:
             print(f"[temporal_model] load FAILED: {e} - temporal branch DISABLED")
-            return
-
-        ok, detail = _verify_weights(weights)
-        if not ok:
-            print(f"[temporal_model] self-verification FAILED ({detail}) - "
-                  f"temporal branch DISABLED. A corrupted file or a bad export "
-                  f"must never silently serve a score.")
-            return
-
-        self.weights = weights
-        print(f"[temporal_model] loaded {path}, self-verified ({detail})")
 
     def is_available(self):
         return self.weights is not None
@@ -186,10 +212,7 @@ class GRUTemporalInference:
             [float(behavioral_features.get(name, 0.0)) for name in TEMPORAL_FEATURE_ORDER],
             dtype=np.float64,
         )
-        mean = self.weights['feature_mean']
-        std = self.weights['feature_std']
-        safe_std = np.where(std > 1e-8, std, 1.0)
-        return (raw - mean) / safe_std
+        return normalize_features(raw, self.weights['feature_mean'], self.weights['feature_std'])
 
     def add_frame(self, behavioral_features):
         """behavioral_features: the dict BehavioralFeatureEngine.extract() returns."""

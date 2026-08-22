@@ -345,11 +345,25 @@ def render_artifacts(root, out):
             # "key : value" metric lines and the model-name section headers -
             # skip separators, blank lines, and the multi-line prose blocks
             # (limitation note, comparison footer) that don't fit this
-            # summary echo.
-            if stripped and (" : " in stripped or stripped in (
-                "GRU (feature-sequence temporal model)",
-                "GBT baseline (mean/std/slope summary stats)",
-            )):
+            # summary echo. The GRU and GBT blocks share identical field
+            # labels (n, accuracy, balanced accuracy, ...), so a blank line
+            # is inserted before each header - without it the two blocks run
+            # together with only the header text itself as a boundary,
+            # inviting misattribution on a skim.
+            if stripped in ("GRU (feature-sequence temporal model)",
+                            "GBT baseline (mean/std/slope summary stats)"):
+                out.append("")
+                out.append(f"  {stripped}")
+            elif stripped and " : " in stripped:
+                out.append(f"  {stripped}")
+            elif stripped.startswith("best val balanced accuracy during training:"):
+                # Formatted without a space before its colon (unlike every
+                # other "label : value" line above), so it doesn't match the
+                # " : " check - this is the one honesty-critical metric the
+                # project cares most about (it's what training selects the
+                # checkpoint on, precisely to avoid the old LSTM's hidden
+                # recall-collapse failure mode), so it gets an explicit case
+                # rather than being silently dropped.
                 out.append(f"  {stripped}")
 
 

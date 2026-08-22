@@ -334,6 +334,49 @@ way, neither obvious in advance:
   float32). A reminder that "looks like a logic bug" and "is a precision mismatch" can print
   identically and need separating by evidence, not assumption.
 
+Bug-hunt pass (2026-08-22): before starting further Phase 2 work, ran the full test suite
+(151 passing) plus a targeted multi-agent review of all Phase 2.1 code
+(`temporal_model.py`, `train_temporal_model.py`, and every wiring change from the 240ef5c
+commit). Every finding was re-verified directly against the code (not trusted from the
+agent reports alone) before fixing. Confirmed and fixed:
+- `temporal_model.py._load()`'s try/except only wrapped `np.load()`, not the self-verify
+  step or the later `feature_mean`/`feature_std` access - a malformed `.npz` could crash
+  app startup or crash mid-session on the first live frame instead of degrading to
+  `is_available()=False`. Now the whole load+verify sequence is one try/except, matching
+  `learned_fusion.py`/`rppg_live.py`'s established pattern.
+- `_verify_weights` would vacuously "pass" on an empty or length-mismatched verify set
+  (zero comparisons run, `ok` stays `True` by default) - both are now explicit rejections.
+  Same class of bug existed at the export side too (`train_temporal_model.py`'s `main()`
+  would happily write a .npz with 0 verify sequences if `Xval` were ever empty) - now fails
+  loudly there as well, before anything is written.
+- `--smoke-test` reused the exact same cache filename as a full run
+  (`temporal_features_{split}.npz`), so running a smoke test after a real 5,356/1,429/1,784-
+  clip cache existed would silently overwrite it with a 40-clip version; a later full run
+  without `--rebuild-features` would then silently train/report on 1% of the real dataset
+  with no error. Smoke-test now writes to `temporal_features_{split}_smoke.npz`, a distinct
+  path. Verified with a real `.venv-train --smoke-test` run: real caches' timestamps
+  unchanged, smoke caches isolated.
+- `run_all_evaluations.py`'s new GRU-report block silently dropped the
+  `best val balanced accuracy during training` line (its one line without a space before
+  the colon, unlike every other `label : value` line) - exactly the metric this project
+  cares about most for catching a hidden-recall-collapse the way the old LSTM had. Also
+  added a blank-line separator between the GRU and GBT metric blocks, which previously ran
+  together with only the header text as a boundary. Verified by actually regenerating
+  `evaluation_data/CANONICAL_RESULTS_2026-08-22.txt` and confirming both fixes in the output.
+- Deduplicated the feature-normalization formula (`temporal_model.py` and
+  `train_temporal_model.py` each hand-rolled the same epsilon-guarded `(x-mean)/std`) into
+  one shared `normalize_features()`, imported by the training script instead of
+  re-implemented.
+- Documented (not yet fixed, since `W_TEMPORAL=0.0` means no live impact today) a real
+  methodology gap for if this is ever revisited: training sequences span ~10s at a
+  synthetic 1.6Hz; live `add_frame()` is called on every processed webcam frame with no
+  pacing, so the live 16-frame window would span well under 2s of real time - a timing
+  distribution shift the NumPy/PyTorch parity check cannot catch, since that only verifies
+  the math replica is correct, not that live input timing matches training. Noted in
+  `config.py` next to `W_TEMPORAL` as a blocker independent of the accuracy result.
+Full suite re-run clean (151 passed) after all fixes; nothing here changed `W_TEMPORAL` or
+any architecture/hyperparameter from the Phase 2.1 plan.
+
 Next actions: (user) team recordings - now the only blocker in Phase 1 · (code) PERCLOS 2.3,
 ablations 4.2, fold the UBFC correlation into the harness (4.4).
 

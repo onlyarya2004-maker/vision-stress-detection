@@ -250,7 +250,7 @@ def compute_stress_index(daisee_probs, behavioral_features,
     # W_TEMPORAL > 0 AND temporal_score is not None
     w_d = W_DAISEE if daisee_s is not None else 0.0
     w_b = W_BEHAVIOR
-    w_l = W_TEMPORAL if (temporal_score is not None and W_TEMPORAL > 0.0) else 0.0
+    w_t = W_TEMPORAL if (temporal_score is not None and W_TEMPORAL > 0.0) else 0.0
     # rPPG abstains (None) whenever signal quality is poor - typically while
     # the user is moving or talking - so its weight is redistributed rather
     # than a motion artefact being fused in.
@@ -260,15 +260,15 @@ def compute_stress_index(daisee_probs, behavioral_features,
     # that coincides with DaiSEE failing to load, this would otherwise be an
     # uncaught ZeroDivisionError on every single frame of the live capture
     # loop. Same guard as behavioral_stress_score()'s total_w a few lines up.
-    total_w = max(w_d + w_b + w_l + w_r, 1e-6)
+    total_w = max(w_d + w_b + w_t + w_r, 1e-6)
     w_d, w_b = w_d / total_w, w_b / total_w
-    w_l, w_r = w_l / total_w, w_r / total_w
+    w_t, w_r = w_t / total_w, w_r / total_w
 
     raw = w_b * beh_s
     if daisee_s is not None:
         raw += w_d * daisee_s
     if temporal_score is not None and W_TEMPORAL > 0.0:
-        raw += w_l * float(temporal_score)
+        raw += w_t * float(temporal_score)
     if rppg_score is not None and W_RPPG > 0.0:
         raw += w_r * float(rppg_score)
 

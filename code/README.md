@@ -25,7 +25,7 @@
 | Switch | Default | Meaning |
 |---|---|---|
 | `W_DAISEE / W_BEHAVIOR` | 0.20 / 0.80 | Hand-tuned branch weights (PP1 values) |
-| `W_TEMPORAL` | **0.0** | Temporal branch disabled: the Phase 2.1 feature-sequence GRU that replaced the old pixel-LSTM also scored below the majority-class floor (45.74% vs 86.60%; balanced accuracy 54.17%, barely above chance). See `../models/temporal_gru_test_report.txt` |
+| `W_TEMPORAL` | **0.0** | Temporal branch disabled: the Phase 2.1 feature-sequence GRU that replaced the old pixel-LSTM also scored below the majority-class floor (45.74% vs 86.60%; balanced accuracy 54.17%, barely above chance). See `../models/temporal_gru_test_report.txt`. Separately, even setting accuracy aside: the model trains on 16 frames spanning ~10s, but live `add_frame()` is called every processed webcam frame with no pacing, so the live window spans well under 2s — a distribution shift that must be fixed before this is ever raised above 0.0 (see the comment in `config.py`) |
 | `W_RPPG` | **0.0** | rPPG validated offline (POS 3.52 bpm on UBFC-Phys) but unproven on compressed webcam video. HR is still computed and displayed; raise to 0.15–0.25 only after it tracks reality on your hardware |
 | `USE_LEARNED_FUSION` | **False** | Meta-learner beats hand-tuned by 10–17 points on UBFC-Phys (LOSO), but was trained on that camera/cohort. Enable only after retraining on recordings made under `../RECORDING_PROTOCOL.md` |
 | `USE_WESAD_CUTOFFS` | **False** | The LOW/MOD/HIGH cutoffs (0.36/0.55) are **empirically tuned, not WESAD-derived**. The JSON's cutoffs are percentiles of a physiological classifier's probabilities — a different scale — and are deliberately unused. `calibrated_thresholds.json` is read for provenance/reporting only |
