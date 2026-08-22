@@ -271,7 +271,7 @@ memory) on 2026-08-21. ✅ done · 🟡 partial · ❌ not started.
 | | 3.4 Uncertainty/abstention | 🟡 rPPG abstains internally; no visible UI "uncertain" state |
 | | 3.5 Intervention effectiveness tracking | ✅ agent built, wired into the live loop, schema + tests in place — 0 interventions logged yet since no real session has crossed the trigger threshold |
 | **4 (~40%)** | 4.1 One regenerating script | 🟡 missing rows: DaiSEE re-run, learned-vs-hand-tuned, temporal old-vs-new |
-| | 4.2 Ablation table | ❌ |
+| | 4.2 Ablation table | ✅ each branch removed once, regenerated every run — see README |
 | | 4.3 Per-subject breakdown | 🟡 active for all 10 UBFC subjects; team data absent |
 | | 4.4 UBFC correlation row in harness | 🟡 standalone script, now with real s6–s10 results; not yet folded into the harness; see 1.4 |
 | | 4.5 Frame + session metrics with Wilson CIs | ✅ |
@@ -311,10 +311,35 @@ fixed while regenerating the numbers on the full dataset, both pre-existing, nei
   (ASCII labels) and reordered so save happens before the report, not after, so a future
   print-only bug can't take the actual output down with it again.
 
-Canonical cross-subject numbers regenerated with the full 10-subject dataset (LOSO,
-123,728 frames): hand-tuned 55.19%, learned (logistic/gradient-boosting) 66.74%/77.06% -
-README updated. EDA direction-agreement for s6–s10: 4/5 subjects, above the ~50% chance
-baseline.
+Canonical cross-subject numbers regenerated with the full 10-subject dataset: full-system
+49.75% (123,728 frames - this is the number comparable to the single-subject 99.11%/94.54%
+figures); behavioral-signals-only baseline 55.19%, same baseline with learned weights
+(logistic/gradient-boosting) 66.74%/77.06% (LOSO) - a narrower comparison
+`train_meta_learner.py` uses to isolate the fusion-weighting question from the CNN/boost/
+smoothing stages. The 55.19% figure was previously mislabeled in the README as if it were
+the full system's cross-subject accuracy; caught while building the ablation table below
+(the same commit that finished s6-s10 had already regenerated `evaluation_data/ubfc_phys/`
+and `CANONICAL_RESULTS_2026-08-21.txt` showing 49.75% for the full system - the 55.19%
+written into the README that day was a hand-transcription of a different, narrower number,
+exactly the number-drift failure mode `run_all_evaluations.py` exists to prevent). README
+fixed. EDA direction-agreement for s6-s10: 4/5 subjects, above the ~50% chance baseline.
+
+Ablation table (2026-08-22, Phase 4.2): each fusion branch removed once from the 49.75%
+full system, on the same UBFC-Phys cross-subject data. New `code/ablation_study.py` replays
+the REAL `TemporalSmoother`/`HysteresisLevel` classes from `stress_fusion.py` over the
+already-calibrated per-frame branch scores saved in `datasets/feature_traces/` (not a
+reimplementation) - verified bit-exact (0/2634 mismatches) against
+`evaluate_video_file.py`'s real saved output for one subject before trusting the aggregate
+numbers. Shared scoring code (`frame_scores`/`session_scores`/`wilson`/etc.) split out of
+`run_all_evaluations.py` into `code/eval_scoring.py` to avoid a circular import, both
+modules now import from there. Result: removing the behavioral engine costs 16.35pp (by far
+the dominant branch); removing the DaiSEE CNN branch *improves* cross-subject accuracy by
+2.59pp (the CNN's personal-baseline re-centering can't help a held-out cross-subject
+evaluation the way it helps a live session); rule boost and smoothing each contribute
+&lt;0.3pp. rPPG/temporal are already W=0, ablating them is a no-op by construction, reported
+as a citation rather than recomputed. Wired into `run_all_evaluations.py` so it regenerates
+every run rather than living in a separate report file (no GPU/different-venv constraint
+here, unlike the GRU). 20 new tests, 177/177 passing.
 
 Phase 2.1 complete (2026-08-21): feature-sequence GRU built (`code/temporal_model.py` for
 live NumPy-only inference, `code/train_temporal_model.py` for PyTorch training in
@@ -380,8 +405,8 @@ agent reports alone) before fixing. Confirmed and fixed:
 Full suite re-run clean (151 passed) after all fixes; nothing here changed `W_TEMPORAL` or
 any architecture/hyperparameter from the Phase 2.1 plan.
 
-Next actions: (user) team recordings - now the only blocker in Phase 1 · (code) ablations
-4.2, fold the UBFC correlation into the harness (4.4).
+Next actions: (user) team recordings - now the only blocker in Phase 1 · (code) fold the
+UBFC correlation into the harness (4.4), learned-vs-hand-tuned as a regenerated row (4.1).
 
 ---
 

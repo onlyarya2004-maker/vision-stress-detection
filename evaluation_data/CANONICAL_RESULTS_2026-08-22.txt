@@ -1,7 +1,7 @@
 ==============================================================================
 CANONICAL EVALUATION RESULTS
 ==============================================================================
-generated : 2026-08-22T08:42:55
+generated : 2026-08-22T09:59:25
 root      : C:\Users\Arya\Desktop\stress_project
 
 Every number this project reports must come from this file.
@@ -178,6 +178,39 @@ corrupt both numbers.
     U09        16852     40.38%      [39.6%, 41.1%]
     U10        16866     34.33%      [33.6%, 35.0%]
     NOTE: cross-subject spread is the real generalisation test.
+
+### Ablation table (UBFC-Phys cross-subject, each branch removed once)
+  Frame-level accuracy, session-level accuracy, and the drop from the
+  full system, for each branch removed one at a time.
+
+  condition                                frame acc   session acc  delta (pp)
+  ----------------------------------------------------------------------------
+  Full system (current config)                49.75%        50.00%  (baseline)
+  - Behavioral engine (W_BEHAVIOR=0)          33.40%        33.33%      -16.35
+  - DaiSEE CNN (W_DAISEE=0)                   52.34%        50.00%       +2.59
+  - Rule boost (RULE_BOOST_AMOUNT=0)          49.47%        46.67%       -0.28
+  - Temporal smoothing (window=1 frame)       49.62%        46.67%       -0.13
+  - rPPG heart-rate branch                   (no-op)       (no-op)       +0.00
+  - GRU temporal branch                      (no-op)       (no-op)       +0.00
+
+  Full system (current config)
+    frame-level   n=123728  acc 49.75%  95% CI [49.5%, 50.0%]
+    session-level n=30      acc 50.00%  95% CI [33.2%, 66.8%]
+  - Behavioral engine (W_BEHAVIOR=0)
+    frame-level   n=123728  acc 33.40%  95% CI [33.1%, 33.7%]
+    session-level n=30      acc 33.33%  95% CI [19.2%, 51.2%]
+  - DaiSEE CNN (W_DAISEE=0)
+    frame-level   n=123728  acc 52.34%  95% CI [52.1%, 52.6%]
+    session-level n=30      acc 50.00%  95% CI [33.2%, 66.8%]
+  - Rule boost (RULE_BOOST_AMOUNT=0)
+    frame-level   n=123728  acc 49.47%  95% CI [49.2%, 49.8%]
+    session-level n=30      acc 46.67%  95% CI [30.2%, 63.9%]
+  - Temporal smoothing (window=1 frame)
+    frame-level   n=123728  acc 49.62%  95% CI [49.3%, 49.9%]
+    session-level n=30      acc 46.67%  95% CI [30.2%, 63.9%]
+
+  - rPPG heart-rate branch: already W_RPPG=0.0 - unproven on compressed webcam video (see rppg_live.py); removing it changes nothing by construction.
+  - GRU temporal branch: already W_TEMPORAL=0.0 - scored below the majority-class floor (see models/temporal_gru_test_report.txt); removing it changes nothing by construction.
 
 ==============================================================================
 OFFLINE STAGE ARTIFACTS (read from generated files, not retyped)

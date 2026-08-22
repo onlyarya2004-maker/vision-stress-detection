@@ -40,34 +40,11 @@ from datetime import datetime
 from pathlib import Path
 
 from app_naming import parse_filename
-
-# ---------------------------------------------------------------------------
-# Wilson score interval — degrades gracefully if statsmodels is absent.
-# ---------------------------------------------------------------------------
-try:
-    from statsmodels.stats.proportion import proportion_confint
-
-    def wilson(successes, n):
-        if n == 0:
-            return (0.0, 0.0)
-        return proportion_confint(successes, n, alpha=0.05, method="wilson")
-except ImportError:                                   # pragma: no cover
-    import math
-
-    def wilson(successes, n):
-        """Closed-form Wilson interval, so the harness never hard-depends
-        on statsmodels."""
-        if n == 0:
-            return (0.0, 0.0)
-        z = 1.959963984540054                          # 95%
-        p = successes / n
-        denom = 1 + z**2 / n
-        centre = (p + z**2 / (2 * n)) / denom
-        margin = (z * math.sqrt(p * (1 - p) / n + z**2 / (4 * n**2))) / denom
-        return (max(0.0, centre - margin), min(1.0, centre + margin))
-
-
-STRESSED_LEVELS = ("MODERATE", "HIGH")
+from eval_scoring import wilson, pct, ci_str, frame_scores, session_scores, STRESSED_LEVELS
+# ablation_study imports eval_scoring too, not this module - importing it
+# here (rather than the other way around) avoids a circular import while
+# still keeping the scoring code itself in exactly one place.
+from ablation_study import run_ablation_study, render as render_ablation_table
 
 
 # ---------------------------------------------------------------------------
@@ -127,86 +104,11 @@ def collect(folder, relaxed_glob, stressed_glob, mode=None):
 
 
 # ---------------------------------------------------------------------------
-# Scoring
-# ---------------------------------------------------------------------------
-def frame_scores(relaxed_files, stressed_files):
-    """
-    Frame-level accuracy. Ground truth comes from the filename: relaxed
-    recordings should read LOW, stressed recordings should read MOD/HIGH.
-    """
-    relaxed = [r for _, rows in relaxed_files for r in rows]
-    stressed = [r for _, rows in stressed_files for r in rows]
-
-    r_ok = sum(1 for r in relaxed if r["level"] == "LOW")
-    s_ok = sum(1 for r in stressed if r["level"] in STRESSED_LEVELS)
-    total = len(relaxed) + len(stressed)
-    correct = r_ok + s_ok
-
-    confusion = {
-        "relaxed": Counter(r["level"] for r in relaxed),
-        "stressed": Counter(r["level"] for r in stressed),
-    }
-    gap = None
-    if relaxed and stressed:
-        gap = (statistics.mean(r["stress_index"] for r in stressed)
-               - statistics.mean(r["stress_index"] for r in relaxed))
-
-    return {
-        "n": total, "correct": correct,
-        "accuracy": correct / total if total else 0.0,
-        "ci": wilson(correct, total),
-        "relaxed_n": len(relaxed), "relaxed_ok": r_ok,
-        "relaxed_recall": r_ok / len(relaxed) if relaxed else 0.0,
-        "relaxed_ci": wilson(r_ok, len(relaxed)),
-        "stressed_n": len(stressed), "stressed_ok": s_ok,
-        "stressed_recall": s_ok / len(stressed) if stressed else 0.0,
-        "stressed_ci": wilson(s_ok, len(stressed)),
-        "confusion": confusion,
-        "gap": gap,
-        "relaxed_mean": statistics.mean(
-            r["stress_index"] for r in relaxed) if relaxed else None,
-        "stressed_mean": statistics.mean(
-            r["stress_index"] for r in stressed) if stressed else None,
-    }
-
-
-def session_scores(relaxed_files, stressed_files):
-    """
-    Session-level accuracy: each recording gets ONE verdict by majority vote
-    over its frames. This is the honest denominator - 176 frames from 3
-    recordings is 3 independent observations, not 176.
-    """
-    results = []
-    for name, rows in relaxed_files:
-        if not rows:
-            continue
-        low = sum(1 for r in rows if r["level"] == "LOW")
-        results.append((name, "relaxed", low > len(rows) / 2))
-    for name, rows in stressed_files:
-        if not rows:
-            continue
-        hi = sum(1 for r in rows if r["level"] in STRESSED_LEVELS)
-        results.append((name, "stressed", hi > len(rows) / 2))
-
-    correct = sum(1 for _, _, ok in results if ok)
-    n = len(results)
-    return {
-        "n": n, "correct": correct,
-        "accuracy": correct / n if n else 0.0,
-        "ci": wilson(correct, n),
-        "detail": results,
-    }
-
-
-# ---------------------------------------------------------------------------
 # Report rendering
 # ---------------------------------------------------------------------------
-def pct(x):
-    return f"{x * 100:.2f}%"
-
-
-def ci_str(ci):
-    return f"[{ci[0] * 100:.1f}%, {ci[1] * 100:.1f}%]"
+# frame_scores/session_scores/wilson/pct/ci_str/STRESSED_LEVELS now live in
+# eval_scoring.py (imported above) - ablation_study.py needs the exact same
+# scoring code, and splitting it out was cleaner than a circular import.
 
 
 def render_config(title, folder, relaxed_glob, stressed_glob, out, mode=None):
@@ -430,6 +332,13 @@ def main():
     render_config("UBFC-Phys (cross-subject)",
                   eval_dir / "ubfc_phys",
                   "relaxed_*.csv", "stressed_*.csv", out)
+
+    # Phase 4.2: each fusion branch removed once, on the same cross-subject
+    # data. Recomputed fresh every run from datasets/feature_traces/ (not a
+    # separately-generated report) - it's pure numpy over cached CSVs, same
+    # venv as this script, so there is no reason for it to be anything but
+    # regenerated here like every other number.
+    render_ablation_table(run_ablation_study(root / "datasets" / "feature_traces"), out)
 
     render_artifacts(root, out)
 

@@ -55,6 +55,8 @@ it does not carry a `W_*` switch because it doesn't feed the fusion score at all
 | Module | Role |
 |---|---|
 | `run_all_evaluations.py` | **Regenerates every reported number** into one timestamped file. Nothing is ever hand-transcribed |
+| `eval_scoring.py` | Shared frame-/session-level accuracy scoring + Wilson CIs, used by both `run_all_evaluations.py` and `ablation_study.py` (split out to avoid a circular import) |
+| `ablation_study.py` | Phase 4.2: each fusion branch removed once on UBFC-Phys cross-subject data, replaying the real `TemporalSmoother`/`HysteresisLevel` over saved `feature_traces/`. Called from `run_all_evaluations.py`, not a separate report file |
 | `evaluate_video_file.py` | Full pipeline over video files (UBFC-Phys etc.): stress CSVs + per-frame feature traces + rPPG RGB traces, then the video is disposable |
 | `diagnose_features.py` | Per-signal discriminability (Cohen's d, saturation, inversion); can diff two runs |
 | `analyze_rppg.py` | GREEN/CHROM/POS heart-rate recovery vs BVP ground truth |
@@ -68,7 +70,7 @@ it does not carry a `W_*` switch because it doesn't feed the fusion score at all
 python -m pytest tests -q        # from code/, or: python -m pytest code/tests from the root
 ```
 
-157+ tests. The load-bearing ones: Default-mode fusion equals the archived pre-task-aware
+177+ tests. The load-bearing ones: Default-mode fusion equals the archived pre-task-aware
 implementation **exactly** (diff 0.00e+00); uncalibrated posture/blink behaviour is
 byte-identical to PP1; rPPG methods recover a synthetic pulse of known frequency; every
 default-off switch above leaves output unchanged.

@@ -59,16 +59,47 @@ writes a timestamped file to `evaluation_data/`. Nothing here is transcribed by 
 |---|---|---|---|
 | Live system, Default mode (single subject, own webcam) | 224 frames (100 relaxed + 124 stressed) | **99.11%** | [96.8%, 99.8%] |
 | Live system, Studying mode (single subject) | 293 frames (147 + 146) | **94.54%** | [91.3%, 96.6%] |
-| **Cross-subject (UBFC-Phys, 10 subjects), hand-tuned fusion** | 123,728 frames, LOSO | **55.19%** | — |
-| **Cross-subject, learned fusion (logistic / gradient boosting)** | same data, LOSO | **66.74% / 77.06%** | — |
+| **Cross-subject (UBFC-Phys, 10 subjects), full system** | 123,728 frames | **49.75%** | [49.5%, 50.0%] |
+| Cross-subject, behavioral-signals-only baseline (no CNN/boost/smoothing) | same data, LOSO | 55.19% | — |
+| Cross-subject, same baseline with learned weights (logistic / gradient boosting) | same data, LOSO | 66.74% / 77.06% | — |
 | rPPG heart rate vs Empatica E4 BVP (POS method) | 15 traces | **3.52 bpm** mean abs. error | — |
 | WESAD physiological validation (LOSO, 15 subjects) | 877 windows | **91.86%** (F1 0.874) | — |
 | DaiSEE CNN ensemble, held-out test split | — | ~82-84% | — |
 
-The gap between 99.11% (single-subject) and 55.19% (cross-subject) is the central finding of
-the PP2 work so far: hand-tuned constants measure the person they were tuned on. Learning the
-fusion weights recovers +11 to +22 points out-of-fold, and the calibration fixes it prompted
-(posture baseline, relative blink threshold, calibrated blink rate) are regression-tested.
+The gap between 99.11% (single-subject) and 49.75% (cross-subject, full system) is the
+central finding of the PP2 work so far: hand-tuned constants measure the person they were
+tuned on. The middle three cross-subject rows isolate *why*: `train_meta_learner.py` strips
+out the CNN branch, the rule boost, and temporal smoothing to compare fusion-weighting
+schemes on equal footing (raw behavioral signals, no other pipeline stage) — on that
+narrower basis, learning the weights recovers +11 to +22 points out-of-fold. The
+[ablation table](#ablation-table-ubfc-phys-cross-subject) below quantifies what those
+stripped-out stages are actually worth in the *full* system, which turns out to be a
+smaller and more surprising number than "cross-subject is just worse" suggests. The
+calibration fixes prompted along the way (posture baseline, relative blink threshold,
+calibrated blink rate) are regression-tested.
+
+### Ablation table (UBFC-Phys, cross-subject)
+
+Regenerated every run by `run_all_evaluations.py` (via `code/ablation_study.py`), each
+branch removed once from the full 49.75% system, on the same 123,728 frames:
+
+| Branch removed | Frame accuracy | Δ from full system |
+|---|---|---|
+| *(none — full system)* | 49.75% | — |
+| Behavioral engine (`W_BEHAVIOR=0`) | 33.40% | **-16.35pp** |
+| DaiSEE CNN (`W_DAISEE=0`) | 52.34% | **+2.59pp** |
+| Rule boost | 49.47% | -0.28pp |
+| Temporal smoothing | 49.62% | -0.13pp |
+| rPPG / GRU temporal branch | *(no-op — already W=0, see below)* | +0.00pp |
+
+The behavioral engine is doing essentially all the cross-subject work — removing it costs
+16 points, an order of magnitude more than the boost or smoothing stages. The DaiSEE CNN
+branch's cross-subject contribution is *negative*: on this data, the system does slightly
+**better** with it removed. This does not contradict the single-subject 99.11%/94.54%
+numbers above — DaiSEE is re-centered against a 20-second **personal** calibration baseline
+that a cross-subject LOSO evaluation cannot provide each held-out subject the same way a
+live session does — but it is a real, honest finding about what the CNN branch is
+currently worth in the cross-subject setting specifically, reported as-is.
 
 Default mode: relaxed→LOW recall 100% (100/100), stressed→MOD/HIGH recall 98.39% (122/124).
 Discrimination gap **+0.320** (relaxed mean 0.235 vs stressed mean 0.554).
