@@ -206,3 +206,91 @@ def test_labeled_sessions_excludes_tiny_sessions(temp_db):
     tiny = session_history.save_session(_history(3))
     session_history.set_self_report(tiny, 5)
     assert session_history.labeled_sessions(min_samples=10) == []
+
+
+# --------------------------------------------------------------------------
+# Multi-user profiles (v5 -> v6 migration, Phase 1 prerequisite for team
+# recordings)
+# --------------------------------------------------------------------------
+
+def test_v6_migration_adds_users_table_and_session_user_id(temp_db):
+    session_history.init_db()
+    assert "users" in _tables(temp_db)
+    conn = sqlite3.connect(str(temp_db))
+    try:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
+        assert "user_id" in cols
+    finally:
+        conn.close()
+
+
+def test_create_and_list_users(temp_db):
+    session_history.init_db()
+    session_history.create_user("Arjun")
+    session_history.create_user("Rahul")
+    names = [u["name"] for u in session_history.list_users()]
+    assert names == ["Arjun", "Rahul"]   # alphabetical
+
+
+def test_create_user_rejects_blank_name(temp_db):
+    session_history.init_db()
+    with pytest.raises(ValueError):
+        session_history.create_user("   ")
+
+
+def test_create_user_rejects_duplicate_name(temp_db):
+    session_history.init_db()
+    session_history.create_user("Arjun")
+    with pytest.raises(ValueError):
+        session_history.create_user("Arjun")
+
+
+def test_new_user_has_no_baseline(temp_db):
+    session_history.init_db()
+    uid = session_history.create_user("Arjun")
+    assert session_history.load_user_baseline(uid) is None
+    users = session_history.list_users()
+    assert users[0]["has_baseline"] == 0
+
+
+def test_save_and_load_user_baseline_roundtrip(temp_db):
+    session_history.init_db()
+    uid = session_history.create_user("Arjun")
+    baseline = {
+        "behavioral": {"ear_baseline": 0.31, "calibrated": True},
+        "daisee_baseline": 0.42,
+    }
+    session_history.save_user_baseline(uid, baseline)
+    assert session_history.load_user_baseline(uid) == baseline
+    users = session_history.list_users()
+    assert users[0]["has_baseline"] == 1
+
+
+def test_save_session_records_user_id(temp_db):
+    session_history.init_db()
+    uid = session_history.create_user("Arjun")
+    sid = session_history.save_session(_history(20), user_id=uid)
+
+    conn = sqlite3.connect(str(temp_db))
+    try:
+        row = conn.execute(
+            "SELECT user_id FROM sessions WHERE id = ?", (sid,)
+        ).fetchone()
+        assert row[0] == uid
+    finally:
+        conn.close()
+
+
+def test_legacy_sessions_have_null_user_id(temp_db):
+    """Anonymous/legacy usage must store NULL, never a sentinel like 0 -
+    a sentinel would silently look like a real (if unlikely) user id."""
+    session_history.init_db()
+    sid = session_history.save_session(_history(20))   # no user_id passed
+    conn = sqlite3.connect(str(temp_db))
+    try:
+        row = conn.execute(
+            "SELECT user_id FROM sessions WHERE id = ?", (sid,)
+        ).fetchone()
+        assert row[0] is None
+    finally:
+        conn.close()

@@ -151,6 +151,7 @@ _DAISEE_BASELINE = _Baseline(
 def set_daisee_baseline(value):  _DAISEE_BASELINE.set(value)
 def reset_daisee_baseline():     _DAISEE_BASELINE.reset()
 def is_daisee_calibrated():      return _DAISEE_BASELINE.is_calibrated()
+def get_daisee_baseline():       return _DAISEE_BASELINE.value
 
 
 # ---------------- PER-BRANCH SCORING ----------------

@@ -16,7 +16,7 @@
 | `rppg_live.py` | Heart rate from the camera (POS), quality-gated, abstains when noisy |
 | `learned_fusion.py` | Data-fitted fusion weights (meta-learner inference) |
 | `temporal_model.py` | GRU temporal inference wrapper (disabled — see below). NumPy-only by design — the model trains in PyTorch (`.venv-train`) but this module has to load cleanly in the live app's TensorFlow venv, so a hand-verified NumPy replica of the GRU forward pass runs live instead of torch itself |
-| `session_history.py` | SQLite persistence: sessions, per-frame samples, self-reports |
+| `session_history.py` | SQLite persistence: sessions, per-frame samples, self-reports, user profiles + per-user calibration baselines (Phase 1 prerequisite for team recordings) |
 | `app_naming.py` | Canonical evaluation-CSV naming + parsing |
 | `stress_detector.py` | OpenCV-only runner (no Streamlit) |
 
@@ -71,7 +71,7 @@ it does not carry a `W_*` switch because it doesn't feed the fusion score at all
 python -m pytest tests -q        # from code/, or: python -m pytest code/tests from the root
 ```
 
-208+ tests. The load-bearing ones: Default-mode fusion equals the archived pre-task-aware
+217+ tests. The load-bearing ones: Default-mode fusion equals the archived pre-task-aware
 implementation **exactly** (diff 0.00e+00); uncalibrated posture/blink behaviour is
 byte-identical to PP1; rPPG methods recover a synthetic pulse of known frequency; every
 default-off switch above leaves output unchanged.

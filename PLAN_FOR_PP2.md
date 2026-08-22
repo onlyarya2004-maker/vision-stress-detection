@@ -259,7 +259,7 @@ memory) on 2026-08-22. ✅ done · 🟡 partial · ❌ not started.
 | | 1.2 Offline video pipeline (media clock, feature dump, rPPG traces) | ✅ |
 | | 1.3 Cross-subject validation + calibration fixes (posture/blink/blink-rate) | ✅ for all 10 subjects |
 | | 1.4 Stress-index ↔ EDA/BVP continuous correlation | ✅ real results for s6–s10 (4/5 subjects direction-agree, well above ~50% chance) - s1–s5's ground truth was deleted (never git-tracked, by design) and won't be re-downloaded, so those 5 will never have this |
-| | 1.5 Team recordings + multi-user profiles | ❌ **user-gated — the only remaining blocker in this phase** (evaluation_data/ root still only has the original single-subject PP1 recordings) |
+| | 1.5 Team recordings + multi-user profiles | 🟡 multi-user profiles built (`users` table, per-user baselines, sidebar picker) - the prerequisite piece; team recordings themselves remain **user-gated — the only remaining blocker in this phase** (evaluation_data/ root still only has the original single-subject PP1 recordings) |
 | **2 (~60%)** | 2.1 Feature-based temporal model (GRU/TCN) | ✅ built, trained, wired in, honest negative result — 45.74% acc (GBT baseline 84.59%), both below the 86.60% floor; W_TEMPORAL=0.0 |
 | | 2.2 rPPG branch (offline 3.52 bpm POS; live module, quality-gated, W_RPPG=0) | ✅ pending webcam validation |
 | | 2.3 PERCLOS for Driving | ✅ computed always, displayed in Driving mode only, not fused |
@@ -449,9 +449,46 @@ cross-subject ablation, single-subject live number) now tell one coherent, hones
 instead of three disconnected ones. README's results table and negative-results section
 updated. 6 new tests for `evaluate()`'s pure metric computation. 208/208 passing.
 
-This closes Phase 4 (4.1-4.5 all done or active-with-known-gaps). Next actions: (user) team
-recordings - the only blocker left in Phase 1, and the thing everything in Phase 3 and 4.3
-is actually waiting on.
+This closes Phase 4 (4.1-4.5 all done or active-with-known-gaps).
+
+Multi-user profiles (2026-08-22, Phase 1 prerequisite for team recordings): new `users`
+table + `sessions.user_id` (v5 -> v6 migration in `session_history.py`) so each person gets
+a persisted calibration baseline instead of everyone sharing the single process-wide one
+`BehavioralFeatureEngine` has always used. `app.py`'s sidebar gets a "User" picker above
+Context/Calibrate; switching users swaps `engine.baseline` for their saved one (or resets to
+generic defaults for a brand-new profile) - the same mechanism "Reset baseline" already used.
+A completed calibration now also persists to the active user's profile (behavioral baseline +
+DaiSEE baseline value, JSON-serialized). Legacy/anonymous sessions keep `user_id = NULL`,
+never silently reassigned.
+
+Two real bugs found and fixed during live verification, neither visible from reading the
+code alone:
+- The "Add new user" control was originally an `st.expander(expanded=False)`. Expanders
+  reset to their hardcoded `expanded=` value on every script rerun, and typing in the name
+  field triggers one - the field visually collapsed out from under the user before they
+  could reach the button. Fixed by making it an always-visible inline row instead (a text
+  input + button, no expander) rather than trying to make expansion state sticky.
+- Programmatically selecting the newly-created user (setting
+  `st.session_state.active_user_id/name` from the "Add user" button handler) did not update
+  the "User" selectbox's own widget state, so it kept showing "(anonymous)" after a
+  successful create. This is the exact same class of bug `pending_task_mode` already solves
+  for the Context selector's header shortcut buttons - fixed by adding the equivalent
+  `pending_user_selection` mechanism (set from the button handler, applied to both the real
+  state and the `user_select` widget key in `init_state()`, which runs before the widget is
+  instantiated).
+
+Verified live: created a real user through the fixed UI, confirmed the row landed correctly
+in `data/sessions.db`, confirmed switching to "(anonymous)" persisted correctly across a
+page reload, zero console/server errors throughout. 9 new tests (`session_history.py`'s
+users table/migration/CRUD/baseline round-trip, `stress_fusion.get_daisee_baseline()`).
+`apply_user_profile()`/`save_active_user_baseline()` in `app.py` are not unit-tested -
+app.py has no existing test file in this codebase (Streamlit's session-state model doesn't
+suit isolated unit tests the way the rest of the codebase does), so live verification was
+the appropriate method here, same as the PERCLOS tile and capture-loop reordering earlier.
+217/217 tests passing.
+
+Next actions: (user) team recordings - the only blocker left in Phase 1, and the thing
+everything in Phase 3 and 4.3 is actually waiting on.
 
 ---
 

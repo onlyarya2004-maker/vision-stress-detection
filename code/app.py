@@ -16,6 +16,7 @@ Run:
 
 import io
 import csv
+import dataclasses
 import time
 from datetime import datetime
 from pathlib import Path
@@ -27,11 +28,12 @@ import tensorflow as tf
 from tensorflow.keras.applications.mobilenet_v2  import preprocess_input as mobilenet_preprocess
 from tensorflow.keras.applications.efficientnet import preprocess_input as efficientnet_preprocess
 
-from behavioral_features import BehavioralFeatureEngine
+from behavioral_features import BehavioralBaseline, BehavioralFeatureEngine
 from stress_fusion import (
     compute_stress_index, TemporalSmoother, stress_level, stress_level_advice,
     HysteresisLevel,
     set_daisee_baseline, reset_daisee_baseline, is_daisee_calibrated,
+    get_daisee_baseline,
     VALID_TASK_MODES,
 )
 from temporal_model import GRUTemporalInference
@@ -798,6 +800,19 @@ def init_state():
         _pending = st.session_state.pop('pending_task_mode')
         st.session_state.task_mode = _pending
         st.session_state.task_select = _pending
+    if 'active_user_id' not in st.session_state: st.session_state.active_user_id = None
+    if 'active_user_name' not in st.session_state: st.session_state.active_user_name = None
+    # Same pattern as pending_task_mode above: "Add user" sets this on the
+    # rerun it triggers (rather than the user_select widget key directly,
+    # which raises StreamlitAPIException from inside that same script run
+    # since the widget is instantiated later), and this block - which runs
+    # before the sidebar "User" selectbox - applies it to both the real
+    # state and the widget's own key.
+    if 'pending_user_selection' in st.session_state:
+        _pending_user = st.session_state.pop('pending_user_selection')
+        st.session_state.active_user_id = _pending_user['id']
+        st.session_state.active_user_name = _pending_user['name']
+        st.session_state.user_select = _pending_user['name'] or '(anonymous)'
     if 'subject_id' not in st.session_state: st.session_state.subject_id = ''
     if 'condition' not in st.session_state: st.session_state.condition = 'unlabeled'
     if 'pending_self_report' not in st.session_state: st.session_state.pending_self_report = None
@@ -820,6 +835,7 @@ def save_current_session():
     try:
         sid = session_history.save_session(
             st.session_state.history, task_mode=st.session_state.task_mode,
+            user_id=st.session_state.active_user_id,
         )
         # Queue the self-report prompt for this session. The user's answer -
         # not the system's prediction - is the ground-truth label the
@@ -830,6 +846,41 @@ def save_current_session():
             session_history.log_interventions(sid, ivlog)
     except Exception as e:
         st.warning(f"Could not save session to history DB: {e}")
+
+
+def apply_user_profile(engine, user_id):
+    """
+    Swap the live (process-wide singleton) engine's baseline for the given
+    user's saved one, or back to generic defaults if they have none yet /
+    user_id is None (anonymous). This is the same mechanism the "Reset
+    baseline" button already used - engine.baseline is just a dataclass,
+    swapping it is cheap and safe between sessions (never call this while
+    running/calibrating, same guard every other baseline-touching control
+    in the sidebar already has).
+    """
+    saved = session_history.load_user_baseline(user_id) if user_id is not None else None
+    if saved is not None:
+        engine.baseline = BehavioralBaseline(**saved['behavioral'])
+        if saved.get('daisee_baseline') is not None:
+            set_daisee_baseline(saved['daisee_baseline'])
+        else:
+            reset_daisee_baseline()
+    else:
+        engine.reset_baseline()
+        reset_daisee_baseline()
+
+
+def save_active_user_baseline(engine):
+    """Persist the engine's current baseline to the active user's profile,
+    called right after a completed calibration. No-op for anonymous use
+    (active_user_id is None) - unchanged, single-shared-baseline behavior."""
+    user_id = st.session_state.active_user_id
+    if user_id is None:
+        return
+    session_history.save_user_baseline(user_id, {
+        'behavioral': dataclasses.asdict(engine.baseline),
+        'daisee_baseline': get_daisee_baseline(),
+    })
 
 
 # =============================================================================
@@ -853,6 +904,64 @@ def main():
 
         st.divider()
         st.markdown('<div class="label">Session control</div>', unsafe_allow_html=True)
+
+        # ---------- User profile ----------
+        # Phase 1 prerequisite for team recordings: each person gets their
+        # own persisted calibration baseline instead of everyone sharing
+        # the single process-wide one. Switching users loads that person's
+        # saved baseline (or generic defaults for a brand-new profile) into
+        # the live engine - the same swap "Reset baseline" already did.
+        _users = session_history.list_users()
+        _user_names = [u['name'] for u in _users]
+        _user_options = ['(anonymous)'] + _user_names
+        _current_user_name = st.session_state.active_user_name or '(anonymous)'
+        _current_user_idx = (_user_options.index(_current_user_name)
+                             if _current_user_name in _user_options else 0)
+        _selected_user_name = st.selectbox(
+            "User", options=_user_options, index=_current_user_idx,
+            disabled=st.session_state.running or st.session_state.calibrating,
+            help="Each user gets their own saved calibration baseline. "
+                 "Switching loads that person's baseline (generic defaults "
+                 "for a brand-new profile) - Calibrate afterward to refine "
+                 "or replace it.",
+            key="user_select",
+        )
+        if _selected_user_name != _current_user_name:
+            if _selected_user_name == '(anonymous)':
+                st.session_state.active_user_id = None
+                st.session_state.active_user_name = None
+            else:
+                _match = next(u for u in _users if u['name'] == _selected_user_name)
+                st.session_state.active_user_id = _match['id']
+                st.session_state.active_user_name = _match['name']
+            apply_user_profile(engine, st.session_state.active_user_id)
+            st.rerun()
+
+        # Deliberately NOT an st.expander: expanders reset to their
+        # hardcoded `expanded=` value on every script rerun, and typing in
+        # the text field below triggers one - the field would visually
+        # collapse out from under the user before they could reach the
+        # button. Found live while verifying this feature, not theoretical.
+        _new_user_col, _add_user_col = st.columns([2, 1])
+        with _new_user_col:
+            _new_user_name = st.text_input(
+                "New user", key="new_user_name", placeholder="e.g. Arjun",
+                label_visibility="collapsed",
+                disabled=st.session_state.running or st.session_state.calibrating,
+            )
+        with _add_user_col:
+            if st.button("Add user", width='stretch',
+                        disabled=st.session_state.running or st.session_state.calibrating):
+                try:
+                    new_id = session_history.create_user(_new_user_name)
+                    apply_user_profile(engine, new_id)
+                    st.session_state.pending_user_selection = {
+                        'id': new_id, 'name': _new_user_name.strip(),
+                    }
+                    st.rerun()
+                except ValueError as e:
+                    st.error(str(e))
+
         if is_fully_calibrated:
             st.markdown('<span class="cal-check ok">&#10003; CALIBRATED</span>',
                         unsafe_allow_html=True)
@@ -1240,6 +1349,8 @@ def main():
                         set_daisee_baseline(float(np.median(daisee_calib_samples)))
                         daisee_ok = True
                     st.session_state.calibrating = False
+                    if face_ok or daisee_ok:
+                        save_active_user_baseline(engine)
                     if face_ok and daisee_ok:
                         st.success("Calibration complete. Press Start to begin.")
                     elif face_ok or daisee_ok:

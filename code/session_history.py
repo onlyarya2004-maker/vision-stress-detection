@@ -1,6 +1,6 @@
 """
-Session History DB (v3 - task-aware sessions)
-==============================================
+Session History DB (v6 - multi-user profiles)
+================================================
 Persists completed sessions to a local SQLite database. Each session has
 a one-row summary in the `sessions` table plus N per-frame rows in the
 `samples` table (one per recorded frame). Per-frame storage allows us
@@ -9,6 +9,16 @@ to re-render any past session's timeline graph on demand.
 v3 adds a `task_mode` column to the sessions table so we know which
 context ('Default' / 'Studying' / 'Hospital' / 'Driving') the session
 was recorded under. Old v2 DBs are migrated in place via ALTER TABLE.
+
+v6 (Phase 1 prerequisite for team recordings) adds a `users` table and
+`sessions.user_id`, so multiple people can each get their own persisted
+calibration baseline instead of sharing the single process-wide one
+BehavioralFeatureEngine has always used. The engine itself is unchanged -
+app.py swaps `engine.baseline` for the active user's saved one on
+selection, the same mechanism "Reset baseline" already used to blow it
+back to generic defaults. Legacy sessions (recorded before this existed)
+keep `user_id = NULL`, meaning "the original single-user PP1 data" - never
+silently reassigned to any profile.
 
 Database location: ../data/sessions.db  (auto-created on first call)
 
@@ -25,6 +35,7 @@ Schema:
         pct_moderate    REAL,
         pct_high        REAL,
         task_mode       TEXT     'Default' | 'Studying' | 'Hospital' | 'Driving'
+        user_id         INTEGER  FK -> users.id, NULL for anonymous/legacy sessions
     )
     samples (
         id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,8 +46,16 @@ Schema:
         daisee          REAL,
         behavior        REAL
     )
+    users (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        name            TEXT     UNIQUE,
+        created_at      TEXT     ISO8601 timestamp,
+        baseline_json   TEXT     JSON personal calibration baseline, NULL
+                                 until this user's first completed calibration
+    )
 """
 
+import json
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -146,12 +165,101 @@ def init_db():
             )
         """)
 
+        # Migration v5 -> v6: multi-user profiles (Phase 1 prerequisite for
+        # team recordings). users.baseline_json holds a JSON-serialized
+        # personal baseline (behavioral + DaiSEE), NULL until that user's
+        # first completed calibration. sessions.user_id is nullable so
+        # existing single-user history is never silently reassigned.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                name            TEXT NOT NULL UNIQUE,
+                created_at      TEXT NOT NULL,
+                baseline_json   TEXT
+            )
+        """)
+        if 'user_id' not in existing_cols:
+            conn.execute(
+                "ALTER TABLE sessions ADD COLUMN user_id INTEGER "
+                "REFERENCES users(id)"
+            )
+
         conn.commit()
     finally:
         conn.close()
 
 
-def save_session(history: List[Dict], task_mode: str = 'Default') -> Optional[int]:
+# ---------------------------------------------------------------------------
+# Users / per-user calibration baselines
+# ---------------------------------------------------------------------------
+def create_user(name: str) -> int:
+    """
+    Create a new user profile. Raises ValueError if the name is blank or
+    already taken - callers are UI code that should surface this, not a
+    silent no-op that leaves the user thinking a profile was created.
+    """
+    name = name.strip()
+    if not name:
+        raise ValueError("name must not be blank")
+    conn = _get_conn()
+    try:
+        try:
+            cursor = conn.execute(
+                "INSERT INTO users (name, created_at) VALUES (?, ?)",
+                (name, datetime.now().isoformat()),
+            )
+        except sqlite3.IntegrityError:
+            raise ValueError(f"a user named {name!r} already exists")
+        conn.commit()
+        return cursor.lastrowid
+    finally:
+        conn.close()
+
+
+def list_users() -> List[Dict]:
+    """All user profiles, alphabetical (case-insensitive)."""
+    conn = _get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT id, name, created_at, "
+            "(baseline_json IS NOT NULL) AS has_baseline "
+            "FROM users ORDER BY name COLLATE NOCASE"
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def save_user_baseline(user_id: int, baseline: Dict):
+    """Persist a user's calibration baseline (a plain JSON-able dict - see
+    app.py for how it's assembled from BehavioralBaseline + the DaiSEE
+    baseline value)."""
+    conn = _get_conn()
+    try:
+        conn.execute("UPDATE users SET baseline_json = ? WHERE id = ?",
+                     (json.dumps(baseline), user_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def load_user_baseline(user_id: int) -> Optional[Dict]:
+    """The user's saved baseline dict, or None if they have never
+    completed a calibration."""
+    conn = _get_conn()
+    try:
+        row = conn.execute(
+            "SELECT baseline_json FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+        if row is None or row['baseline_json'] is None:
+            return None
+        return json.loads(row['baseline_json'])
+    finally:
+        conn.close()
+
+
+def save_session(history: List[Dict], task_mode: str = 'Default',
+                 user_id: Optional[int] = None) -> Optional[int]:
     """
     Save a completed session to the DB (summary + every frame).
 
@@ -161,6 +269,8 @@ def save_session(history: List[Dict], task_mode: str = 'Default') -> Optional[in
             'daisee' (float), 'behavior' (float)
         task_mode: which context the session was recorded under -
             'Default' / 'Studying' / 'Hospital' / 'Driving'.
+        user_id: the active user profile's id, or None for anonymous /
+            single-user usage (unchanged pre-v6 behavior).
 
     Returns:
         The new session's id, or None if history was empty.
@@ -192,8 +302,8 @@ def save_session(history: List[Dict], task_mode: str = 'Default') -> Optional[in
                 started_at, ended_at, duration_sec, sample_count,
                 mean_stress, max_stress,
                 pct_low, pct_moderate, pct_high,
-                task_mode
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                task_mode, user_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             started_at.isoformat(),
             ended_at.isoformat(),
@@ -201,6 +311,7 @@ def save_session(history: List[Dict], task_mode: str = 'Default') -> Optional[in
             mean_stress, max_stress,
             pct_low, pct_moderate, pct_high,
             str(task_mode),
+            user_id,
         ))
         session_id = cursor.lastrowid
 

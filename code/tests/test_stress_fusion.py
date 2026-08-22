@@ -152,3 +152,26 @@ def test_temporal_smoother_returns_running_mean():
 
     smoother.reset()
     assert smoother.update(0.8) == pytest.approx(0.8)
+
+
+@pytest.fixture
+def _clean_daisee_baseline():
+    """_DAISEE_BASELINE is process-wide singleton state (like the live
+    engine's) - reset it before AND after so this test can't leak into
+    others that run before/after it in the same session."""
+    stress_fusion.reset_daisee_baseline()
+    yield
+    stress_fusion.reset_daisee_baseline()
+
+
+def test_get_daisee_baseline_roundtrips_and_resets(_clean_daisee_baseline):
+    assert stress_fusion.get_daisee_baseline() is None
+    assert stress_fusion.is_daisee_calibrated() is False
+
+    stress_fusion.set_daisee_baseline(0.42)
+    assert stress_fusion.get_daisee_baseline() == pytest.approx(0.42)
+    assert stress_fusion.is_daisee_calibrated() is True
+
+    stress_fusion.reset_daisee_baseline()
+    assert stress_fusion.get_daisee_baseline() is None
+    assert stress_fusion.is_daisee_calibrated() is False
