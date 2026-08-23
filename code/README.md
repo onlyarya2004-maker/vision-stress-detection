@@ -9,7 +9,7 @@
 
 | Module | Role |
 |---|---|
-| `app.py` | Streamlit dashboard — main entry point (`streamlit run app.py` from this folder) |
+| `app.py` | Streamlit dashboard — main entry point (`streamlit run app.py` from this folder). Also holds the Phase 5.1 analytics view (`session_analytics_dataframe()` + `render_analytics_page()`) — an in-app `st.session_state.view` toggle reached via the sidebar's "View analytics" button, not a separate page, to avoid duplicating the custom sidebar styling or touching the live capture loop |
 | `daisee_ensemble.py` | DaiSEE CNN model loading + inference, shared by `app.py` and `evaluate_video_file.py` so live and offline paths run provably identical code. `tf.function`-wrapped instead of `Model.predict()` — ~3.4x faster per call, same predictions |
 | `config.py` | **Every tunable constant, with provenance.** Start here before changing behaviour |
 | `behavioral_features.py` | MediaPipe FaceMesh + Pose engine, 7 signals, personal calibration (face, posture, blink threshold, blink rate), PERCLOS (Driving mode, displayed only — see below) |
@@ -74,7 +74,7 @@ it does not carry a `W_*` switch because it doesn't feed the fusion score at all
 python -m pytest tests -q        # from code/, or: python -m pytest code/tests from the root
 ```
 
-239+ tests. The load-bearing ones: Default-mode fusion equals the archived pre-task-aware
+246+ tests. The load-bearing ones: Default-mode fusion equals the archived pre-task-aware
 implementation **exactly** (diff 0.00e+00); uncalibrated posture/blink behaviour is
 byte-identical to PP1; rPPG methods recover a synthetic pulse of known frequency; every
 default-off switch above leaves output unchanged.

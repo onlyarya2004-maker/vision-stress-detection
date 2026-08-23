@@ -772,6 +772,7 @@ def history_to_csv(history):
 
 
 def init_state():
+    if 'view' not in st.session_state: st.session_state.view = 'live'
     if 'running' not in st.session_state: st.session_state.running = False
     if 'calibrating' not in st.session_state: st.session_state.calibrating = False
     if 'history' not in st.session_state: st.session_state.history = []
@@ -873,11 +874,107 @@ def save_active_user_baseline(engine):
 
 
 # =============================================================================
+# ANALYTICS (Phase 5.1) - longitudinal view over saved session history.
+# Read-only, no camera - kept as a separate early-return branch in main()
+# rather than touching the live capture loop at all.
+# =============================================================================
+def session_analytics_dataframe():
+    """
+    All saved sessions as a pandas DataFrame with derived time columns, or
+    None if there are no sessions yet. Pure function of the DB - no
+    Streamlit dependency, so this is unit-testable on its own.
+    """
+    import pandas as pd
+    rows = session_history.load_recent_sessions(n=100000)
+    if not rows:
+        return None
+    df = pd.DataFrame(rows)
+    df['started_at'] = pd.to_datetime(df['started_at'])
+    df['date'] = df['started_at'].dt.date
+    df['hour'] = df['started_at'].dt.hour
+    df['weekday'] = df['started_at'].dt.day_name()
+    return df.sort_values('started_at').reset_index(drop=True)
+
+
+_WEEKDAY_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday',
+                  'Saturday', 'Sunday']
+
+
+def render_analytics_page():
+    with st.sidebar:
+        st.markdown('<div class="label">Analytics</div>', unsafe_allow_html=True)
+        if st.button("Back to live view", width='stretch'):
+            st.session_state.view = 'live'
+            st.rerun()
+
+    st.markdown("## Session analytics")
+    st.caption("Weekly trends and time-of-day patterns across every saved session - "
+              "on-device only, nothing here leaves this machine.")
+
+    df = session_analytics_dataframe()
+    if df is None or df.empty:
+        st.info("No saved sessions yet. Run a live session (Calibrate -> Start -> "
+               "Stop) to start building history here.")
+        return
+
+    n = len(df)
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Sessions", n)
+    c2.metric("Avg stress index", f"{df['mean_stress'].mean():.2f}")
+    c3.metric("Days active", df['date'].nunique())
+    c4.metric("Total time", f"{df['duration_sec'].sum() / 60:.0f} min")
+
+    st.markdown("#### Stress trend over time")
+    st.caption(f"Based on {n} session{'s' if n != 1 else ''} - patterns sharpen with more.")
+    st.line_chart(df.set_index('started_at')[['mean_stress', 'max_stress']])
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.markdown("#### By time of day")
+        st.bar_chart(df.groupby('hour')['mean_stress'].mean())
+    with col_b:
+        st.markdown("#### By day of week")
+        daily = df.groupby('weekday')['mean_stress'].mean().reindex(_WEEKDAY_ORDER).dropna()
+        st.bar_chart(daily)
+
+    st.markdown("#### By context")
+    by_mode = df.groupby('task_mode')['mean_stress'].mean().sort_values(ascending=False)
+    st.bar_chart(by_mode)
+
+    labeled = df[df['self_report'].notna()].copy()
+    st.markdown("#### System reading vs. your own report")
+    if len(labeled) < 2:
+        st.caption(f"{len(labeled)} of {n} sessions have a self-report so far - need at "
+                  "least 2 to plot a trend. Answer the end-of-session question to build "
+                  "this up (it's also what powers Phase 3's continual adaptation).")
+    else:
+        st.caption("Self-report (1-5) normalized to 0-1 so it shares an axis with the "
+                  "system's 0-1 stress index. Both should move in the same direction if "
+                  "the system is reading you correctly - they are NOT the same scale, "
+                  "just plotted together for shape comparison.")
+        labeled['self_report_normalized'] = (labeled['self_report'] - 1) / 4
+        st.line_chart(labeled.set_index('started_at')[['self_report_normalized', 'mean_stress']])
+
+    with st.expander("Raw session history"):
+        st.dataframe(
+            df[['started_at', 'duration_sec', 'task_mode', 'mean_stress', 'max_stress',
+               'pct_low', 'pct_moderate', 'pct_high', 'self_report']],
+            width='stretch',
+        )
+
+
+# =============================================================================
 # MAIN
 # =============================================================================
 def main():
     init_state()
     inject_css()
+
+    if st.session_state.view == 'analytics':
+        # Read-only history view - skip loading the CNN ensemble/engine
+        # entirely, they're not needed here and cost real seconds to load.
+        render_analytics_page()
+        return
 
     models = load_models()
     engine = get_feature_engine()
@@ -890,6 +987,12 @@ def main():
         st.markdown('<div class="label">Live stress</div>', unsafe_allow_html=True)
         sidebar_graph_placeholder = st.empty()
         sidebar_graph_placeholder.markdown(render_mini_graph([]), unsafe_allow_html=True)
+
+        if st.button("View analytics", width='stretch',
+                    disabled=st.session_state.running or st.session_state.calibrating,
+                    help="Weekly trends and time-of-day patterns across saved sessions."):
+            st.session_state.view = 'analytics'
+            st.rerun()
 
         st.divider()
         st.markdown('<div class="label">Session control</div>', unsafe_allow_html=True)

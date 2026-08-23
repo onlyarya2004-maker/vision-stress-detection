@@ -275,7 +275,7 @@ memory) on 2026-08-22. ✅ done · 🟡 partial · ❌ not started.
 | | 4.3 Per-subject breakdown | 🟡 active for all 10 UBFC subjects; team data absent |
 | | 4.4 UBFC correlation row in harness | ✅ `correlate_physiology.py` folded into `run_all_evaluations.py`, regenerated every run; still standalone-runnable too — see 1.4 |
 | | 4.5 Frame + session metrics with Wilson CIs | ✅ |
-| **5 (~50%)** | 5.1 Analytics dashboard | ❌ |
+| **5 (~65%)** | 5.1 Analytics dashboard | ✅ in-app view toggle (not a native multi-page), KPIs + trend/time-of-day/day-of-week/context charts + self-report comparison, real 11-session data verified live |
 | | 5.2 PDF export | ❌ |
 | | 5.3 Ethics/privacy statement | ✅ root README |
 | | 5.4 Fix code/README.md false claims | ✅ rewritten 2026-08-16 |
@@ -614,6 +614,54 @@ Next actions: (user) team recordings - the only blocker left in Phase 1, and the
 everything in Phase 3 and 4.3 is actually waiting on, and now also what would let any task
 mode actually reach the 6-session bar. (code) analytics dashboard (5.1) and PDF export (5.2)
 remain the startable-now items.
+
+---
+
+Longitudinal analytics dashboard, implemented (2026-08-23, Phase 5.1): new
+`session_analytics_dataframe()` (pure function - `session_history.load_recent_sessions()`
+into a pandas DataFrame with derived `date`/`hour`/`weekday` columns, no `st.*` calls) and
+`render_analytics_page()` in `app.py`. Built as an **in-app view toggle**
+(`st.session_state.view = 'live' | 'analytics'`), not Streamlit's native multi-page
+mechanism - the app's sidebar is already heavily custom-styled and the live capture loop is
+delicate, so a second script/page would have meant either duplicating that styling or
+risking the loop; a toggle inside the existing `main()` keeps `app.py` the only entry point.
+A "View analytics" sidebar button (disabled while calibrating/running, so it can't be hit
+mid-session) sets the toggle and `st.rerun()`s; `main()` checks `view == 'analytics'` and
+returns right after `render_analytics_page()`, **before** `load_models()` /
+`get_feature_engine()` / `get_temporal_inference()` run, so the read-only history view never
+pays the TensorFlow load cost. The page itself: 4 KPI tiles (session count, avg stress
+index, days active, total minutes), a stress-trend line chart (`mean_stress`/`max_stress`
+over time), time-of-day and day-of-week bar charts, a per-context (`task_mode`) bar chart, a
+self-report-vs-system comparison chart (self-report 1-5 normalized to 0-1 to share an axis,
+gated on >=2 labeled sessions with an honest "N of M sessions have a self-report" message
+below that), and a raw-history `st.dataframe` in an expander.
+
+Incidental discovery: `import app` succeeds under Streamlit's "bare mode" (outside a real
+`streamlit run` script-context) - `st.set_page_config` just prints a harmless warning
+instead of crashing. No test file for `app.py` had existed in this codebase before now for
+exactly this reason. `session_analytics_dataframe()` is a genuine exception (pure function
+of the DB + pandas, zero `st.session_state`/widget calls), so it's now covered by real unit
+tests - `code/tests/test_app_analytics.py`, 7 tests (empty history, one row per session,
+derived time-column correctness, chronological sort regardless of save order, `task_mode`
+column present, `self_report` NaN when unanswered / present when answered). This is NOT a
+precedent for testing the rest of `app.py` - everything else still needs a real script-run
+context this harness doesn't provide.
+
+Verified live (no camera touched): fresh Streamlit process, confirmed no `stException` and a
+clean server log through model load, sidebar renders "View analytics" alongside the
+existing session controls, clicking it swaps the main content to the dashboard with the
+REAL `data/sessions.db` (11 sessions, avg stress 0.38, 3 distinct days, 10 total minutes,
+all four chart sections populated, self-report gate correctly reporting "1 of 11 sessions"),
+and "Back to live view" round-trips cleanly back to the normal capture UI. One transient
+false alarm during verification: a DOM read taken ~2s after the click briefly showed BOTH
+the old live-view sidebar content and the new analytics sidebar overlapping (a mid-rerender
+snapshot, matching the same stale-DOM-reference pattern hit repeatedly earlier this session)
+- resolved by re-querying after Streamlit's rerun settled; not a real bug.
+
+246/246 tests passing (up from 239).
+
+Next actions: (user) team recordings, still the sole Phase 1 blocker. (code) PDF export
+(5.2) is the remaining startable-now Phase 5 item.
 
 ---
 
