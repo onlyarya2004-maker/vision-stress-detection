@@ -251,16 +251,28 @@ def build_dataset_by_task_mode():
 # ---------------------------------------------------------------------------
 # Per-mode fit + session-held-out evaluation
 # ---------------------------------------------------------------------------
-def evaluate_lambda(X, y, groups, w_prior, b_prior, lam):
+def evaluate_lambda(X, y, groups, w_prior, b_prior, lam, scaler=None):
     """Session-held-out (LeaveOneGroupOut) frame accuracy at one lambda -
     w_prior/b_prior may be all-zero (plain MLE, lambda's value then moot)
-    when there is no population prior."""
+    when there is no population prior.
+
+    scaler: when given, transforms BOTH train and test folds instead of
+    fitting a fresh StandardScaler per fold. This MUST be the same scaler
+    w_prior/b_prior were fit in (train_meta_learner.py --save's scaler) -
+    the prior's weights only mean what they mean in that scaler's
+    coordinate space. Fitting a fresh scaler on this user's own (much
+    smaller) sample instead would standardize X into DIFFERENT units than
+    w_prior lives in, so `(lam/2)*||w - w_prior||^2` would regularize
+    toward a direction that means nothing in the fitted w's own units -
+    silently producing a worse-than-either-alternative model (see
+    BUG_AUDIT_2026-08-23.md finding #1). Pass None only when there is
+    truly no prior (w_prior/b_prior are then zero and lambda is moot)."""
     from sklearn.model_selection import LeaveOneGroupOut
     from sklearn.preprocessing import StandardScaler
 
     oof = np.zeros_like(y)
     for tr, te in LeaveOneGroupOut().split(X, y, groups):
-        sc = StandardScaler().fit(X[tr])
+        sc = scaler if scaler is not None else StandardScaler().fit(X[tr])
         w, b = fit_logreg_with_prior(sc.transform(X[tr]), y[tr], w_prior, b_prior, lam)
         oof[te] = _predict(sc.transform(X[te]), w, b)
     acc = float((oof == y).mean())
@@ -286,17 +298,25 @@ def process_mode(mode, X, y, groups, prior, min_sessions, models_dir, lam=DEFAUL
     # available" and "lambda=0" naturally coincide - no special-casing needed.
     w_prior = prior['w'] if prior else np.zeros(X.shape[1])
     b_prior = prior['b'] if prior else 0.0
+    # w_prior/b_prior only mean what they mean in the population scaler's
+    # coordinate space - every fit below that involves them (lambda=0
+    # included, for a true apples-to-apples comparison) MUST transform X
+    # with that same scaler, not a freshly-fit one. See evaluate_lambda's
+    # docstring and BUG_AUDIT_2026-08-23.md finding #1.
+    prior_scaler = prior['scaler'] if prior else None
 
-    acc0, sok0, sn = evaluate_lambda(X, y, groups, w_prior, b_prior, 0.0)
+    acc0, sok0, sn = evaluate_lambda(X, y, groups, w_prior, b_prior, 0.0,
+                                     scaler=prior_scaler)
     print(f"  lambda=0   (from-scratch, today's old behavior) : "
          f"{acc0*100:5.1f}% frame-level, {sok0}/{sn} sessions")
 
     if prior is None:
         print("  no population prior available (../models/meta_learner.joblib "
              "not found or unusable) - training from scratch only.")
-        best_lam, best_acc = 0.0, acc0
+        chosen_lam, chosen_acc = 0.0, acc0
     else:
-        acc_w, sok_w, _ = evaluate_lambda(X, y, groups, w_prior, b_prior, lam)
+        acc_w, sok_w, _ = evaluate_lambda(X, y, groups, w_prior, b_prior, lam,
+                                          scaler=prior_scaler)
         print(f"  lambda={lam:<5.1f}(warm-started)"
              f"{'':16s}: {acc_w*100:5.1f}% frame-level, {sok_w}/{sn} sessions")
         pop_pred = _predict(prior['scaler'].transform(X), w_prior, b_prior)
@@ -304,34 +324,59 @@ def process_mode(mode, X, y, groups, prior, min_sessions, models_dir, lam=DEFAUL
         print(f"  population-only (zero personal data)            : "
              f"{acc_pop*100:5.1f}% frame-level (not session-held-out - it never "
              f"trains on your data at all)")
-        best_lam, best_acc = lam, acc_w
+        # NOT a selection among candidates - DEFAULT_LAMBDA is a fixed
+        # constant from the warm-start experiment (see module docstring),
+        # always used verbatim when a prior exists. "chosen" here means
+        # "what gets saved below", not "what scored best above".
+        chosen_lam, chosen_acc = lam, acc_w
 
     # ---- fit on everything at the chosen lambda, save versioned ----
-    from sklearn.preprocessing import StandardScaler
-    sc = StandardScaler().fit(X)
-    w, b = fit_logreg_with_prior(sc.transform(X), y, w_prior, b_prior, best_lam)
+    # When there's a prior, reuse ITS scaler (see above) so the saved
+    # w/b/scaler triple is internally consistent AND consistent with the
+    # session-held-out numbers just printed. Only fit a fresh scaler on
+    # this user's own data in the true no-prior path, where there is no
+    # foreign coordinate space to stay consistent with.
+    if prior is not None:
+        sc = prior_scaler
+    else:
+        from sklearn.preprocessing import StandardScaler
+        sc = StandardScaler().fit(X)
+    w, b = fit_logreg_with_prior(sc.transform(X), y, w_prior, b_prior, chosen_lam)
 
     models_dir = Path(models_dir)
     models_dir.mkdir(parents=True, exist_ok=True)
     mode_slug = mode.lower()
-    version = 1 + max(
-        [int(p.stem.rsplit('_v', 1)[-1])
-         for p in models_dir.glob(f'personal_fusion_{mode_slug}_v*.joblib')] or [0])
-    out = models_dir / f"personal_fusion_{mode_slug}_v{version}.joblib"
 
     import joblib
-    joblib.dump({
+    blob = {
         # Same schema train_meta_learner.py --save already produces
         # ('model'/'scaler'/'features') so learned_fusion.py - the only
         # consumer of this file - needs no changes to load either kind.
         'model': _wrap_as_sklearn_model(w, b), 'scaler': sc,
         'features': list(SIGNAL_COLUMNS),
-        'task_mode': mode, 'lambda': best_lam,
+        'task_mode': mode, 'lambda': chosen_lam,
         'trained_on_sessions': [int(g) for g in sess_ids],
-        'loso_accuracy': best_acc,
+        'loso_accuracy': chosen_acc,
         'warm_started': prior is not None,
-    }, out)
-    print(f"  saved: {out.name}  (lambda={best_lam}, "
+    }
+    # glob-then-max-then-write is a TOCTOU race under real concurrent
+    # invocation (two runs could compute the same next version); claim the
+    # filename atomically via exclusive create ('xb', OS-level O_EXCL) and
+    # retry on collision, instead of trusting the max() alone.
+    version = 1 + max(
+        [int(p.stem.rsplit('_v', 1)[-1])
+         for p in models_dir.glob(f'personal_fusion_{mode_slug}_v*.joblib')] or [0])
+    while True:
+        out = models_dir / f"personal_fusion_{mode_slug}_v{version}.joblib"
+        try:
+            fh = open(out, 'xb')
+        except FileExistsError:
+            version += 1
+            continue
+        with fh:
+            joblib.dump(blob, fh)
+        break
+    print(f"  saved: {out.name}  (lambda={chosen_lam}, "
          f"{'warm-started' if prior is not None else 'from-scratch, no prior available'})")
 
     print("  learned weights (|coef|, sign = direction):")

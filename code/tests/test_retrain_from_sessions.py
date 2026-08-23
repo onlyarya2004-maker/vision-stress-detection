@@ -254,6 +254,52 @@ def test_process_mode_with_prior_is_warm_started(temp_db, tmp_path):
     blob = joblib.load(saved)
     assert blob['warm_started'] is True
     assert blob['lambda'] == 10.0
+    # BUG_AUDIT_2026-08-23.md finding #1 (fixed): the saved scaler must be
+    # the PRIOR's scaler, not a fresh one fit on this user's own small
+    # sample - w_prior/b_prior only mean what they mean in the prior
+    # scaler's coordinate space, so saving any other scaler alongside them
+    # would silently corrupt the warm-start regularization. (Compared by
+    # fitted params, not identity - blob['scaler'] is a fresh object after
+    # the joblib round-trip.)
+    assert np.array_equal(blob['scaler'].mean_, scp.mean_)
+    assert np.array_equal(blob['scaler'].scale_, scp.scale_)
+
+
+def test_evaluate_lambda_uses_the_given_scaler_not_a_fresh_one():
+    """
+    Regression test for BUG_AUDIT_2026-08-23.md finding #1: passing a
+    scaler to evaluate_lambda() must actually change its behavior (proving
+    the parameter is wired through, not silently ignored) - a scaler with
+    a large mean shift relative to the data changes the standardized
+    features evaluate_lambda regularizes toward w_prior in, and therefore
+    the fitted weights/accuracy, versus letting it fit a fresh per-fold
+    scaler on the unshifted data.
+    """
+    from sklearn.preprocessing import StandardScaler
+
+    rng = np.random.default_rng(0)
+    X = rng.normal(loc=0.0, scale=1.0, size=(60, len(SIGNAL_COLUMNS)))
+    y = (X[:, 0] > 0).astype(int)
+    groups = np.repeat(np.arange(6), 10)
+    w_prior = np.zeros(len(SIGNAL_COLUMNS))
+    w_prior[0] = 5.0    # a confident prior opinion that feature 0 drives the label
+    b_prior = 0.0
+
+    acc_fresh, _, _ = evaluate_lambda(X, y, groups, w_prior, b_prior, lam=10.0,
+                                      scaler=None)
+
+    # A scaler fit on wildly-shifted, wildly-rescaled data: transforming X
+    # through it does NOT standardize X to mean~0/std~1 the way a
+    # correctly-matched scaler would, so the lambda=10 pull toward w_prior
+    # (defined for standardized units) becomes actively harmful.
+    shifted = StandardScaler().fit(X * 50.0 + 100.0)
+    acc_mismatched, _, _ = evaluate_lambda(X, y, groups, w_prior, b_prior, lam=10.0,
+                                           scaler=shifted)
+
+    assert acc_mismatched < acc_fresh - 0.1, (
+        "evaluate_lambda's scaler parameter must actually be used - a "
+        "badly mismatched scaler should measurably hurt accuracy relative "
+        "to a correctly-fit one, not be silently ignored")
 
 
 def test_process_mode_versions_increment_without_overwriting(temp_db, tmp_path):
