@@ -709,6 +709,126 @@ Next actions: (user) team recordings, still the sole Phase 1 blocker. (code) dem
 
 ---
 
+Comprehensive bug audit + fix pass (2026-08-23): with every startable-now Phase 1-5 item
+done, the user asked for an "extreme comprehensive" testing pass across the WHOLE codebase
+before starting anything new - full unit/functional/smoke testing, find every bug, and a
+structural review of what's already built. Delivered as `BUG_AUDIT_2026-08-23.md` at the
+repo root: 4 parallel deep-read code reviews (one per subsystem) covering all 32 production
+modules against their own test files and this project's documented history of past real
+bugs, a full test-suite run, an import/syntax sweep of every module, and a live browser
+smoke test of every non-camera UI flow (analytics dashboard, PDF/CSV export, task-mode
+switching, the agent toggle, past-sessions view). Found 1 critical, 3 high, 8 medium, and
+8 low severity bugs, plus 9 structural/coverage notes - every one of them slipping through
+a fully green 256-test suite, which is exactly the point of doing a deeper audit rather than
+trusting the count alone.
+
+The headline finding: `retrain_from_sessions.py`'s warm-start personalization
+(`process_mode()`/`evaluate_lambda()`) was fitting the user's personal logistic regression
+in a freshly-fit personal `StandardScaler`'s coordinate space while regularizing toward the
+population prior's weights, which only mean what they mean in the PRIOR's scaler space - a
+coordinate mismatch. Reproduced numerically against the real code (100%->79.2% frame
+accuracy in one repro, 99%->37% in an adversarial one). Not live-triggerable at audit time
+(no task mode had reached the 6-session activation threshold), but it would have been the
+ONLY kind of model this script ever produced once one did, since `best_lam` was always set
+to the warm-started value unconditionally whenever a prior existed - no accuracy-based
+selection was ever happening despite the variable's name implying one.
+
+User's decision after seeing the audit: fix everything (all 20 findings + all structural
+notes), not just the critical/high ones, before considering any future phase. Split into 4
+disjoint-by-file workstreams to run in parallel without conflicting:
+
+- **Critical + app/behavioral core** (handled directly, highest interdependency risk):
+  `retrain_from_sessions.py`'s scaler fix (`evaluate_lambda()`/`process_mode()` now reuse
+  `prior['scaler']` throughout instead of fitting a fresh one; `best_lam`/`best_acc` renamed
+  to `chosen_lam`/`chosen_acc` since there's no selection, just a fixed constant) plus its
+  TOCTOU-race versioned-save fix (atomic `open(..., 'xb')` exclusive-create with
+  retry-on-collision, replacing glob-then-max-then-write). `app.py`: a mid-session
+  camera-failure duplicate-save bug fixed via a new `history_saved` idempotency flag on
+  `save_current_session()` (safer than relying on UI staleness/rerun timing alone); Calibrate
+  now clears `history` like every sibling button already did; "Reset baseline" now actually
+  persists for a named user (was in-memory only, silently undone by the next profile switch);
+  a self-report answered right after Stop now shows up in that same session's own CSV/PDF
+  export immediately (new `last_saved_session_id`/`last_saved_self_report` state) instead of
+  only after re-opening it later via "View"; Start/Calibrate now block on an unanswered
+  self-report instead of silently losing it to the next session; viewing an empty legacy
+  session now clears whatever was previously being viewed instead of leaving stale data on
+  screen; `cap.release()` added to both webcam-open-failure guards. `behavioral_features.py`:
+  the blink-rate estimator's warm-up spike fixed (was extrapolating "blinks so far / tiny
+  elapsed time" to a full-minute rate - one blink 0.5s after a reset read as 120/min, pinning
+  `blink_stress` to its ceiling from ordinary blinking at the start of every session; now
+  anchored on real elapsed time since the window last reset, with a warm-up floor that
+  reports the calibrated baseline instead, while zero observed blinks still correctly reads
+  as zero); new `engine.reset_state()`, called on every user-profile switch and from
+  `reset_baseline()`, so the process-wide singleton engine's raw blink/EAR/PERCLOS history no
+  longer leaks between people - directly relevant to the team-recordings work coming up next.
+  Also deduplicated `FaceMesh.process()`, which `app.py` and `evaluate_video_file.py` were
+  each calling twice per frame (once for `crop_face()`, once inside `engine.extract()`) -
+  `extract()`/`_extract_face()` gained an optional `face_mesh_results` param, all three call
+  sites now compute it once and share it.
+- **Evaluation harness** (subagent): `run_all_evaluations.py`'s mode filter fixed to
+  distinguish true legacy 2-part filenames from modern-but-corrupted ones (the latter used to
+  silently pool into Default instead of being excluded and flagged) plus a new
+  `find_unclaimed_files()` check, wired into `main()`, that loudly reports any
+  `evaluation_data/` CSV not claimed by exactly one mode section - directly guards against a
+  repeat of the `relaaxed_2.csv` incident. Two brand-new test files,
+  `code/tests/test_eval_scoring.py` and `code/tests/test_run_all_evaluations.py` (35 tests),
+  closing the single highest-value coverage gap the audit found: the modules computing every
+  accuracy percentage and confidence interval this project reports had zero direct tests
+  before this. `train_meta_learner.py`'s "session" (pools a subject's T2+T3 UBFC-Phys clips)
+  relabeled to "cond-block" to stop reading as the same metric as `eval_scoring.py`'s
+  per-recording "session" in the same report - computation deliberately untouched.
+  `ablation_study.py` gained 7 parametrized tests proving `fused_frame()` matches the real
+  `compute_stress_index()` exactly, closing a drift risk that was previously verified only
+  once, by hand. `correlate_physiology.py` now sorts by time before interpolating, matching
+  `ablation_study.py`'s existing defensive pattern for the same file schema.
+  `analyze_sessions.py` gained the same mode-filtering capability the harness has (default
+  unfiltered, unchanged behavior).
+- **Signal/persistence layer** (subagent): `LiveRPPG` now tracks real wall-clock staleness
+  and degrades `status()`/`estimate()` after a genuine gap instead of returning a frozen old
+  reading forever - not reachable today (both real call sites already guard against a
+  no-face frame before calling in), but the class now guarantees it itself rather than
+  depending on every future caller reimplementing the same guard.
+  `InterventionAgent.update()` now returns early instead of falling through when a shown
+  card's window elapses but its eval window hasn't - previously only safe by coincidence
+  that `INTERVENTION_COOLDOWN_SECONDS > INTERVENTION_EVAL_SECONDS`, now enforced regardless
+  of those constants' values. `session_history.summarize_history()`'s level-percentage bug
+  fixed (`.get('level', 'LOW')` only substituted for a missing key, not a present `None`);
+  `load_recent_sessions()` gained a docstring making its "one shared history log across every
+  user" behavior an explicit, documented decision rather than a silent gap - behavior
+  deliberately NOT changed, since that's a product decision, not a bug.
+  `wesad_calibration.py`'s `recommended_window_seconds` field was actually minutes
+  (`duration / 60.0`) - renamed to `recommended_window_minutes`; confirmed unused by the live
+  system either way. `stress_detector.py` now imports `daisee_ensemble.py` instead of
+  keeping its own local `ensemble_predict()`/`prep()` copy, matching `app.py`/
+  `evaluate_video_file.py`, plus removed a hardcoded crop-padding constant (now
+  `config.FACE_CROP_PADDING`) and one dead constant.
+- **Offline pipeline test coverage** (subagent): added tests for every genuinely pure,
+  deterministic piece of logic in the untested offline scripts -
+  `rebucket_to_binary.py`'s multi-class-to-binary label mapping (the single highest-value
+  addition here, since a labeling bug would poison everything trained downstream),
+  `daisee_preprocessing.py`'s stress-scoring formula and face-crop math,
+  `lstm_preprocessing.py`'s frame-count normalization, and `train_lstm.py`'s pure
+  `SequenceDataLoader` logic. `train_daisee_stress.py` confirmed to have no extractable pure
+  logic (real training loop, real `flow_from_directory` generators, a direct unwrapped
+  sklearn call) - explicitly left untested with reasoning recorded, rather than forcing a
+  low-value test to exist. No source bugs found in this group.
+
+Verified together, not separately: all four workstreams' changes run against ONE full test
+suite - **354 passed** (up from 256; the +98 is new regression coverage for these exact
+fixes, not pre-existing tests that happened to start passing). Spot-checked a sample of the
+subagent-authored diffs directly (the harness mode-filter fix, the session_history/
+intervention_agent/rppg_live fixes, the stress_detector refactor, the wesad_calibration
+rename) against the real code and the audit's own reasoning before trusting them, per
+"verify, don't just read the summary." `BUG_AUDIT_2026-08-23.md` updated in place with a fix
+status table - every finding is now marked, nothing was fixed by weakening a test.
+
+Next actions: (user) team recordings, still the sole Phase 1 blocker - and now also what the
+per-user state reset (finding #5) was specifically fixed for. (code) demo rehearsal (5.5) is
+the only remaining Phase 5 item, and it isn't code work. No new Phase 6+ work starts until
+the user says so, per their own stated sequencing for this pass.
+
+---
+
 ## New features roadmap
 
 | # | Feature | Needs | Phase | Why there |
