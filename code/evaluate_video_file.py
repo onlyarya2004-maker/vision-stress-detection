@@ -359,7 +359,7 @@ def process_video(video_path, calib_seconds=None, sample_every=1,
 
         # ---- calibration window ----
         if calibrating:
-            engine.extract(rgb)                     # fills the calib buffer
+            engine.extract(rgb, face_mesh_results=mesh)   # fills the calib buffer
             if daisee_probs is not None:
                 daisee_calib.append(float(daisee_probs[1]))
             if clock['t'] >= calib_seconds:
@@ -378,7 +378,7 @@ def process_video(video_path, calib_seconds=None, sample_every=1,
                           "usable frames; results unreliable")
             continue
 
-        feats = engine.extract(rgb)
+        feats = engine.extract(rgb, face_mesh_results=mesh)
         if feats is None:
             continue
 

@@ -782,6 +782,20 @@ def init_state():
     if 'viewing_session_label' not in st.session_state: st.session_state.viewing_session_label = None
     if 'viewing_session_task_mode' not in st.session_state: st.session_state.viewing_session_task_mode = None
     if 'viewing_session_self_report' not in st.session_state: st.session_state.viewing_session_self_report = None
+    # Tracks the self-report for the CURRENTLY-DISPLAYED history when it
+    # came from a live Stop/failure save, not from "View" - so answering
+    # the self-report banner is reflected immediately in that same
+    # session's own CSV/PDF export instead of only the next time it's
+    # reopened via "View" (BUG_AUDIT_2026-08-23.md #8).
+    if 'last_saved_session_id' not in st.session_state: st.session_state.last_saved_session_id = None
+    if 'last_saved_self_report' not in st.session_state: st.session_state.last_saved_self_report = None
+    # Makes save_current_session() idempotent per in-memory history: a
+    # stale, already-disabled-on-the-next-rerun Stop button that still
+    # gets clicked (or the mid-session camera-failure path, which calls
+    # save_current_session() then reruns without clearing history so the
+    # CSV/PDF export stays available) can no longer write a second,
+    # duplicate DB row for the same captured frames (BUG_AUDIT_2026-08-23.md #2).
+    if 'history_saved' not in st.session_state: st.session_state.history_saved = False
     if 'task_mode' not in st.session_state: st.session_state.task_mode = 'Default'
     # A header context button sets this on the rerun it triggers, then this
     # block (which runs before the sidebar "Context" selectbox is
@@ -822,18 +836,26 @@ def save_current_session():
     prompt. Shared by the Stop button and the mid-session camera-failure
     path, so a session ending abnormally is saved exactly like one ending
     normally rather than silently dropping its data.
+
+    Idempotent per in-memory history: a second call before history is next
+    reset (e.g. a stale Stop click after a camera-failure save already ran
+    this run) is a no-op rather than a duplicate DB row - see
+    history_saved in init_state() and BUG_AUDIT_2026-08-23.md finding #2.
     """
-    if not st.session_state.history:
+    if not st.session_state.history or st.session_state.history_saved:
         return
     try:
         sid = session_history.save_session(
             st.session_state.history, task_mode=st.session_state.task_mode,
             user_id=st.session_state.active_user_id,
         )
+        st.session_state.history_saved = True
         # Queue the self-report prompt for this session. The user's answer -
         # not the system's prediction - is the ground-truth label the
         # adaptation loop trains on.
         st.session_state.pending_self_report = sid
+        st.session_state.last_saved_session_id = sid
+        st.session_state.last_saved_self_report = None
         ivlog = st.session_state.pop('pending_interventions', [])
         if ivlog:
             session_history.log_interventions(sid, ivlog)
@@ -851,6 +873,12 @@ def apply_user_profile(engine, user_id):
     running/calibrating, same guard every other baseline-touching control
     in the sidebar already has).
     """
+    # engine is a process-wide singleton (get_feature_engine() is
+    # @st.cache_resource) - without this, whoever was being tracked before
+    # this switch's raw blink/EAR/PERCLOS samples stay in engine.state and
+    # get mixed into the next user's first readings, scored against THEIR
+    # baseline (BUG_AUDIT_2026-08-23.md finding #5).
+    engine.reset_state()
     saved = session_history.load_user_baseline(user_id) if user_id is not None else None
     if saved is not None:
         engine.baseline = BehavioralBaseline(**saved['behavioral'])
@@ -1085,13 +1113,28 @@ def main():
         if _selected_task != st.session_state.task_mode:
             st.session_state.task_mode = _selected_task
 
+        # A still-unanswered self-report from the PREVIOUS session blocks
+        # starting a new one - Start/Stop don't clear pending_self_report,
+        # so without this a second Stop would silently overwrite it with
+        # the new session's id, losing the first session's self-report
+        # opportunity with no warning (unlike the explicit, visible Skip
+        # button). See BUG_AUDIT_2026-08-23.md #13.
+        _report_pending = st.session_state.pending_self_report is not None
+
         col_a, col_b = st.columns(2)
         with col_a:
             if st.button("Calibrate", width='stretch',
-                         disabled=st.session_state.running or st.session_state.calibrating,
-                         help=f"Sit naturally for {CALIBRATION_SECONDS} seconds. "
-                              f"System learns your personal baseline."):
+                         disabled=(st.session_state.running or st.session_state.calibrating
+                                  or _report_pending),
+                         help=("Answer or skip the previous session's self-report "
+                              "question below first." if _report_pending else
+                              f"Sit naturally for {CALIBRATION_SECONDS} seconds. "
+                              f"System learns your personal baseline.")):
                 st.session_state.calibrating = True
+                st.session_state.history = []
+                st.session_state.history_saved = False
+                st.session_state.last_saved_session_id = None
+                st.session_state.last_saved_self_report = None
                 st.session_state.viewing_session_id = None
                 st.session_state.viewing_session_label = None
                 st.session_state.viewing_session_task_mode = None
@@ -1099,10 +1142,16 @@ def main():
                 st.rerun()
         with col_b:
             if st.button("Start", type="primary", width='stretch',
-                         disabled=st.session_state.running or st.session_state.calibrating):
+                         disabled=(st.session_state.running or st.session_state.calibrating
+                                  or _report_pending),
+                         help=("Answer or skip the previous session's self-report "
+                              "question below first.") if _report_pending else None):
                 st.session_state.running = True
                 st.session_state.session_start = datetime.now()
                 st.session_state.history = []
+                st.session_state.history_saved = False
+                st.session_state.last_saved_session_id = None
+                st.session_state.last_saved_self_report = None
                 st.session_state.viewing_session_id = None
                 st.session_state.viewing_session_label = None
                 st.session_state.viewing_session_task_mode = None
@@ -1124,6 +1173,9 @@ def main():
                          disabled=st.session_state.running or st.session_state.calibrating,
                          help="Clears the on-screen timeline. Saved sessions in the DB are not affected."):
                 st.session_state.history = []
+                st.session_state.history_saved = False
+                st.session_state.last_saved_session_id = None
+                st.session_state.last_saved_self_report = None
                 st.session_state.viewing_session_id = None
                 st.session_state.viewing_session_label = None
                 st.session_state.viewing_session_task_mode = None
@@ -1137,6 +1189,13 @@ def main():
                               "degrade the rest of that session's scoring."):
                 engine.reset_baseline()
                 reset_daisee_baseline()
+                # Without this, the reset is in-memory only: switching to
+                # another user profile and back reloads the PRE-reset
+                # baseline from the DB, silently undoing the reset for any
+                # named user (no-op for anonymous - see the function's own
+                # early return). Same call calibration success already
+                # makes, kept consistent here (BUG_AUDIT_2026-08-23.md #7).
+                save_active_user_baseline(engine)
                 st.rerun()
 
         # ---------- Recording labels ----------
@@ -1248,6 +1307,17 @@ def main():
                             st.session_state.viewing_session_task_mode = _task
                             st.session_state.viewing_session_self_report = s.get('self_report')
                         else:
+                            # Clear whatever was previously being viewed too -
+                            # otherwise this click appears to silently do
+                            # nothing but show a warning, while an unrelated
+                            # earlier session's timeline stays on screen as
+                            # if it were the one just clicked
+                            # (BUG_AUDIT_2026-08-23.md #14).
+                            st.session_state.history = []
+                            st.session_state.viewing_session_id = None
+                            st.session_state.viewing_session_label = None
+                            st.session_state.viewing_session_task_mode = None
+                            st.session_state.viewing_session_self_report = None
                             st.session_state.empty_session_warning = (
                                 f"Session from {start_label} was saved before per-frame "
                                 f"recording was supported. Only the summary stats above "
@@ -1261,6 +1331,9 @@ def main():
                          help="Deletes every saved session from the local DB. Cannot be undone."):
                 session_history.clear_all_sessions()
                 st.session_state.history = []
+                st.session_state.history_saved = False
+                st.session_state.last_saved_session_id = None
+                st.session_state.last_saved_self_report = None
                 st.session_state.viewing_session_id = None
                 st.session_state.viewing_session_label = None
                 st.session_state.viewing_session_task_mode = None
@@ -1396,6 +1469,7 @@ def main():
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.FRAME_WIDTH)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.FRAME_HEIGHT)
         if not cap.isOpened():
+            cap.release()
             st.error("Could not open webcam.")
             st.session_state.calibrating = False
             return
@@ -1417,9 +1491,12 @@ def main():
                     break
                 frame = cv2.flip(frame, 1)
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                _ = engine.extract(rgb)
-
+                # One FaceMesh pass per frame, shared between extract() and
+                # crop_face() - these used to each run it separately
+                # (BUG_AUDIT_2026-08-23.md structural note).
                 face_mesh_results = engine.face_mesh.process(rgb)
+                _ = engine.extract(rgb, face_mesh_results=face_mesh_results)
+
                 face_crop, bbox = crop_face(frame, face_mesh_results)
 
                 if face_crop is not None:
@@ -1475,6 +1552,7 @@ def main():
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.FRAME_WIDTH)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.FRAME_HEIGHT)
         if not cap.isOpened():
+            cap.release()
             st.error("Could not open webcam.")
             st.session_state.running = False
             return
@@ -1521,7 +1599,18 @@ def main():
                     # would silently drop that data instead.
                     st.session_state.running = False
                     save_current_session()
-                    break
+                    # Rerun immediately so the sidebar's Stop button
+                    # (rendered earlier in this same script run while
+                    # running was still True) re-renders disabled - without
+                    # this it stays live and stale, and a click on it would
+                    # call save_current_session() again. history is
+                    # deliberately NOT cleared here (same as the Stop
+                    # button) so the CSV/PDF export for what was captured
+                    # is still available - save_current_session() itself is
+                    # now idempotent per in-memory history (see its
+                    # docstring), so even a stale second call is a no-op
+                    # rather than a duplicate DB row (BUG_AUDIT_2026-08-23.md #2).
+                    st.rerun()
 
                 frame = cv2.flip(frame, 1)
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -1547,7 +1636,7 @@ def main():
                 rppg.add_frame(time.time(), frame, face_mesh_results)
                 rppg_score = rppg.stress_score()
 
-                behavioral_features = engine.extract(rgb)
+                behavioral_features = engine.extract(rgb, face_mesh_results=face_mesh_results)
                 if behavioral_features is None:
                     frame_idx += 1
                     continue
@@ -1691,6 +1780,14 @@ def main():
                     if _cols[_i - 1].button(_lab, key=f"selfrep_{_i}"):
                         try:
                             session_history.set_self_report(_sid, _i)
+                            # So the CSV/PDF export for THIS same session
+                            # (still on screen, since Stop/failure don't
+                            # clear history) reflects the answer right
+                            # away instead of only after re-opening this
+                            # session later via "View"
+                            # (BUG_AUDIT_2026-08-23.md #8).
+                            if _sid == st.session_state.last_saved_session_id:
+                                st.session_state.last_saved_self_report = _i
                         except Exception as e:
                             st.warning(f"Could not save rating: {e}")
                         st.session_state.pending_self_report = None
@@ -1736,7 +1833,12 @@ def main():
                     _report_label = st.session_state.viewing_session_label
                 else:
                     _report_task_mode = st.session_state.task_mode
-                    _report_self_report = None
+                    # last_saved_self_report is populated the moment the
+                    # self-report banner above is answered for THIS
+                    # session (matched by id) - falls back to None
+                    # (unanswered/skipped) otherwise
+                    # (BUG_AUDIT_2026-08-23.md #8).
+                    _report_self_report = st.session_state.last_saved_self_report
                     _report_label = None
                 pdf_bytes = session_report.build_session_report_pdf(
                     history, task_mode=_report_task_mode,

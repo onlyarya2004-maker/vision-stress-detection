@@ -295,3 +295,146 @@ def test_finish_calibration_clears_perclos_window(monkeypatch, blank_frame):
         assert len(engine.state.perclos_samples) == 0
     finally:
         engine.close()
+
+
+# --------------------------------------------------------------------------
+# 5. Blink-rate extrapolation warm-up (BUG_AUDIT_2026-08-23.md finding #3)
+# --------------------------------------------------------------------------
+# Reproduces the exact failure: extrapolating "blinks so far / elapsed" to a
+# full-minute rate is wildly unstable when the window has only just reset -
+# one blink 0.5s in used to read as 120/min, pinning blink_stress to its
+# ceiling from ordinary blinking at the start of every session.
+
+def _blink(engine, monkeypatch, blank_frame, closed):
+    """One frame, eyes open (ear=0.28) or fully shut (ear=0.02)."""
+    return _feed(engine, monkeypatch, blank_frame, ear=0.02 if closed else 0.28)
+
+
+def test_one_blink_right_after_reset_does_not_spike_the_rate(monkeypatch, blank_frame):
+    engine, clock = _clock_engine()
+    _calibrated(engine)
+    try:
+        clock['t'] = 0.0
+        _blink(engine, monkeypatch, blank_frame, closed=True)   # blink registers
+        clock['t'] = 0.5
+        feats = _blink(engine, monkeypatch, blank_frame, closed=False)
+        # Old formula: 1 blink / 0.5s elapsed -> 120/min. Fixed: too little
+        # real time to trust an extrapolation from one blink, so it reports
+        # the calibrated baseline (12/min default) instead of a spike.
+        assert feats['blinks_per_minute'] == pytest.approx(
+            engine.baseline.blink_rate_baseline)
+    finally:
+        engine.close()
+
+
+def test_zero_blinks_reads_as_zero_even_during_warmup(monkeypatch, blank_frame):
+    """No blinks observed yet is always correctly zero - there's nothing to
+    over-extrapolate FROM, warm-up or not."""
+    engine, clock = _clock_engine()
+    _calibrated(engine)
+    try:
+        clock['t'] = 0.0
+        feats = None
+        for i in range(5):
+            clock['t'] = i * 0.1
+            feats = _blink(engine, monkeypatch, blank_frame, closed=False)
+        assert feats['blinks_per_minute'] == pytest.approx(0.0)
+    finally:
+        engine.close()
+
+
+def test_blink_rate_converges_to_true_rate_after_warmup(monkeypatch, blank_frame):
+    """Once real time has actually passed, the rate should reflect the
+    genuinely-observed blink count again, not stay pinned to the baseline."""
+    engine, clock = _clock_engine()
+    _calibrated(engine)
+    try:
+        clock['t'] = 0.0
+        _blink(engine, monkeypatch, blank_frame, closed=True)
+        clock['t'] = config.BLINK_RATE_LIVE_WARMUP_SECONDS + 1.0
+        feats = _blink(engine, monkeypatch, blank_frame, closed=False)
+        expected = 1 * (60.0 / (config.BLINK_RATE_LIVE_WARMUP_SECONDS + 1.0))
+        assert feats['blinks_per_minute'] == pytest.approx(expected)
+    finally:
+        engine.close()
+
+
+def test_finish_calibration_resets_the_blink_warmup_window(monkeypatch, blank_frame):
+    """A blink recorded during calibration must not count toward the live
+    window's warm-up clock once calibration finishes."""
+    engine, clock = _clock_engine()
+    engine.start_calibration()
+    try:
+        for i in range(config.MIN_CALIBRATION_SAMPLES + 5):
+            clock['t'] = i * 0.1
+            _blink(engine, monkeypatch, blank_frame, closed=False)
+        clock['t'] += config.MIN_BLINK_CALIB_SECONDS
+        engine.finish_calibration()
+
+        clock['t'] += 0.5
+        _blink(engine, monkeypatch, blank_frame, closed=True)
+        clock['t'] += 0.5
+        feats = _blink(engine, monkeypatch, blank_frame, closed=False)
+        # Still within warm-up of the POST-calibration window (only 1s has
+        # passed since finish_calibration), so this must be the baseline,
+        # not an extrapolation from calibration-era elapsed time.
+        assert feats['blinks_per_minute'] == pytest.approx(
+            engine.baseline.blink_rate_baseline)
+    finally:
+        engine.close()
+
+
+# --------------------------------------------------------------------------
+# 6. Per-user state reset (BUG_AUDIT_2026-08-23.md finding #5)
+# --------------------------------------------------------------------------
+
+def test_reset_state_clears_rolling_detection_history(monkeypatch, blank_frame):
+    engine, clock = _clock_engine()
+    _calibrated(engine)
+    try:
+        clock['t'] = 0.0
+        _blink(engine, monkeypatch, blank_frame, closed=True)
+        clock['t'] = 1.0
+        _blink(engine, monkeypatch, blank_frame, closed=False)
+        assert len(engine.state.blink_times) > 0
+        assert len(engine.state.ear_history) > 0
+
+        clock['t'] = 2.0
+        engine.reset_state()
+
+        assert len(engine.state.blink_times) == 0
+        assert len(engine.state.ear_history) == 0
+        assert len(engine.state.head_tilt_history) == 0
+        assert len(engine.state.perclos_samples) == 0
+        assert engine.state.blink_window_started_at == pytest.approx(2.0)
+    finally:
+        engine.close()
+
+
+def test_reset_state_does_not_touch_the_calibrated_baseline(monkeypatch, blank_frame):
+    engine, clock = _clock_engine()
+    _calibrated(engine)
+    try:
+        engine.reset_state()
+        assert engine.baseline.calibrated is True
+        assert engine.baseline.ear_baseline == pytest.approx(0.28)
+    finally:
+        engine.close()
+
+
+def test_reset_baseline_also_clears_detection_state(monkeypatch, blank_frame):
+    """'Reset baseline' must fully live up to its name - previously it left
+    stale blink/EAR history behind despite blowing away the baseline."""
+    engine, clock = _clock_engine()
+    _calibrated(engine)
+    try:
+        clock['t'] = 0.0
+        _blink(engine, monkeypatch, blank_frame, closed=True)
+        assert len(engine.state.blink_times) > 0
+
+        engine.reset_baseline()
+
+        assert len(engine.state.blink_times) == 0
+        assert engine.baseline.calibrated is False
+    finally:
+        engine.close()

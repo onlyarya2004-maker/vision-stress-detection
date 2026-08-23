@@ -94,6 +94,13 @@ class BehavioralBaseline:
 @dataclass
 class BehavioralState:
     blink_times:        deque = field(default_factory=lambda: deque(maxlen=300))
+    # Wall/media time the blink window last reset (calibration start/finish,
+    # engine construction) - NOT the oldest buffered blink's timestamp.
+    # blinks_per_minute uses this to know how long it's actually been
+    # watching, so it can hold off extrapolating to a full-minute rate
+    # until that's a meaningful thing to do (finding #3). None until the
+    # engine sets it from a real time source.
+    blink_window_started_at: float = None
     eye_closed:         bool = False
     last_ear:           float = 0.3
     ear_history:        deque = field(
@@ -130,13 +137,14 @@ class BehavioralFeatureEngine:
             static_image_mode=False, model_complexity=1,
             min_detection_confidence=0.5, min_tracking_confidence=0.5,
         )
+        self._time = time_source if time_source is not None else time
         self.state = BehavioralState()
+        self.state.blink_window_started_at = self._time()
         self.baseline = BehavioralBaseline()
         self._calibrating = False
         self._calib_buffer = []
         self._posture_calib_buffer = []
         self._calib_started_at = None
-        self._time = time_source if time_source is not None else time
 
     @property
     def blink_threshold(self):
@@ -160,6 +168,7 @@ class BehavioralFeatureEngine:
         self._posture_calib_buffer = []
         self._calib_started_at = self._time()
         self.state.blink_times.clear()
+        self.state.blink_window_started_at = self._time()
 
     def is_calibrating(self):
         return self._calibrating
@@ -225,6 +234,7 @@ class BehavioralFeatureEngine:
                     self.baseline.blink_rate_calibrated = True
 
         self.state.blink_times.clear()
+        self.state.blink_window_started_at = self._time()
         self.state.ear_history.clear()
         self.state.head_tilt_history.clear()
         self.state.perclos_samples.clear()
@@ -232,10 +242,35 @@ class BehavioralFeatureEngine:
 
     def reset_baseline(self):
         self.baseline = BehavioralBaseline()
+        self.reset_state()
 
-    def _extract_face(self, rgb_frame):
+    def reset_state(self):
+        """
+        Clears the rolling detection windows (blink/EAR/head-tilt/PERCLOS
+        history) without needing a fresh time_source. get_feature_engine()
+        is a process-wide st.cache_resource singleton, so switching the
+        active user swaps `baseline` but, without this, leaves whoever was
+        being tracked before's raw samples sitting in `state` - the next
+        person's first blink-rate/PERCLOS readings would be computed from
+        a mix of both people's frames. Call this from app.py's
+        apply_user_profile() on every user switch, and from
+        reset_baseline() above so "Reset baseline" fully lives up to its
+        name instead of only clearing the calibrated thresholds
+        (BUG_AUDIT_2026-08-23.md finding #5).
+        """
+        self.state = BehavioralState()
+        self.state.blink_window_started_at = self._time()
+
+    def _extract_face(self, rgb_frame, face_mesh_results=None):
         h, w = rgb_frame.shape[:2]
-        result = self.face_mesh.process(rgb_frame)
+        # Callers that already ran face_mesh.process() for their own
+        # purposes (e.g. cropping a face for the CNN branch) can pass that
+        # result straight through instead of this running FaceMesh a
+        # second time on the identical frame (BUG_AUDIT_2026-08-23.md
+        # structural note - app.py/evaluate_video_file.py both used to do
+        # this twice per frame).
+        result = (face_mesh_results if face_mesh_results is not None
+                  else self.face_mesh.process(rgb_frame))
         if not result.multi_face_landmarks:
             return None, None
         lm = result.multi_face_landmarks[0].landmark
@@ -268,12 +303,29 @@ class BehavioralFeatureEngine:
         cutoff = now - self.BLINK_WINDOW_SECONDS
         while self.state.blink_times and self.state.blink_times[0] < cutoff:
             self.state.blink_times.popleft()
-        window_elapsed = max(
-            1.0,
-            min(self.BLINK_WINDOW_SECONDS,
-                now - (self.state.blink_times[0] if self.state.blink_times else now - 1)),
-        )
-        blinks_per_minute = len(self.state.blink_times) * (60.0 / window_elapsed)
+
+        # How long the window has ACTUALLY been watching, anchored on when
+        # it last reset (calibration/engine construction) - not on the
+        # oldest buffered blink, which is degenerate right after a reset
+        # (one blink 0.5s in used to extrapolate to 120/min; see
+        # BUG_AUDIT_2026-08-23.md finding #3).
+        since_window_start = now - (self.state.blink_window_started_at
+                                    if self.state.blink_window_started_at is not None
+                                    else now)
+        if len(self.state.blink_times) == 0:
+            # Nothing observed yet to extrapolate FROM - zero is always the
+            # correct rate here, warm-up or not.
+            blinks_per_minute = 0.0
+        elif since_window_start < config.BLINK_RATE_LIVE_WARMUP_SECONDS:
+            # At least one blink, but too little real time to extrapolate a
+            # stable full-minute rate from it - report the baseline so
+            # blink_excess reads as 0 (no evidence of a deviation) rather
+            # than a spurious spike from one or two ordinary blinks at the
+            # start of every session.
+            blinks_per_minute = self.baseline.blink_rate_baseline
+        else:
+            window_elapsed = min(self.BLINK_WINDOW_SECONDS, since_window_start)
+            blinks_per_minute = len(self.state.blink_times) * (60.0 / window_elapsed)
 
         # PERCLOS: fraction of the last PERCLOS_WINDOW_SECONDS during which
         # the eye was >=80% closed (EAR <= PERCLOS_CLOSURE_RATIO x baseline).
@@ -466,8 +518,8 @@ class BehavioralFeatureEngine:
             'posture_calibrated': self.baseline.posture_calibrated,
         }
 
-    def extract(self, rgb_frame):
-        face_result = self._extract_face(rgb_frame)
+    def extract(self, rgb_frame, face_mesh_results=None):
+        face_result = self._extract_face(rgb_frame, face_mesh_results=face_mesh_results)
         if face_result is None:
             return None
         face_feats, face_bbox = face_result

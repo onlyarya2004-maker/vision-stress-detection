@@ -257,6 +257,15 @@ HYSTERESIS_CONFIRM_FRAMES = 3         # consecutive frames before a level flips
 BLINK_THRESHOLD_RATIO = 0.75
 EAR_BLINK_THRESHOLD = 0.21       # fallback only; see BLINK_THRESHOLD_RATIO
 BLINK_WINDOW_SECONDS = 60        # sliding window for blinks-per-minute
+# Extrapolating "blinks so far / elapsed" to a full-minute rate is wildly
+# unstable while elapsed is small - one blink 0.5s after the window last
+# reset (e.g. right after calibration) reads as 120/min, pinning
+# blink_stress to its ceiling from ordinary blinking. Below this many
+# real seconds since the window last cleared, blinks_per_minute reports
+# the calibrated baseline instead of extrapolating (see
+# _extract_face() in behavioral_features.py and
+# BUG_AUDIT_2026-08-23.md finding #3).
+BLINK_RATE_LIVE_WARMUP_SECONDS = 15.0
 
 # PERCLOS (PERcentage of eyelid CLOSure over time) - the standard drowsiness
 # metric (Wierwille et al.), added for Driving mode (Phase 2.3). EAR has no
