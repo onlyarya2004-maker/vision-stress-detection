@@ -363,7 +363,12 @@ def run_calibration():
         },
         'temporal_smoothing': {
             'median_stress_block_seconds': median_stress_duration_s,
-            'recommended_window_seconds': max(2.0, median_stress_duration_s / 60.0),
+            # median_stress_duration_s / 60.0 converts seconds to MINUTES -
+            # the key name says so explicitly now (it used to be called
+            # ...window_seconds while holding a minutes value). Confirmed
+            # unused by the live system (README.md / config.py both flag
+            # USE_WESAD_CUTOFFS=False), and no code reads this JSON key.
+            'recommended_window_minutes': max(2.0, median_stress_duration_s / 60.0),
             'comment': (
                 "Stress events in WESAD last on the order of minutes. "
                 "Real-time vision smoothing of 1-3 seconds is fast enough to "
@@ -405,7 +410,7 @@ def run_calibration():
     lines.append(f"  Median stress block duration: "
                  f"{median_stress_duration_s:.1f} s")
     lines.append(f"  Recommended window:           "
-                 f"{out['temporal_smoothing']['recommended_window_seconds']:.1f} s")
+                 f"{out['temporal_smoothing']['recommended_window_minutes']:.1f} min")
     lines.append("\nClassification report (overall, pooled):")
     lines.append(classification_report(all_y_true, all_y_pred,
                                        target_names=['baseline', 'stress']))

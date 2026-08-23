@@ -138,7 +138,13 @@ class InterventionAgent:
             if t - self._active.t_shown >= config.INTERVENTION_EVAL_SECONDS:
                 self._resolve(t, smoothed_index)
             elif t - self._active.t_shown >= config.INTERVENTION_SHOW_SECONDS:
-                pass          # card may be hidden by UI; window still runs
+                # Card may be hidden by UI, but the eval window hasn't
+                # closed yet - do not fall through to the targeting/firing
+                # logic below and silently start a second intervention
+                # before this one's outcome has been measured. Enforced
+                # here rather than relying on INTERVENTION_COOLDOWN_SECONDS
+                # happening to exceed INTERVENTION_EVAL_SECONDS.
+                return None
             else:
                 return self._active     # still showing
 

@@ -42,6 +42,45 @@ def test_no_intervention_during_warmup():
     assert a.update(5.0, 0.80, stressed) is None
 
 
+def test_unresolved_intervention_is_not_dropped_if_cooldown_is_short(monkeypatch):
+    """
+    Nothing normally prevents a second intervention starting before the
+    first resolves except INTERVENTION_COOLDOWN_SECONDS (180) happening to
+    exceed INTERVENTION_EVAL_SECONDS (150) - an invariant nothing asserts.
+    If cooldown is ever retuned shorter than the eval window, the agent
+    must still protect an unresolved intervention itself rather than
+    silently losing its outcome measurement.
+    """
+    monkeypatch.setattr(config, 'INTERVENTION_COOLDOWN_SECONDS', 25.0)
+    a = _agent()
+    stressed = dict(CALM, jaw_tension=0.9)
+    t = warmed()
+    first = a.update(t, 0.80, stressed)
+    assert first is not None
+    first_kind = first.kind
+
+    # Between SHOW_SECONDS (20) and EVAL_SECONDS (150): the card may be
+    # hidden by the UI, but the first intervention has not resolved yet -
+    # and the (shortened) cooldown has already elapsed, which is exactly
+    # the scenario that used to fall through to the firing logic below.
+    mid = t + config.INTERVENTION_SHOW_SECONDS + 10
+    second = a.update(mid, 0.80, stressed)
+    assert second is None, "a second intervention fired before the first resolved"
+    assert a._active is not None and a._active.kind == first_kind, (
+        "the first intervention's outcome was silently dropped")
+
+    # It still resolves normally once its own eval window closes. The
+    # smoothed index drops below INTERVENTION_MIN_INDEX here so this same
+    # update() call can't immediately fire a replacement (that fall-through
+    # firing when still-stressed is normal, separate behaviour - see
+    # _run_outcome above); the point of this assertion is only that the
+    # first intervention's outcome was actually recorded, not lost.
+    a.update(t + config.INTERVENTION_EVAL_SECONDS + 1, 0.10, CALM)
+    assert a._active is None
+    total = a.stats[first_kind]['helped'] + a.stats[first_kind]['no_effect']
+    assert total == 1, "first intervention's outcome was never recorded"
+
+
 def test_cooldown_prevents_nagging():
     a = _agent()
     stressed = dict(CALM, jaw_tension=0.9)

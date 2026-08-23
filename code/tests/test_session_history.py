@@ -111,6 +111,28 @@ def test_summary_statistics(temp_db):
             + row["pct_high"]) == pytest.approx(100.0)
 
 
+def test_summarize_history_treats_none_level_as_low():
+    """
+    r.get('level', 'LOW') only substitutes the default for a MISSING key,
+    not a present None - a record with level=None used to count toward the
+    sample-count denominator but no LOW/MODERATE/HIGH bucket, so the
+    percentages did not sum to 100%. None must degrade to LOW, the
+    documented default, same as a missing key.
+    """
+    history = [
+        {"ts": datetime(2026, 8, 11, 10, 0, 0), "stress_index": 0.3,
+         "level": "MODERATE", "daisee": 0.5, "behavior": 0.4},
+        {"ts": datetime(2026, 8, 11, 10, 0, 1), "stress_index": 0.3,
+         "level": None, "daisee": 0.5, "behavior": 0.4},
+    ]
+    stats = session_history.summarize_history(history)
+    assert stats["pct_low"] == pytest.approx(50.0)
+    assert stats["pct_moderate"] == pytest.approx(50.0)
+    assert stats["pct_high"] == pytest.approx(0.0)
+    assert (stats["pct_low"] + stats["pct_moderate"] + stats["pct_high"]
+            ) == pytest.approx(100.0)
+
+
 def test_delete_session_removes_its_samples(temp_db):
     """Deleting a session removes its samples and leaves others intact."""
     session_history.init_db()

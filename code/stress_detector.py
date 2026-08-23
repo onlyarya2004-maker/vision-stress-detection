@@ -29,51 +29,25 @@ Calibration is done at startup: press 'c' to calibrate (sit calm for 6s),
 then the live monitor runs. Press 'q' to quit, 'r' to reset baseline.
 """
 
-import os
 import time
 import cv2
 import numpy as np
-import tensorflow as tf
-
-from tensorflow.keras.applications.mobilenet_v2  import preprocess_input as mobilenet_preprocess
-from tensorflow.keras.applications.efficientnet import preprocess_input as efficientnet_preprocess
 
 from behavioral_features import BehavioralFeatureEngine
 import config
+import daisee_ensemble
 from stress_fusion import (
     compute_stress_index, TemporalSmoother, stress_level,
     set_daisee_baseline, reset_daisee_baseline, is_daisee_calibrated,
 )
 
-# ---------------- MODEL PATHS ----------------
-DAISEE_MOBILENET_PATH    = config.DAISEE_MOBILENET_PATH
-DAISEE_EFFICIENTNET_PATH = config.DAISEE_EFFICIENTNET_PATH
-
-# ---------------- INPUT SIZES (must match training) ----------------
-MOBILENET_SIZE    = config.MOBILENET_INPUT_SIZE
-EFFICIENTNET_SIZE = config.EFFICIENTNET_INPUT_SIZE
-
 # ---------------- CONFIG ----------------
 SMOOTHING_WINDOW    = config.SMOOTHING_WINDOW_FRAMES_OPENCV
 CALIBRATION_SECONDS = config.CALIBRATION_SECONDS
 CNN_EVERY_N_FRAMES  = config.CNN_EVERY_N_FRAMES
-DAISEE_CLASS_NAMES  = ['not_stressed', 'stressed']
 
 
 # ================ HELPERS ================
-def try_load_model(path):
-    if not os.path.exists(path):
-        print(f"  [skip] model not found: {path}")
-        return None
-    try:
-        m = tf.keras.models.load_model(path)
-        print(f"  [ok]  loaded: {path}")
-        return m
-    except Exception as e:
-        print(f"  [err] could not load {path}: {e}")
-        return None
-
-
 def crop_face(frame_bgr, face_mesh_results):
     if not face_mesh_results.multi_face_landmarks:
         return None
@@ -83,31 +57,12 @@ def crop_face(frame_bgr, face_mesh_results):
     ys = np.array([p.y for p in lm]) * h
     x1, x2 = int(xs.min()), int(xs.max())
     y1, y2 = int(ys.min()), int(ys.max())
-    pad = int(0.15 * max(x2 - x1, y2 - y1))
+    pad = int(config.FACE_CROP_PADDING * max(x2 - x1, y2 - y1))
     x1 = max(0, x1 - pad); y1 = max(0, y1 - pad)
     x2 = min(w, x2 + pad); y2 = min(h, y2 + pad)
     if x2 <= x1 or y2 <= y1:
         return None
     return frame_bgr[y1:y2, x1:x2]
-
-
-def prep(face_bgr, size, preprocess_fn):
-    img = cv2.resize(face_bgr, (size, size))
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype('float32')
-    img = preprocess_fn(img)
-    return np.expand_dims(img, axis=0)
-
-
-def ensemble_predict(face_bgr, model_pairs):
-    preds = []
-    for model, size, preproc in model_pairs:
-        if model is None:
-            continue
-        p = model.predict(prep(face_bgr, size, preproc), verbose=0)[0]
-        preds.append(p)
-    if not preds:
-        return None
-    return np.mean(preds, axis=0)
 
 
 # ================ DASHBOARD RENDERING ================
@@ -172,7 +127,7 @@ def draw_dashboard(frame, smoothed_index, result, calibrating=False, calib_progr
 
 
 # ================ CALIBRATION ================
-def run_calibration(cap, engine, models, window_name):
+def run_calibration(cap, engine, pairs, window_name):
     """Run a 6-second calibration to learn the user's baseline."""
     print(f"\n[calibration] starting - sit calm for {CALIBRATION_SECONDS}s...")
     engine.start_calibration()
@@ -193,10 +148,7 @@ def run_calibration(cap, engine, models, window_name):
 
         if face_crop is not None:
             if int(elapsed * 30) % CNN_EVERY_N_FRAMES == 0:
-                daisee_probs = ensemble_predict(face_crop, [
-                    (models['daisee_mb'],  MOBILENET_SIZE,    mobilenet_preprocess),
-                    (models['daisee_eff'], EFFICIENTNET_SIZE, efficientnet_preprocess),
-                ])
+                daisee_probs = daisee_ensemble.ensemble_predict(face_crop, pairs)
                 if daisee_probs is not None:
                     daisee_calib_samples.append(float(daisee_probs[1]))
 
@@ -223,14 +175,16 @@ def run_calibration(cap, engine, models, window_name):
 # ================ MAIN ================
 def main():
     print("Loading models...")
-    daisee_mb  = try_load_model(DAISEE_MOBILENET_PATH)
-    daisee_eff = try_load_model(DAISEE_EFFICIENTNET_PATH)
-
-    if daisee_mb is None and daisee_eff is None:
+    # Delegates loading + inference to daisee_ensemble.py, the same module
+    # app.py and evaluate_video_file.py use - so this runner's predictions
+    # are provably identical to the live/offline paths, not a hand-kept
+    # duplicate that can silently drift from them.
+    pairs = daisee_ensemble.build_pairs()
+    n_loaded = sum(1 for infer_fn, _, _ in pairs if infer_fn is not None)
+    print(f"  loaded {n_loaded}/{len(pairs)} DaiSEE model(s)")
+    if n_loaded == 0:
         raise RuntimeError(
             "No DaiSEE models could be loaded. Run train_daisee_stress.py first.")
-
-    models = {'daisee_mb': daisee_mb, 'daisee_eff': daisee_eff}
 
     engine   = BehavioralFeatureEngine()
     smoother = TemporalSmoother(window_size=SMOOTHING_WINDOW)
@@ -263,7 +217,7 @@ def main():
                 cv2.imshow(window_name, frame)
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord('q'): break
-                if key == ord('c'): run_calibration(cap, engine, models, window_name)
+                if key == ord('c'): run_calibration(cap, engine, pairs, window_name)
                 if key == ord('r'):
                     engine.reset_baseline(); reset_daisee_baseline()
                     print("[baseline] reset.")
@@ -271,10 +225,7 @@ def main():
                 continue
 
             if frame_idx % CNN_EVERY_N_FRAMES == 0:
-                last_daisee_probs = ensemble_predict(face_crop, [
-                    (daisee_mb,  MOBILENET_SIZE,    mobilenet_preprocess),
-                    (daisee_eff, EFFICIENTNET_SIZE, efficientnet_preprocess),
-                ])
+                last_daisee_probs = daisee_ensemble.ensemble_predict(face_crop, pairs)
 
             behavioral_features = engine.extract(rgb)
             if behavioral_features is None:
@@ -294,7 +245,7 @@ def main():
             if key == ord('q'): break
             if key == ord('c'):
                 smoother.reset()
-                run_calibration(cap, engine, models, window_name)
+                run_calibration(cap, engine, pairs, window_name)
             if key == ord('r'):
                 engine.reset_baseline(); reset_daisee_baseline()
                 smoother.reset()

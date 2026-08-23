@@ -35,6 +35,7 @@ raise W_RPPG. That is a cheap, honest validation the user can perform
 themselves, and it beats shipping a number nobody has checked.
 """
 
+import time
 from collections import deque
 
 import numpy as np
@@ -51,6 +52,14 @@ INNER_BROWS = (55, 285)
 NOSE_TIP = 1
 CHIN = 152
 FACE_LEFT, FACE_RIGHT = 234, 454
+
+# How long without a fresh buffer append before status()/estimate() treat
+# the data as stale rather than a frozen-but-still-confident old reading.
+# Set well above RPPG_WINDOW_SECONDS (the rolling analysis window) so
+# ordinary per-frame jitter never trips it - this only fires on a genuine
+# gap (e.g. a caller that keeps calling add_frame() through an extended
+# face-loss period with no real new data).
+RPPG_STALE_AFTER_SECONDS = 3.0 * config.RPPG_WINDOW_SECONDS
 
 
 def _patch_mean_rgb(frame_bgr, cx, cy, half):
@@ -141,6 +150,8 @@ class LiveRPPG:
         self._last_hr = None
         self._last_quality = 0.0
         self._frames_since_estimate = 0
+        self._last_update_wall = None       # time.time() of the last real
+                                            # buffer append; None = never
 
     # -- lifecycle ---------------------------------------------------------
     def reset(self):
@@ -150,6 +161,7 @@ class LiveRPPG:
         self._last_hr = None
         self._last_quality = 0.0
         self._frames_since_estimate = 0
+        self._last_update_wall = None
 
     def is_available(self):
         """True once a trustworthy HR has been produced at least once."""
@@ -166,6 +178,7 @@ class LiveRPPG:
             return
         r, g, b = rgbs[self.roi]
         self._buf.append((t, r, g, b))
+        self._last_update_wall = time.time()
         self._frames_since_estimate += 1
         cutoff = t - config.RPPG_WINDOW_SECONDS
         while self._buf and self._buf[0][0] < cutoff:
@@ -178,11 +191,30 @@ class LiveRPPG:
         span = self._buf[-1][0] - self._buf[0][0]
         return (len(self._buf) - 1) / span if span > 0 else 0.0
 
+    def _is_stale(self):
+        """
+        True once too much real (wall-clock) time has passed since the last
+        frame that actually updated the buffer. Protects against a caller
+        that keeps invoking add_frame()/estimate()/status() through a
+        face-loss gap with no fresh data - without this, the buffer's old
+        contents still look like a perfectly clean pulse and would keep
+        producing a frozen, stale reading forever. self._last_update_wall
+        is None (check skipped) whenever the buffer was populated some
+        other way than a real add_frame() call, e.g. in tests.
+        """
+        if self._last_update_wall is None:
+            return False
+        return (time.time() - self._last_update_wall) > RPPG_STALE_AFTER_SECONDS
+
     def estimate(self, force=False):
         """
         Returns (hr_bpm, quality) or (None, quality). Rate-limited: the FFT
         is far too costly to run on every frame.
         """
+        if self._is_stale():
+            self._last_hr = None
+            self._last_quality = 0.0
+            return None, 0.0
         if not force and self._frames_since_estimate < config.RPPG_ESTIMATE_EVERY_N_FRAMES:
             return self._last_hr, self._last_quality
         self._frames_since_estimate = 0
@@ -236,6 +268,8 @@ class LiveRPPG:
         """Human-readable state, for the dashboard."""
         if not self._buf:
             return "no face"
+        if self._is_stale():
+            return "no recent signal - stale"
         fps = self._effective_fps()
         span = self._buf[-1][0] - self._buf[0][0]
         if fps < config.RPPG_MIN_FPS:

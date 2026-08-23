@@ -215,3 +215,65 @@ def test_status_shows_bpm_and_resting_rate_once_calibrated():
     assert "bpm (rest" in s
     assert "resting baseline" not in s
     assert s == f"{est._last_hr:.0f} bpm (rest {est._resting_hr:.0f})"
+
+
+# ---------------------------------------------------------------------------
+# Staleness (Finding #11): a face-loss gap must degrade, not freeze
+# ---------------------------------------------------------------------------
+
+def test_status_and_estimate_degrade_after_a_stale_gap(monkeypatch):
+    """
+    A caller that stops delivering real frames for an extended stretch (a
+    face-loss gap, or simply a frozen upstream loop) must not have
+    status()/estimate() keep confidently reporting the last, now-frozen
+    reading forever - the class's own "say so rather than guess" contract,
+    guaranteed by the class itself rather than by every call site
+    remembering to guard against it.
+    """
+    import rppg_live
+
+    est = LiveRPPG()
+    t = 0.0
+    for i in range(config.RPPG_RESTING_SAMPLES):
+        t = _feed(est, bpm=70.0, seconds=15.0, t0=t, seed=i)
+        est.estimate(force=True)
+    assert est.has_resting_baseline() is True
+    fresh_status = est.status()
+    assert "bpm (rest" in fresh_status
+
+    # _feed() bypasses add_frame() (same as every other test above), so we
+    # drive the wall-clock staleness marker the same direct way those tests
+    # drive the buffer - then simulate real time marching on with no further
+    # add_frame() calls at all.
+    now = 1_000_000.0
+    est._last_update_wall = now
+    monkeypatch.setattr(
+        rppg_live.time, 'time',
+        lambda: now + rppg_live.RPPG_STALE_AFTER_SECONDS + 5.0)
+
+    stale_status = est.status()
+    assert "bpm" not in stale_status, f"status() still froze on: {stale_status}"
+
+    hr, quality = est.estimate(force=True)
+    assert hr is None
+    assert quality == 0.0
+    assert est.stress_score() is None
+
+
+def test_status_unaffected_by_staleness_before_the_threshold(monkeypatch):
+    """A short gap under the threshold must not falsely degrade the reading."""
+    import rppg_live
+
+    est = LiveRPPG()
+    t = 0.0
+    for i in range(config.RPPG_RESTING_SAMPLES):
+        t = _feed(est, bpm=70.0, seconds=15.0, t0=t, seed=i)
+        est.estimate(force=True)
+
+    now = 2_000_000.0
+    est._last_update_wall = now
+    monkeypatch.setattr(
+        rppg_live.time, 'time',
+        lambda: now + rppg_live.RPPG_STALE_AFTER_SECONDS - 1.0)
+
+    assert "bpm (rest" in est.status()

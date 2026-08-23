@@ -279,7 +279,11 @@ def summarize_history(history: List[Dict]) -> Dict:
 
     counts = {'LOW': 0, 'MODERATE': 0, 'HIGH': 0}
     for r in history:
-        lvl = r.get('level', 'LOW')
+        # `.get(..., 'LOW')` only substitutes the default for a MISSING
+        # key, not a present None - a record with level=None would count
+        # toward `n` but no bucket, so the percentages below wouldn't sum
+        # to 100%. `or` degrades both cases the same way.
+        lvl = r.get('level') or 'LOW'
         counts[lvl] = counts.get(lvl, 0) + 1
 
     return {
@@ -458,7 +462,19 @@ def intervention_stats() -> Dict[str, Dict[str, int]]:
 
 
 def load_recent_sessions(n: int = 10) -> List[Dict]:
-    """Return the most recent N session summaries, newest first."""
+    """
+    Return the most recent N session summaries, newest first.
+
+    Deliberately NOT filtered by user_id: this is one shared history log
+    across every profile on the install, by design - only per-user
+    calibration baselines (users.baseline_json, see save_user_baseline /
+    load_user_baseline above) are actually separated per person. The
+    sidebar's "Past sessions" list is meant to show everyone's recordings
+    on this install, not just the active profile's. If that ever needs to
+    change (e.g. for multi-person team recordings where users should not
+    see each other's history), filter explicitly by the caller passing the
+    active user_id - don't assume this is an oversight to "fix" silently.
+    """
     conn = _get_conn()
     try:
         rows = conn.execute("""
