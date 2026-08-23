@@ -57,6 +57,7 @@ import cv2
 import numpy as np
 
 import config
+import daisee_ensemble
 from app_naming import export_filename
 from behavioral_features import BehavioralFeatureEngine
 from stress_fusion import (
@@ -70,7 +71,13 @@ _TF_MODELS = None
 
 
 def load_cnn_models(skip=False):
-    """Load the DaiSEE ensemble once. Returns {} if unavailable or skipped."""
+    """
+    Load the DaiSEE ensemble once. Returns {} if unavailable or skipped.
+    Delegates the actual loading/inference to daisee_ensemble.py, shared
+    with app.py so the live and offline paths run provably identical code
+    (see that module's docstring, including why it's tf.function-wrapped
+    rather than using Model.predict()).
+    """
     global _TF_MODELS
     if skip:
         return {}
@@ -84,25 +91,7 @@ def load_cnn_models(skip=False):
         _TF_MODELS = {}
         return _TF_MODELS
     print("  [models] loading DaiSEE ensemble...", flush=True)
-    import tensorflow as tf
-    from tensorflow.keras.applications.mobilenet_v2 import (
-        preprocess_input as mb_pre)
-    from tensorflow.keras.applications.efficientnet import (
-        preprocess_input as eff_pre)
-
-    def _try(p):
-        try:
-            return tf.keras.models.load_model(str(p)) if p.exists() else None
-        except Exception as e:
-            print(f"  [models] failed to load {p.name}: {e}")
-            return None
-
-    _TF_MODELS = {
-        'pairs': [
-            (_try(paths[0]), config.MOBILENET_INPUT_SIZE, mb_pre),
-            (_try(paths[1]), config.EFFICIENTNET_INPUT_SIZE, eff_pre),
-        ]
-    }
+    _TF_MODELS = {'pairs': daisee_ensemble.build_pairs()}
     return _TF_MODELS
 
 
@@ -271,16 +260,8 @@ def crop_face(frame_bgr, mesh_result):
     return frame_bgr[y1:y2, x1:x2]
 
 
-def ensemble_predict(face_bgr, pairs):
-    preds = []
-    for model, size, preproc in pairs:
-        if model is None:
-            continue
-        img = cv2.resize(face_bgr, (size, size))
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype('float32')
-        img = preproc(img)
-        preds.append(model.predict(np.expand_dims(img, 0), verbose=0)[0])
-    return np.mean(preds, axis=0) if preds else None
+# ensemble_predict() now lives in daisee_ensemble.py, shared with app.py -
+# see that module's docstring for why (a tf.function speed fix).
 
 
 def process_video(video_path, calib_seconds=None, sample_every=1,
@@ -374,7 +355,7 @@ def process_video(video_path, calib_seconds=None, sample_every=1,
 
         daisee_probs = None
         if pairs and processed % config.CNN_EVERY_N_FRAMES == 0:
-            daisee_probs = ensemble_predict(face, pairs)
+            daisee_probs = daisee_ensemble.ensemble_predict(face, pairs)
 
         # ---- calibration window ----
         if calibrating:

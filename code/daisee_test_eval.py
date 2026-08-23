@@ -19,8 +19,8 @@ models/temporal_gru_test_report.txt.
 Reports three numbers, not one: MobileNetV2 alone, EfficientNetB0 alone,
 and the ENSEMBLE (mean of both softmax outputs) - the ensemble is what the
 live system and evaluate_video_file.py actually use
-(evaluate_video_file.ensemble_predict()), so it's the number that belongs
-in the README, not either backbone in isolation.
+(daisee_ensemble.ensemble_predict(), shared by both), so it's the number
+that belongs in the README, not either backbone in isolation.
 
 Usage
 -----

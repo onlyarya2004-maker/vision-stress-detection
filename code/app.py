@@ -19,14 +19,10 @@ import csv
 import dataclasses
 import time
 from datetime import datetime
-from pathlib import Path
 
 import cv2
 import numpy as np
 import streamlit as st
-import tensorflow as tf
-from tensorflow.keras.applications.mobilenet_v2  import preprocess_input as mobilenet_preprocess
-from tensorflow.keras.applications.efficientnet import preprocess_input as efficientnet_preprocess
 
 from behavioral_features import BehavioralBaseline, BehavioralFeatureEngine
 from stress_fusion import (
@@ -40,17 +36,14 @@ from temporal_model import GRUTemporalInference
 from app_naming import export_filename
 from rppg_live import get_live_rppg, reset_live_rppg
 from intervention_agent import InterventionAgent, CATALOGUE
+import daisee_ensemble
 import session_history
 import config
 
 # ---------------- CONFIG ----------------
 # All values now live in config.py; these aliases keep the rest of the file
-# readable and preserve the previous names.
-DAISEE_MOBILENET_PATH    = config.DAISEE_MOBILENET_PATH
-DAISEE_EFFICIENTNET_PATH = config.DAISEE_EFFICIENTNET_PATH
-
-MOBILENET_SIZE      = config.MOBILENET_INPUT_SIZE
-EFFICIENTNET_SIZE   = config.EFFICIENTNET_INPUT_SIZE
+# readable and preserve the previous names. DaiSEE model paths/input sizes
+# moved into daisee_ensemble.py, which app.py no longer needs to know.
 SMOOTHING_WINDOW    = config.SMOOTHING_WINDOW_FRAMES
 CNN_EVERY_N_FRAMES  = config.CNN_EVERY_N_FRAMES
 LIVE_GRAPH_WINDOW   = config.LIVE_GRAPH_WINDOW
@@ -414,18 +407,11 @@ def inject_css():
 # =============================================================================
 @st.cache_resource(show_spinner="Loading models...")
 def load_models():
-    """Load only the active live-system models (DaiSEE ensemble)."""
-    def try_load(path):
-        if not Path(path).exists():
-            return None
-        try:
-            return tf.keras.models.load_model(path)
-        except Exception:
-            return None
-    return {
-        'daisee_mb':  try_load(DAISEE_MOBILENET_PATH),
-        'daisee_eff': try_load(DAISEE_EFFICIENTNET_PATH),
-    }
+    """Load only the active live-system models (DaiSEE ensemble). Shared
+    with evaluate_video_file.py via daisee_ensemble.py, so live and
+    offline inference are provably running the same code, each with its
+    own caching (Streamlit's decorator here)."""
+    return {'pairs': daisee_ensemble.build_pairs()}
 
 
 @st.cache_resource
@@ -461,23 +447,9 @@ def crop_face(frame_bgr, face_mesh_results):
     return frame_bgr[y1:y2, x1:x2], (x1, y1, x2, y2)
 
 
-def prep(face_bgr, size, preprocess_fn):
-    img = cv2.resize(face_bgr, (size, size))
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype('float32')
-    img = preprocess_fn(img)
-    return np.expand_dims(img, axis=0)
-
-
-def ensemble_predict(face_bgr, model_pairs):
-    preds = []
-    for model, size, preproc in model_pairs:
-        if model is None:
-            continue
-        p = model.predict(prep(face_bgr, size, preproc), verbose=0)[0]
-        preds.append(p)
-    if not preds:
-        return None
-    return np.mean(preds, axis=0)
+# prep() / ensemble_predict() now live in daisee_ensemble.py, shared with
+# evaluate_video_file.py - see that module's docstring for why (and for
+# the tf.function speed fix that motivated pulling this out).
 
 
 def annotate_frame(frame_bgr, bbox, level, smoothed_index, calibrating=False):
@@ -1337,10 +1309,7 @@ def main():
                 if face_crop is not None:
                     if (len(daisee_calib_samples) == 0 or
                         int((time.time() - calib_start) * 30) % CNN_EVERY_N_FRAMES == 0):
-                        daisee_probs = ensemble_predict(face_crop, [
-                            (models['daisee_mb'],  MOBILENET_SIZE,    mobilenet_preprocess),
-                            (models['daisee_eff'], EFFICIENTNET_SIZE, efficientnet_preprocess),
-                        ])
+                        daisee_probs = daisee_ensemble.ensemble_predict(face_crop, models['pairs'])
                         if daisee_probs is not None:
                             daisee_calib_samples.append(float(daisee_probs[1]))
 
@@ -1454,10 +1423,7 @@ def main():
                 status_placeholder.empty()
 
                 if frame_idx % CNN_EVERY_N_FRAMES == 0:
-                    last_daisee_probs = ensemble_predict(face_crop, [
-                        (models['daisee_mb'],  MOBILENET_SIZE,    mobilenet_preprocess),
-                        (models['daisee_eff'], EFFICIENTNET_SIZE, efficientnet_preprocess),
-                    ])
+                    last_daisee_probs = daisee_ensemble.ensemble_predict(face_crop, models['pairs'])
 
                 # rPPG: cheap per frame. Heart rate is computed and shown
                 # even at W_RPPG = 0 so it can be sanity-checked against a

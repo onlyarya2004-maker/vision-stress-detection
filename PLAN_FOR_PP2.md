@@ -264,7 +264,7 @@ memory) on 2026-08-22. ✅ done · 🟡 partial · ❌ not started.
 | | 2.2 rPPG branch (offline 3.52 bpm POS; live module, quality-gated, W_RPPG=0) | ✅ pending webcam validation |
 | | 2.3 PERCLOS for Driving | ✅ computed always, displayed in Driving mode only, not fused |
 | | 2.4 (Stretch) affect-pretrained pixel branch | ❌ |
-| | 2.5 Inference off the UI thread | ❌ |
+| | 2.5 Inference off the UI thread | 🟡 root cause fixed instead (see below) - `.predict()` replaced with `tf.function`, ~3.4x faster; threading itself not done, may not be needed now |
 | **3 (~70%)** | 3.1 Self-report labeling loop in app | ✅ 1 session labeled so far |
 | | 3.2 Meta-learner fusion (trainer + LOSO + live integration, default-off) | 🟡 `USE_LEARNED_FUSION=False`; enable after own-data retrain. Warm-start personalization prototype (below) validated on UBFC-Phys, not yet integrated |
 | | 3.3 Continual adaptation (retrain_from_sessions.py) | 🟡 built and tested, but needs 6 labeled sessions minimum (`MIN_LABELED_SESSIONS`) — only 1 exists, so it can't run yet. Calendar-gated, not code-gated. |
@@ -515,8 +515,24 @@ the better fix isn't threading: `.predict()` carries heavy fixed per-call overhe
 batches, not single live frames. A `tf.function`-wrapped direct call cut MobileNet from 124ms
 to 29ms (4.3x) and EfficientNet from 153ms to 54ms (2.8x) - roughly doubling the effective
 frame rate with a ~10-line change and no threading/session-state risk. Recommended as the
-first fix, with actual threading only worth revisiting if it's still not enough afterward. Not
-yet implemented - reported as a finding, not built without sign-off.
+first fix, with actual threading only worth revisiting if it's still not enough afterward.
+
+Implemented (2026-08-23): new `code/daisee_ensemble.py` is the single source of truth for
+DaiSEE model loading + inference, shared by `app.py` and `evaluate_video_file.py` (previously
+two separate, drifting copies of the same loading/`ensemble_predict()` logic - the same
+"live and offline must be provably identical" principle `rppg_live.py` already followed for
+POS/CHROM). `build_pairs()` wraps each loaded model in one `tf.function`, traced once and
+reused. Verified two things before trusting it: (1) correctness - the new path's predictions
+are byte-for-byte identical to the old `.predict()` path on a real loaded model (max abs diff
+0.0), so this is purely a speed change, not a behavior change; (2) the real speedup holds
+end-to-end through the actual wired-up code, not just the isolated benchmark - combined
+MobileNet+EfficientNet dropped from 281ms to 81.7ms/call (3.4x), matching the earlier
+per-model estimate. `app.py`'s own model-loading/`ensemble_predict()` code and several
+now-dead aliases/imports (`MOBILENET_SIZE`, `Path`, the raw `tensorflow` import) removed in
+the same pass. Live boot verified clean (no console/server errors, all sidebar controls
+render). 5 new tests on `ensemble_predict()`'s averaging/None-skipping logic (fake infer
+callables - real model loading isn't covered here, same boundary as `daisee_test_eval.py`).
+228/228 passing.
 
 Warm-start personalization prototype (2026-08-23, research for Phase 3.2/3.3): validated
 whether initializing a user's personal fusion model from the population-level meta-learner,
