@@ -266,7 +266,7 @@ memory) on 2026-08-22. ✅ done · 🟡 partial · ❌ not started.
 | | 2.4 (Stretch) affect-pretrained pixel branch | ❌ |
 | | 2.5 Inference off the UI thread | ❌ |
 | **3 (~70%)** | 3.1 Self-report labeling loop in app | ✅ 1 session labeled so far |
-| | 3.2 Meta-learner fusion (trainer + LOSO + live integration, default-off) | 🟡 `USE_LEARNED_FUSION=False`; enable after own-data retrain |
+| | 3.2 Meta-learner fusion (trainer + LOSO + live integration, default-off) | 🟡 `USE_LEARNED_FUSION=False`; enable after own-data retrain. Warm-start personalization prototype (below) validated on UBFC-Phys, not yet integrated |
 | | 3.3 Continual adaptation (retrain_from_sessions.py) | 🟡 built and tested, but needs 6 labeled sessions minimum (`MIN_LABELED_SESSIONS`) — only 1 exists, so it can't run yet. Calendar-gated, not code-gated. |
 | | 3.4 Uncertainty/abstention | ✅ rPPG's `status()` now drives the HR topbar chip live, dimmed when abstaining ("warming up", "hold still", etc.) instead of a bare "--" |
 | | 3.5 Intervention effectiveness tracking | ✅ agent built, wired into the live loop, schema + tests in place — 0 interventions logged yet since no real session has crossed the trigger threshold |
@@ -506,9 +506,61 @@ can't be imported standalone outside a Streamlit run, and the topbar itself only
 inside the live capture loop, which needs the camera) - confirmed live boot still clean with
 zero console/server errors. 2 new tests, 219/219 passing.
 
+CNN inference speed (2026-08-23, investigation for 2.5): benchmarked the live capture loop's
+real per-frame costs before building anything, since "inference off the UI thread" was framed
+as a possible fix without evidence it was needed. It is needed - CPU-only inference (the main
+venv's TensorFlow was never built with CUDA; the RTX 5070 Ti is confirmed working, just unused
+here) costs ~280ms every 3rd frame (CNN_EVERY_N_FRAMES), averaging ~139ms/frame (~7fps). But
+the better fix isn't threading: `.predict()` carries heavy fixed per-call overhead built for
+batches, not single live frames. A `tf.function`-wrapped direct call cut MobileNet from 124ms
+to 29ms (4.3x) and EfficientNet from 153ms to 54ms (2.8x) - roughly doubling the effective
+frame rate with a ~10-line change and no threading/session-state risk. Recommended as the
+first fix, with actual threading only worth revisiting if it's still not enough afterward. Not
+yet implemented - reported as a finding, not built without sign-off.
+
+Warm-start personalization prototype (2026-08-23, research for Phase 3.2/3.3): validated
+whether initializing a user's personal fusion model from the population-level meta-learner,
+rather than training from scratch on their own few sessions, helps under realistically low
+personal data - BEFORE touching `retrain_from_sessions.py`, since there is only 1 real
+self-reported session in this install (need 6), nowhere near enough to validate anything on
+real personal data. New `code/prototype_warmstart_personalization.py` simulates the scenario
+on UBFC-Phys instead (10 subjects x 3 tasks, real data, real volume): a LOSO population prior
+(identical recipe to `train_meta_learner.py`'s own fold) plus a MAP logistic regression that
+treats the prior as a Gaussian mean and the user's ~100-frames-per-task simulated "personal
+sessions" (chosen from this install's own real session sizes, 23-204 samples, avg ~97) as the
+likelihood - verified correct against sklearn at lambda=0 and against the raw prior at huge
+lambda before trusting any result.
+
+Two conditions run, not one, because the first result was misleading in isolation:
+- **Cross-task** (personalize on T1+T2 relaxed/speech-stress, evaluate on ALL of T3
+  arithmetic-stress - an unseen stressor): population-only (59.4%) beat BOTH personal-only
+  (49.5%) and every warm-started lambda (best 58.5%, still short of population-only).
+  Personalizing on one stressor does not transfer to a different one - warm-starting mostly
+  just recovers the damage pure from-scratch personalization does here, it doesn't add value.
+- **Same-task control** (personalize on first ~100 frames/task of T1+T2, evaluate on the
+  REMAINING frames of those SAME two tasks, T3 unused): warm-started (75.5% at lambda=10)
+  beat BOTH population-only (73.7%, +1.8pp) and personal-only (70.2%, +5.3pp) - a genuine,
+  reproducible improvement, and lambda=10 is a real interior optimum, not just "mostly ignore
+  the personal data."
+
+Honest conclusion: warm-start personalization works, but only when what it's asked to predict
+resembles what it was personalized on - it doesn't generalize across genuinely different
+stress contexts. This maps directly onto the app's existing `task_mode` concept
+(Default/Studying/Hospital/Driving): the natural implication is a personal model scoped PER
+task mode, not one model expected to generalize across all of them - not yet designed or
+built, flagged here for when `retrain_from_sessions.py` is revisited. 4 new tests on the core
+MAP logistic regression math (matches unregularized sklearn at lambda=0, collapses to the
+prior at huge lambda, monotonic regularization path). Report saved to
+`models/warmstart_personalization_prototype_report.txt`. 223/223 passing. Nothing here changed
+`retrain_from_sessions.py` or any live code - this stays a standalone research script until a
+decision is made to act on it, consistent with how big a decision "what personalization means
+here" actually is.
+
 Next actions: (user) team recordings - the only blocker left in Phase 1, and the thing
-everything in Phase 3 and 4.3 is actually waiting on. (code) inference off the UI thread
-(2.5), analytics dashboard (5.1), or PDF export (5.2) are the remaining startable-now items.
+everything in Phase 3 and 4.3 is actually waiting on. (code) the `tf.function` CNN speed fix
+is a small, validated win worth doing next; analytics dashboard (5.1) and PDF export (5.2)
+remain startable; per-task-mode personalization is a real but bigger design decision, not
+started.
 
 ---
 

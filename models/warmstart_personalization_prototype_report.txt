@@ -1,0 +1,87 @@
+==============================================================================
+PROTOTYPE: warm-start personalization (offline validation, UBFC-Phys)
+==============================================================================
+personal data simulated as 100 frames/task
+
+------------------------------------------------------------------------------
+CONDITION 1: CROSS-TASK - personalize on T1+T2 (relaxed/speech-stress),
+evaluate on ALL of T3 (arithmetic-stress) - an unseen STRESSOR, not just
+unseen frames.
+------------------------------------------------------------------------------
+  s1: pop_only= 51.4%  personal_only= 72.7%  warm[best]= 79.9%  (n_eval=2634)
+  s2: pop_only= 98.8%  personal_only= 33.8%  warm[best]= 98.3%  (n_eval=2595)
+  s3: pop_only= 60.5%  personal_only= 15.9%  warm[best]= 38.3%  (n_eval=2634)
+  s4: pop_only= 81.5%  personal_only= 33.6%  warm[best]= 81.1%  (n_eval=2599)
+  s5: pop_only= 38.7%  personal_only= 59.1%  warm[best]= 56.9%  (n_eval=2634)
+  s6: pop_only= 23.3%  personal_only= 72.2%  warm[best]= 78.1%  (n_eval=5622)
+  s7: pop_only= 26.3%  personal_only= 46.6%  warm[best]= 53.1%  (n_eval=5622)
+  s8: pop_only= 79.4%  personal_only= 62.7%  warm[best]= 83.3%  (n_eval=5599)
+  s9: pop_only= 65.8%  personal_only= 46.6%  warm[best]= 56.7%  (n_eval=5614)
+  s10: pop_only= 68.6%  personal_only= 52.0%  warm[best]= 63.1%  (n_eval=5622)
+
+==============================================================================
+SUMMARY: cross-task (personalize T1+T2, eval unseen T3)
+==============================================================================
+  population_only (no personalization)         :  59.4%
+  personal_only   (scratch, today's approach)   :  49.5%
+
+  warm_started, by lambda (0 = pure personal, large = pure population):
+    lambda=  0.00  mean acc= 52.8%  (n=10 subjects)
+    lambda=  0.10  mean acc= 53.5%  (n=10 subjects)
+    lambda=  0.30  mean acc= 53.6%  (n=10 subjects)
+    lambda=  1.00  mean acc= 54.4%  (n=10 subjects)
+    lambda=  3.00  mean acc= 55.4%  (n=10 subjects)
+    lambda= 10.00  mean acc= 56.8%  (n=10 subjects)
+    lambda= 30.00  mean acc= 56.8%  (n=10 subjects)
+    lambda=100.00  mean acc= 58.5%  (n=10 subjects)
+
+  best warm-started setting: lambda=100.0 at 58.5%
+  vs population_only 59.4%  (-0.9pp)
+  vs personal_only   49.5%  (+9.0pp)
+
+  Read honestly: 100 frames/task standing in for a handful of
+  real sessions. No lambda was chosen in advance - all are reported. A real
+  deployment would need its own way to pick lambda without peeking at the
+  eval set (e.g. cross-validated within the personal data itself).
+
+------------------------------------------------------------------------------
+CONDITION 2: SAME-TASK CONTROL - personalize on the first N frames of
+T1+T2, evaluate on the REMAINING frames of those SAME two tasks. T3 is
+not used. Isolates whether personalization helps at all from whether it
+transfers to a different stressor.
+------------------------------------------------------------------------------
+  s1: pop_only= 69.8%  personal_only= 84.2%  warm[best]= 93.6%  (n_eval=5068)
+  s2: pop_only= 92.9%  personal_only= 97.8%  warm[best]= 97.2%  (n_eval=5068)
+  s3: pop_only= 74.5%  personal_only= 61.8%  warm[best]= 74.5%  (n_eval=5068)
+  s4: pop_only= 83.5%  personal_only= 75.3%  warm[best]= 85.4%  (n_eval=5068)
+  s5: pop_only= 79.8%  personal_only= 84.8%  warm[best]= 87.7%  (n_eval=5068)
+  s6: pop_only= 62.4%  personal_only= 44.4%  warm[best]= 58.0%  (n_eval=11044)
+  s7: pop_only= 81.6%  personal_only= 94.5%  warm[best]= 99.0%  (n_eval=11044)
+  s8: pop_only= 72.0%  personal_only= 53.0%  warm[best]= 71.0%  (n_eval=11043)
+  s9: pop_only= 43.7%  personal_only= 51.5%  warm[best]= 63.7%  (n_eval=11038)
+  s10: pop_only= 76.5%  personal_only= 55.1%  warm[best]= 87.4%  (n_eval=11044)
+
+==============================================================================
+SUMMARY: same-task control (personalize+eval on T1+T2 only)
+==============================================================================
+  population_only (no personalization)         :  73.7%
+  personal_only   (scratch, today's approach)   :  70.2%
+
+  warm_started, by lambda (0 = pure personal, large = pure population):
+    lambda=  0.00  mean acc= 72.8%  (n=10 subjects)
+    lambda=  0.10  mean acc= 73.6%  (n=10 subjects)
+    lambda=  0.30  mean acc= 73.8%  (n=10 subjects)
+    lambda=  1.00  mean acc= 74.0%  (n=10 subjects)
+    lambda=  3.00  mean acc= 75.4%  (n=10 subjects)
+    lambda= 10.00  mean acc= 75.5%  (n=10 subjects)
+    lambda= 30.00  mean acc= 75.3%  (n=10 subjects)
+    lambda=100.00  mean acc= 75.3%  (n=10 subjects)
+
+  best warm-started setting: lambda=10.0 at 75.5%
+  vs population_only 73.7%  (+1.8pp)
+  vs personal_only   70.2%  (+5.3pp)
+
+  Read honestly: 100 frames/task standing in for a handful of
+  real sessions. No lambda was chosen in advance - all are reported. A real
+  deployment would need its own way to pick lambda without peeking at the
+  eval set (e.g. cross-validated within the personal data itself).
