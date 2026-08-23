@@ -266,8 +266,8 @@ memory) on 2026-08-22. ✅ done · 🟡 partial · ❌ not started.
 | | 2.4 (Stretch) affect-pretrained pixel branch | ❌ |
 | | 2.5 Inference off the UI thread | 🟡 root cause fixed instead (see below) - `.predict()` replaced with `tf.function`, ~3.4x faster; threading itself not done, may not be needed now |
 | **3 (~70%)** | 3.1 Self-report labeling loop in app | ✅ 1 session labeled so far |
-| | 3.2 Meta-learner fusion (trainer + LOSO + live integration, default-off) | 🟡 `USE_LEARNED_FUSION=False`; enable after own-data retrain. Warm-start personalization prototype (below) validated on UBFC-Phys, not yet integrated |
-| | 3.3 Continual adaptation (retrain_from_sessions.py) | 🟡 built and tested, but needs 6 labeled sessions minimum (`MIN_LABELED_SESSIONS`) — only 1 exists, so it can't run yet. Calendar-gated, not code-gated. |
+| | 3.2 Meta-learner fusion (trainer + LOSO + live integration, default-off) | 🟡 `USE_LEARNED_FUSION=False`; enable after own-data retrain. Warm-start personalization now designed into `retrain_from_sessions.py` (below), same manual-activation policy |
+| | 3.3 Continual adaptation (retrain_from_sessions.py) | 🟡 rebuilt scoped per task mode + warm-started from the population model, gated per mode at 6 sessions (`MIN_LABELED_SESSIONS`) — only 1 exists (Default mode), so nothing trains yet. Calendar-gated, not code-gated. |
 | | 3.4 Uncertainty/abstention | ✅ rPPG's `status()` now drives the HR topbar chip live, dimmed when abstaining ("warming up", "hold still", etc.) instead of a bare "--" |
 | | 3.5 Intervention effectiveness tracking | ✅ agent built, wired into the live loop, schema + tests in place — 0 interventions logged yet since no real session has crossed the trigger threshold |
 | **4 (~90%)** | 4.1 One regenerating script | ✅ learned-vs-hand-tuned, temporal old-vs-new, and DaiSEE held-out re-run all now regenerated/echoed rows |
@@ -572,11 +572,48 @@ prior at huge lambda, monotonic regularization path). Report saved to
 decision is made to act on it, consistent with how big a decision "what personalization means
 here" actually is.
 
+Per-task-mode warm-start personalization, implemented (2026-08-23, Phase 3.2/3.3): the
+prototype's finding is now designed into `retrain_from_sessions.py` itself, not just a
+standalone research script. `build_dataset_by_task_mode()` partitions labelled sessions by
+`task_mode` instead of pooling all of them (the same signal the prototype's cross-task test
+showed matters); `load_population_prior()` reads `models/meta_learner.joblib` when present,
+refusing (not guessing) if its feature order doesn't match `SIGNAL_COLUMNS`; `process_mode()`
+runs the SAME `fit_logreg_with_prior()` MAP logistic regression the prototype validated,
+reports session-held-out accuracy at lambda=0 (old from-scratch behavior), `DEFAULT_LAMBDA=10`
+(warm-started, the prototype's same-task-validated value), and population-only side by side
+for every mode - so a human reads real numbers for THIS user before activating anything, same
+discipline the script already had. `DEFAULT_LAMBDA` is a fixed constant carried over from the
+prototype's aggregate result, not per-user-tuned (no nested-CV lambda selection built) -
+documented as such rather than oversold.
+
+One real, deliberate cost: `MIN_LABELED_SESSIONS`/`MIN_PER_CLASS` now apply PER TASK MODE, not
+summed across modes - it takes more total sessions to activate ANY mode than the old aggregate
+gate did, because they must concentrate within one mode. That is the honest price of the
+approach actually working per the prototype, not an oversight.
+
+Caught and fixed before this shipped, not after: `learned_fusion.py` (the only real consumer
+of these saved files) expects `blob['model']` to be an sklearn-compatible object with
+`.predict_proba()`, not a raw `(w, b)` pair - the first draft saved raw arrays, which would
+have loaded, degraded silently to "unavailable" inside `LearnedFusion`'s broad exception
+handler, and never actually worked if anyone followed the printed activation instructions.
+Fixed via `_wrap_as_sklearn_model()` (an unfitted `LogisticRegression` with `coef_`/
+`intercept_`/`classes_` set by hand - verified to match a real `.fit()`'d model's
+`predict_proba()` exactly, including across a joblib round-trip, before trusting it) and
+caught for good with a test that loads the saved file back through the real
+`LearnedFusion` class, not just checks the file exists.
+
+16 tests on the new file (up from 5) - existing `build_dataset()` behavior confirmed
+byte-unchanged, plus per-mode partitioning, prior loading/rejection, the sklearn-wrapping
+contract, the lambda=0 degrade path, minimum-session gating, warm-started vs from-scratch
+save content, and version numbering. Verified against the REAL `data/sessions.db` and REAL
+`models/meta_learner.joblib`: correctly loads the real prior, correctly reports "NOT TRAINING
+YET" for Default mode (1/6 sessions, 0/2 stressed) exactly as it should, writes nothing.
+239/239 passing.
+
 Next actions: (user) team recordings - the only blocker left in Phase 1, and the thing
-everything in Phase 3 and 4.3 is actually waiting on. (code) the `tf.function` CNN speed fix
-is a small, validated win worth doing next; analytics dashboard (5.1) and PDF export (5.2)
-remain startable; per-task-mode personalization is a real but bigger design decision, not
-started.
+everything in Phase 3 and 4.3 is actually waiting on, and now also what would let any task
+mode actually reach the 6-session bar. (code) analytics dashboard (5.1) and PDF export (5.2)
+remain the startable-now items.
 
 ---
 

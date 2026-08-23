@@ -52,6 +52,7 @@ it does not carry a `W_*` switch because it doesn't feed the fusion score at all
 | `train_temporal_model.py` | Phase 2.1 GRU: DaiSEE `processed_daisee/` crops → behavioral-feature sequences → GRU + GBT-baseline ablation → `../models/temporal_gru.npz`. Run only via `.venv-train\Scripts\python`; also below the majority floor (kept as a second documented negative result) |
 | `train_meta_learner.py` | Learned fusion weights, LOSO over subjects → `../models/meta_learner.joblib` via `--save`. The LOSO comparison itself (Phase 4.1) is also called from `run_all_evaluations.py`, which never writes the model file — only `--save` does |
 | `prototype_warmstart_personalization.py` | Research script (not wired into anything): validates on UBFC-Phys whether initializing a personal fusion model from the population meta-learner beats training from scratch under low personal data. See `../models/warmstart_personalization_prototype_report.txt` and `PLAN_FOR_PP2.md` |
+| `retrain_from_sessions.py` | Phase 3.3: your own labelled sessions → a personal fusion model, **scoped per task mode** and warm-started from `../models/meta_learner.joblib` when present (the prototype's finding, integrated — see `PLAN_FOR_PP2.md`) → `../models/personal_fusion_<mode>_vN.joblib`. Manual activation only |
 
 ## Evaluation & analysis
 
@@ -73,7 +74,7 @@ it does not carry a `W_*` switch because it doesn't feed the fusion score at all
 python -m pytest tests -q        # from code/, or: python -m pytest code/tests from the root
 ```
 
-228+ tests. The load-bearing ones: Default-mode fusion equals the archived pre-task-aware
+239+ tests. The load-bearing ones: Default-mode fusion equals the archived pre-task-aware
 implementation **exactly** (diff 0.00e+00); uncalibrated posture/blink behaviour is
 byte-identical to PP1; rPPG methods recover a synthetic pulse of known frequency; every
 default-off switch above leaves output unchanged.
