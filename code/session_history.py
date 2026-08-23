@@ -258,6 +258,41 @@ def load_user_baseline(user_id: int) -> Optional[Dict]:
         conn.close()
 
 
+def summarize_history(history: List[Dict]) -> Dict:
+    """
+    Reduce a per-frame history list to the same summary stats stored in the
+    `sessions` table row (duration/mean/max/pct_low/pct_moderate/pct_high/
+    sample_count). Pure function, no DB access - shared by save_session()
+    and session_report.py so the two never drift on what "mean stress" or
+    "% time high" means.
+    """
+    if not history:
+        raise ValueError("history must not be empty")
+
+    started_at = history[0]['ts']
+    ended_at   = history[-1]['ts']
+    n          = len(history)
+
+    stress_vals = [r['stress_index'] for r in history]
+    mean_stress = sum(stress_vals) / n
+    max_stress  = max(stress_vals)
+
+    counts = {'LOW': 0, 'MODERATE': 0, 'HIGH': 0}
+    for r in history:
+        lvl = r.get('level', 'LOW')
+        counts[lvl] = counts.get(lvl, 0) + 1
+
+    return {
+        'duration_sec': (ended_at - started_at).total_seconds(),
+        'sample_count': n,
+        'mean_stress': mean_stress,
+        'max_stress': max_stress,
+        'pct_low':      100.0 * counts['LOW']      / n,
+        'pct_moderate': 100.0 * counts['MODERATE'] / n,
+        'pct_high':     100.0 * counts['HIGH']     / n,
+    }
+
+
 def save_session(history: List[Dict], task_mode: str = 'Default',
                  user_id: Optional[int] = None) -> Optional[int]:
     """
@@ -280,20 +315,14 @@ def save_session(history: List[Dict], task_mode: str = 'Default',
 
     started_at = history[0]['ts']
     ended_at   = history[-1]['ts']
-    duration   = (ended_at - started_at).total_seconds()
-    n          = len(history)
-
-    stress_vals = [r['stress_index'] for r in history]
-    mean_stress = sum(stress_vals) / n
-    max_stress  = max(stress_vals)
-
-    counts = {'LOW': 0, 'MODERATE': 0, 'HIGH': 0}
-    for r in history:
-        lvl = r.get('level', 'LOW')
-        counts[lvl] = counts.get(lvl, 0) + 1
-    pct_low      = 100.0 * counts['LOW']      / n
-    pct_moderate = 100.0 * counts['MODERATE'] / n
-    pct_high     = 100.0 * counts['HIGH']     / n
+    stats = summarize_history(history)
+    duration     = stats['duration_sec']
+    n            = stats['sample_count']
+    mean_stress  = stats['mean_stress']
+    max_stress   = stats['max_stress']
+    pct_low      = stats['pct_low']
+    pct_moderate = stats['pct_moderate']
+    pct_high     = stats['pct_high']
 
     conn = _get_conn()
     try:

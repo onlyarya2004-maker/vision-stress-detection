@@ -38,6 +38,7 @@ from rppg_live import get_live_rppg, reset_live_rppg
 from intervention_agent import InterventionAgent, CATALOGUE
 import daisee_ensemble
 import session_history
+import session_report
 import config
 
 # ---------------- CONFIG ----------------
@@ -779,6 +780,8 @@ def init_state():
     if 'session_start' not in st.session_state: st.session_state.session_start = None
     if 'viewing_session_id' not in st.session_state: st.session_state.viewing_session_id = None
     if 'viewing_session_label' not in st.session_state: st.session_state.viewing_session_label = None
+    if 'viewing_session_task_mode' not in st.session_state: st.session_state.viewing_session_task_mode = None
+    if 'viewing_session_self_report' not in st.session_state: st.session_state.viewing_session_self_report = None
     if 'task_mode' not in st.session_state: st.session_state.task_mode = 'Default'
     # A header context button sets this on the rerun it triggers, then this
     # block (which runs before the sidebar "Context" selectbox is
@@ -1091,6 +1094,8 @@ def main():
                 st.session_state.calibrating = True
                 st.session_state.viewing_session_id = None
                 st.session_state.viewing_session_label = None
+                st.session_state.viewing_session_task_mode = None
+                st.session_state.viewing_session_self_report = None
                 st.rerun()
         with col_b:
             if st.button("Start", type="primary", width='stretch',
@@ -1100,6 +1105,8 @@ def main():
                 st.session_state.history = []
                 st.session_state.viewing_session_id = None
                 st.session_state.viewing_session_label = None
+                st.session_state.viewing_session_task_mode = None
+                st.session_state.viewing_session_self_report = None
                 st.session_state.session_count += 1
                 st.rerun()
 
@@ -1119,6 +1126,8 @@ def main():
                 st.session_state.history = []
                 st.session_state.viewing_session_id = None
                 st.session_state.viewing_session_label = None
+                st.session_state.viewing_session_task_mode = None
+                st.session_state.viewing_session_self_report = None
                 st.rerun()
         with col_d:
             if st.button("Reset baseline", width='stretch',
@@ -1236,6 +1245,8 @@ def main():
                             st.session_state.history = samples
                             st.session_state.viewing_session_id = s['id']
                             st.session_state.viewing_session_label = start_label
+                            st.session_state.viewing_session_task_mode = _task
+                            st.session_state.viewing_session_self_report = s.get('self_report')
                         else:
                             st.session_state.empty_session_warning = (
                                 f"Session from {start_label} was saved before per-frame "
@@ -1252,6 +1263,8 @@ def main():
                 st.session_state.history = []
                 st.session_state.viewing_session_id = None
                 st.session_state.viewing_session_label = None
+                st.session_state.viewing_session_task_mode = None
+                st.session_state.viewing_session_self_report = None
                 st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1715,6 +1728,25 @@ def main():
                                    mime="text/csv")
                 st.caption(f"Saves as `{_fname}` — move it into `evaluation_data/`, "
                            f"then re-run `python run_all_evaluations.py`.")
+
+                if st.session_state.viewing_session_id:
+                    _report_task_mode = (st.session_state.viewing_session_task_mode
+                                         or st.session_state.task_mode)
+                    _report_self_report = st.session_state.viewing_session_self_report
+                    _report_label = st.session_state.viewing_session_label
+                else:
+                    _report_task_mode = st.session_state.task_mode
+                    _report_self_report = None
+                    _report_label = None
+                pdf_bytes = session_report.build_session_report_pdf(
+                    history, task_mode=_report_task_mode,
+                    self_report=_report_self_report, session_label=_report_label,
+                )
+                st.download_button(
+                    "Download PDF report", pdf_bytes,
+                    file_name=f"stress_session_{history[0]['ts'].strftime('%Y%m%d_%H%M%S')}.pdf",
+                    mime="application/pdf",
+                )
         else:
             level_placeholder.markdown('', unsafe_allow_html=True)
             tiles_placeholder.markdown(render_tiles(0, 0), unsafe_allow_html=True)

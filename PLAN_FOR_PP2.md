@@ -275,8 +275,8 @@ memory) on 2026-08-22. ✅ done · 🟡 partial · ❌ not started.
 | | 4.3 Per-subject breakdown | 🟡 active for all 10 UBFC subjects; team data absent |
 | | 4.4 UBFC correlation row in harness | ✅ `correlate_physiology.py` folded into `run_all_evaluations.py`, regenerated every run; still standalone-runnable too — see 1.4 |
 | | 4.5 Frame + session metrics with Wilson CIs | ✅ |
-| **5 (~65%)** | 5.1 Analytics dashboard | ✅ in-app view toggle (not a native multi-page), KPIs + trend/time-of-day/day-of-week/context charts + self-report comparison, real 11-session data verified live |
-| | 5.2 PDF export | ❌ |
+| **5 (~85%)** | 5.1 Analytics dashboard | ✅ in-app view toggle (not a native multi-page), KPIs + trend/time-of-day/day-of-week/context charts + self-report comparison, real 11-session data verified live |
+| | 5.2 PDF export | ✅ per-session report (metadata/stats page + timeline page) via matplotlib PdfPages, no new dependency; verified live with real DB data |
 | | 5.3 Ethics/privacy statement | ✅ root README |
 | | 5.4 Fix code/README.md false claims | ✅ rewritten 2026-08-16 |
 | | 5.5 Demo rehearsal | ❌ |
@@ -662,6 +662,50 @@ snapshot, matching the same stale-DOM-reference pattern hit repeatedly earlier t
 
 Next actions: (user) team recordings, still the sole Phase 1 blocker. (code) PDF export
 (5.2) is the remaining startable-now Phase 5 item.
+
+---
+
+Session PDF report, implemented (2026-08-23, Phase 5.2): new `code/session_report.py`,
+`build_session_report_pdf(history, task_mode, self_report, session_label) -> bytes` - a
+2-page PDF (metadata + summary stats, then the stress-index timeline) rendered through
+matplotlib's `PdfPages` backend. matplotlib was already installed (transitively, for the
+evaluation harness) but not a declared dependency anywhere in `code/` until now - added to
+`requirements.txt` with a comment explaining why no separate PDF library (reportlab/fpdf)
+was needed. Wired into `app.py` right next to the existing "Download session CSV" button
+(same `if st.session_state.history:` block), so it appears for both a just-finished live
+session and any session reloaded from the history DB via "View".
+
+Shared-logic extraction, same discipline as `eval_scoring.py`/`daisee_ensemble.py` earlier
+this session: `session_history.summarize_history(history) -> dict` pulls the duration/mean/
+max/pct_low/moderate/high arithmetic out of `save_session()` into its own pure function, so
+the PDF report computes the exact same numbers that get written to the DB rather than a
+second, potentially-drifting copy. `save_session()` now just calls it. Existing
+`test_session_history.py` tests already assert on `save_session()`'s stored values, so they
+continue to guard this arithmetic post-refactor without any changes needed.
+
+Caught while wiring, not after: viewing a past session only ever set
+`viewing_session_label`, not its `task_mode` or `self_report` - the report would have
+silently used whatever the sidebar's Context selector currently shows instead of what the
+session was actually recorded under (a real bug for the exact case this feature exists to
+serve - e.g. viewing an old Driving-mode session while Context is set to Studying). Fixed by
+adding `viewing_session_task_mode`/`viewing_session_self_report` session-state, set at the
+same point as `viewing_session_id`/`viewing_session_label` in the "View" button handler and
+cleared everywhere those two already are (Calibrate, Start, Clear view, Delete all history).
+
+10 new tests in `code/tests/test_session_report.py`: `summarize_history()`'s duration/mean/
+max/percentage arithmetic checked directly against hand-computed values, plus the PDF
+builder's contract (`%PDF` magic bytes, non-trivial size, empty-history rejection, single-
+sample edge case, with/without self-report, custom label/task_mode). Verified live: viewed a
+real past session (2026-08-17, Driving, 95 samples) with no camera involvement, confirmed no
+`stException`, confirmed the correct task_mode ("Driving") and self-report state carried
+through instead of the sidebar's currently-selected Context, and confirmed via
+`read_network_requests` that clicking "Download PDF report" actually served a `200 OK`
+binary `.pdf` response from Streamlit's media endpoint (not just that the button rendered).
+
+256/256 tests passing (up from 246).
+
+Next actions: (user) team recordings, still the sole Phase 1 blocker. (code) demo rehearsal
+(5.5) is the only Phase 5 item left, and it isn't code work.
 
 ---
 

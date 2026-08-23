@@ -25,3 +25,4 @@ scipy
 # Evaluation / reporting
 statsmodels        # Wilson confidence intervals in the evaluation harness
 pytest             # unit test suite
+matplotlib         # PDF session reports (session_report.py) - PdfPages, no other PDF lib needed
