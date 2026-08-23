@@ -171,7 +171,14 @@ def test_format_summary_line_includes_key_fields():
     stats = summarize(np.array([0, 1]), np.array([0, 1]), np.array(['s1', 's2']), 'x')
     line = format_summary_line(stats)
     assert 'x' in line
-    assert 'acc' in line and 'F1' in line and 'session' in line
+    assert 'acc' in line and 'F1' in line
+    # Deliberately NOT "session" - eval_scoring.session_scores() means one
+    # recording/file, while this module's grouping is (subject, binary
+    # condition); printing both under "session" in the same canonical
+    # report would read as the same metric when it isn't. See
+    # BUG_AUDIT_2026-08-23.md finding #9.
+    assert 'cond-block' in line
+    assert 'session' not in line
 
 
 def test_compute_learned_weights_rows_sorted_by_magnitude_and_carries_direction():

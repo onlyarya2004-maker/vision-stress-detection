@@ -13,6 +13,7 @@ import csv
 import pytest
 
 import config
+import stress_fusion
 from ablation_study import (
     fused_frame, smoothing_window, replay_condition, load_trace,
     discover_traces, run_ablation_study, CONDITIONS, NAME_RE, SIGNALS,
@@ -93,6 +94,90 @@ def test_fused_frame_output_always_clipped_to_unit_range():
     out = fused_frame(row, w_daisee=0.20, w_behavior=0.80,
                       rule_boost_amount=config.RULE_BOOST_AMOUNT)
     assert 0.0 <= out <= 1.0
+
+
+# --------------------------------------------------------------------------
+# fused_frame() vs the REAL stress_fusion.compute_stress_index() -
+# equivalence regression test (BUG_AUDIT_2026-08-23.md finding #10)
+# --------------------------------------------------------------------------
+# fused_frame() above is a hand-written reimplementation of
+# compute_stress_index()'s weight-allocation + rule-boost math, verified
+# equal to the real function only ONCE, manually, per PLAN_FOR_PP2.md
+# (2026-08-22) - not by any automated test. It would silently drift the
+# moment compute_stress_index() changes (e.g. W_RPPG raised above 0.0,
+# which this project's own README names as the plan). The tests below
+# close that gap: same synthetic signal dict fed into BOTH functions,
+# asserting the outputs agree, under today's shipped config where
+# W_TEMPORAL=W_RPPG=0.0 (so neither of those two branches can enter
+# compute_stress_index()'s fusion and this comparison stays apples-to-apples
+# with fused_frame(), which never modeled them at all).
+
+FUSION_EQUIVALENCE_CASES = {
+    "low values, no daisee": (
+        {s: 0.05 for s in SIGNALS}, None,
+    ),
+    "moderate values, no daisee": (
+        {s: 0.30 for s in SIGNALS}, None,
+    ),
+    "high values, no daisee (triggers rule boost)": (
+        {s: 0.9 for s in SIGNALS}, None,
+    ),
+    "boundary near LOW/MODERATE cutoff (0.36), no daisee": (
+        {s: 0.36 for s in SIGNALS}, None,
+    ),
+    "boundary near MODERATE/HIGH cutoff (0.55), no daisee": (
+        {s: 0.55 for s in SIGNALS}, None,
+    ),
+    "3 active behavioral signals + active daisee (triggers rule boost)": (
+        {'brow_tension': 0.6, 'jaw_tension': 0.6, 'slouch': 0.6,
+         'eye_strain': 0.1, 'blink_stress': 0.1,
+         'head_instability': 0.1, 'neck_strain': 0.1},
+        # raw_p chosen so the re-centered deviation from
+        # DAISEE_DEFAULT_BASELINE clears DAISEE_ACTIVE_THRESHOLD (0.20),
+        # making this the 4th active signal alongside the 3 above.
+        [0.0, config.DAISEE_DEFAULT_BASELINE + 0.10],
+    ),
+    "mixed asymmetric values, no daisee": (
+        {'eye_strain': 0.83, 'blink_stress': 0.0, 'brow_tension': 0.47,
+         'jaw_tension': 0.91, 'head_instability': 0.22,
+         'neck_strain': 0.65, 'slouch': 0.14}, None,
+    ),
+}
+
+
+@pytest.fixture
+def _clean_daisee_baseline():
+    """_DAISEE_BASELINE is process-wide singleton state (like
+    test_stress_fusion.py's identical fixture) - reset before AND after so
+    this can't leak into another test running before/after it."""
+    stress_fusion.reset_daisee_baseline()
+    yield
+    stress_fusion.reset_daisee_baseline()
+
+
+@pytest.mark.parametrize("name", sorted(FUSION_EQUIVALENCE_CASES))
+def test_fused_frame_matches_real_compute_stress_index(name, _clean_daisee_baseline):
+    assert config.W_TEMPORAL == 0.0 and config.W_RPPG == 0.0, (
+        "premise: this equivalence check is only valid for the currently-"
+        "shipped config, where those two branches cannot enter the fusion"
+    )
+    features, daisee_probs = FUSION_EQUIVALENCE_CASES[name]
+    features = dict(features, calibrating=False)
+
+    real = stress_fusion.compute_stress_index(daisee_probs, features, task_mode='Default')
+
+    # fused_frame() never recomputes daisee_stress/behavior_stress itself -
+    # it consumes already-computed branch scores (exactly as it does when
+    # reading a saved trace CSV) - so feed it the REAL function's own
+    # branch outputs and check only the downstream weight/boost math.
+    row = {s: features[s] for s in SIGNALS}
+    row['daisee_stress'] = real['daisee_stress']
+    row['behavior_stress'] = real['behavior_stress']
+
+    ablation_out = fused_frame(row, w_daisee=config.W_DAISEE, w_behavior=config.W_BEHAVIOR,
+                               rule_boost_amount=config.RULE_BOOST_AMOUNT)
+
+    assert ablation_out == pytest.approx(real['stress_index'], abs=1e-9)
 
 
 # --------------------------------------------------------------------------

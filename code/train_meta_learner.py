@@ -140,19 +140,30 @@ def summarize(y_true, y_pred, groups, label):
     rel_recall = (y_pred[rel] == 0).mean() if rel.any() else float('nan')
     stz_recall = (y_pred[stz] == 1).mean() if stz.any() else float('nan')
 
-    # Session level: one verdict per subject-condition by majority vote.
-    sess_ok = sess_n = 0
+    # "Condition-block" level: one verdict per (subject, binary condition)
+    # by majority vote - e.g. a subject's T2 and T3 UBFC-Phys clips (two
+    # different stressors, two different recordings) are POOLED into one
+    # stressed verdict here. This is deliberately NOT the same unit as
+    # eval_scoring.session_scores()'s "session", which is one recording/
+    # file - that function scores T2 and T3 as two separate sessions. Both
+    # numbers get printed in the same canonical report (see
+    # run_all_evaluations.py), so the label here is "cond-block", never
+    # bare "session", to keep the two from reading as the same metric.
+    # See BUG_AUDIT_2026-08-23.md finding #9. Not changed to match
+    # eval_scoring's definition - that would silently move every reported
+    # number here with no clear win; only the label changed.
+    cb_ok = cb_n = 0
     for g in np.unique(groups):
         for lab in (0, 1):
             m = (groups == g) & (y_true == lab)
             if m.sum() == 0:
                 continue
-            sess_n += 1
-            sess_ok += int((y_pred[m] == lab).mean() > 0.5)
+            cb_n += 1
+            cb_ok += int((y_pred[m] == lab).mean() > 0.5)
 
     return {'label': label, 'accuracy': acc, 'f1': f1,
             'relaxed_recall': rel_recall, 'stressed_recall': stz_recall,
-            'session_correct': sess_ok, 'session_total': sess_n}
+            'cond_block_correct': cb_ok, 'cond_block_total': cb_n}
 
 
 def format_summary_line(stats):
@@ -160,7 +171,7 @@ def format_summary_line(stats):
            f"F1 {stats['f1']:.3f}   "
            f"relaxed-recall {stats['relaxed_recall']*100:5.1f}%   "
            f"stressed-recall {stats['stressed_recall']*100:5.1f}%   "
-           f"session {stats['session_correct']}/{stats['session_total']}")
+           f"cond-block {stats['cond_block_correct']}/{stats['cond_block_total']}")
 
 
 def loso_evaluate(make_model, X, y, groups, label, scale=True):

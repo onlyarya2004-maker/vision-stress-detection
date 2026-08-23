@@ -50,14 +50,24 @@ NAME_RE = re.compile(r's(\d+)_T(\d)', re.IGNORECASE)
 
 
 def load_index(path):
-    """(t, smoothed stress index) from a feature trace."""
-    t, x = [], []
+    """(t, smoothed stress index) from a feature trace, sorted by t.
+
+    np.interp() in align() silently misbehaves on unsorted input - the same
+    schema's loader in ablation_study.py (load_trace()) already sorts for
+    exactly this reason. Currently safe here too (the only writer produces
+    monotonic rows), but sorting explicitly rather than relying on that
+    holding forever costs nothing.
+    """
+    rows = []
     for r in csv.DictReader(open(path)):
         try:
-            t.append(float(r['t']))
-            x.append(float(r['stress_index_smoothed']))
+            rows.append((float(r['t']), float(r['stress_index_smoothed'])))
         except (KeyError, ValueError):
             continue
+    rows.sort(key=lambda row: row[0])
+    if not rows:
+        return np.array([]), np.array([])
+    t, x = zip(*rows)
     return np.array(t), np.array(x)
 
 

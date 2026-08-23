@@ -46,6 +46,35 @@ def test_load_index_skips_malformed_rows(tmp_path):
     assert list(t) == [0.0, 1.0]
 
 
+def test_load_index_sorts_out_of_order_rows_by_time(tmp_path):
+    """
+    np.interp() in align() requires monotonic x - unlike
+    ablation_study.load_trace() (same file schema), this loader used to
+    trust file order rather than sorting explicitly (BUG_AUDIT_2026-08-23.md
+    finding #19). Rows written out of time order must still come back
+    sorted, with (t, index) pairs kept together.
+    """
+    path = tmp_path / 'features_vid_s1_T1.csv'
+    with open(path, 'w', newline='') as f:
+        w = csv.writer(f)
+        w.writerow(['t', 'stress_index_smoothed'])
+        w.writerow(['1.0', '0.40'])   # written out of order
+        w.writerow(['0.0', '0.30'])
+        w.writerow(['0.5', '0.35'])
+    t, x = load_index(path)
+    assert list(t) == [0.0, 0.5, 1.0]
+    assert list(x) == pytest.approx([0.30, 0.35, 0.40])
+
+
+def test_load_index_handles_empty_file_without_crashing(tmp_path):
+    path = tmp_path / 'features_vid_s1_T1.csv'
+    with open(path, 'w', newline='') as f:
+        w = csv.writer(f)
+        w.writerow(['t', 'stress_index_smoothed'])
+    t, x = load_index(path)
+    assert len(t) == 0 and len(x) == 0
+
+
 def test_load_eda_skips_dropout_markers_and_blank_lines(tmp_path):
     path = tmp_path / 'eda_s1_T1.csv'
     path.write_text("0.15\n\ndropout\n0.22\n0.19\n")

@@ -127,6 +127,11 @@ def main():
         out['efficientnet'] = best_eff
 
     if out:
+        # NOTE: grep-confirmed write-only as of BUG_AUDIT_2026-08-23.md -
+        # nothing in the live system or the evaluation harness reads this
+        # file back. It's currently vestigial relative to the rest of the
+        # pipeline; don't assume anything downstream depends on it without
+        # re-checking.
         json_path = MODEL_DIR / 'optimal_thresholds.json'
         with open(json_path, 'w') as f:
             json.dump(out, f, indent=2)

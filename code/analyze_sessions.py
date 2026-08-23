@@ -17,6 +17,42 @@ import statistics
 from pathlib import Path
 from collections import Counter
 
+from app_naming import parse_filename
+
+
+def matches_mode(path, mode):
+    """
+    Task-mode filter, ported from run_all_evaluations.collect() (see its
+    docstring for the full reasoning) so this script - documented in
+    README.md as "superseded by the harness" but still present/runnable -
+    doesn't silently pool Studying/Hospital/Driving recordings into one
+    mode-blind number the harness would never produce. A small independent
+    copy rather than an import, the same way NAME_RE is duplicated across
+    ablation_study.py/train_meta_learner.py, so this lower-priority script
+    doesn't gain a hard dependency on the harness module's heavier import
+    chain (ablation_study/correlate_physiology/train_meta_learner) just for
+    one filter.
+
+    mode=None (the default) matches everything - unfiltered, exactly this
+    script's prior behavior, so nothing changes unless --mode is passed.
+    """
+    if mode is None:
+        return True
+    meta = parse_filename(path.name)
+    if meta:
+        return meta['mode'] == mode
+    stem = path.name[:-4] if path.name.lower().endswith('.csv') else path.name
+    is_true_legacy = len(stem.split('_')) < 4
+    return is_true_legacy and mode == 'default'
+
+
+def collect_files(folder, mode=None):
+    """Return (relaxed_paths, stressed_paths), sorted and mode-filtered."""
+    folder = Path(folder)
+    relaxed = sorted(p for p in folder.glob('relaxed_*.csv') if matches_mode(p, mode))
+    stressed = sorted(p for p in folder.glob('stressed_*.csv') if matches_mode(p, mode))
+    return relaxed, stressed
+
 
 def load_csv(path):
     rows = []
@@ -105,11 +141,16 @@ def evaluate(relaxed_rows, stressed_rows):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--dir', default='.', help='Folder containing CSVs')
+    parser.add_argument('--mode', default=None,
+                        choices=['default', 'studying', 'hospital', 'driving'],
+                        help='Filter to files whose canonical name encodes this '
+                             'task mode (see app_naming.export_filename). Unlike '
+                             'run_all_evaluations.py, unfiltered by default - pass '
+                             'this explicitly to avoid pooling mixed task-mode data.')
     args = parser.parse_args()
 
     folder = Path(args.dir)
-    relaxed_files  = sorted(folder.glob('relaxed_*.csv'))
-    stressed_files = sorted(folder.glob('stressed_*.csv'))
+    relaxed_files, stressed_files = collect_files(folder, mode=args.mode)
     if not relaxed_files and not stressed_files:
         # Also accept the auto-named exports
         all_csvs = sorted(folder.glob('stress_session_*.csv'))

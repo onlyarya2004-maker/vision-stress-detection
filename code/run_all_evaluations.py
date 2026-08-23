@@ -78,11 +78,8 @@ def collect(folder, relaxed_glob, stressed_glob, mode=None):
     mode="default" excludes a "..._studying_..." file even though it still
     matches relaxed_*/stressed_* (condition is mode-blind by design, so the
     glob alone cannot tell Default and Studying data apart). Files that
-    don't parse as canonical names (the older 2-part relaxed_1.csv style)
-    are treated as Default only, since that scheme predates per-mode
-    recording and was always Default-mode data - it must NOT also match
-    mode="studying"/"hospital"/"driving", or every mode section would show
-    identical legacy data.
+    don't parse as canonical names are handled by matches_mode() below in
+    one of two different ways, depending on WHY parsing failed - see there.
 
     Without this filter, any Studying/Hospital/Driving-mode recording
     dropped into evaluation_data/ per RECORDING_PROTOCOL.md would silently
@@ -96,13 +93,64 @@ def collect(folder, relaxed_glob, stressed_glob, mode=None):
         if mode is None:
             return True
         meta = parse_filename(path.name)
-        return meta['mode'] == mode if meta else mode == 'default'
+        if meta:
+            return meta['mode'] == mode
+        # parse_filename() returned None. That happens for two structurally
+        # different reasons, and only one of them may silently count as
+        # Default:
+        #   - a genuinely legacy 2-part name (relaxed_1.csv) - predates
+        #     per-mode recording, was always Default-mode data, and must
+        #     count there (but NOWHERE ELSE, or every mode section would
+        #     show identical legacy data).
+        #   - a modern, canonical-LOOKING name with one corrupted field
+        #     (e.g. a hand-edited subject ID with a stray underscore, per
+        #     RECORDING_PROTOCOL.md's anticipated hand-renaming - see
+        #     test_export_naming.py's relaxed_S_01_... case) - this is NOT
+        #     legacy data and must NOT be silently folded into Default. It
+        #     is excluded from every mode's count here; main()'s
+        #     unclaimed-files check then reports it loudly instead of
+        #     letting it vanish into whichever section happens to run
+        #     with mode="default".
+        # >=4 underscore-separated fields is the same "looks canonical"
+        # signal parse_filename() itself keys off (its own len(parts) < 4
+        # is the true-legacy escape hatch) - reused here rather than
+        # re-derived, so the two functions can't drift out of sync on what
+        # "looks modern" means.
+        stem = path.name[:-4] if path.name.lower().endswith('.csv') else path.name
+        is_true_legacy = len(stem.split('_')) < 4
+        return is_true_legacy and mode == 'default'
 
     relaxed = [(p.name, load_csv(p)) for p in sorted(folder.glob(relaxed_glob))
                if matches_mode(p)]
     stressed = [(p.name, load_csv(p)) for p in sorted(folder.glob(stressed_glob))
                 if matches_mode(p)]
     return relaxed, stressed
+
+
+def find_unclaimed_files(folder, relaxed_glob, stressed_glob, modes):
+    """
+    Cross-check that every relaxed_*/stressed_* CSV in `folder` was claimed
+    by exactly one of `modes`'s collect() calls. Returns a sorted list of
+    filenames that were claimed by none of them.
+
+    Guards against a repeat of this project's founding bug
+    (RECORDING_PROTOCOL.md's relaaxed_2.csv incident - 48 valid PP1 samples
+    silently excluded from every reported number for months because no
+    glob matched the typo). A file can go unclaimed either by failing every
+    glob outright (an old-style typo) or by looking canonical-but-corrupted
+    (see collect()'s matches_mode() above) - either way it must be
+    surfaced, not silently absent from every section's numbers.
+    """
+    folder = Path(folder)
+    all_files = ({p.name for p in folder.glob(relaxed_glob)} |
+                {p.name for p in folder.glob(stressed_glob)})
+
+    claimed = set()
+    for mode in modes:
+        relaxed, stressed = collect(folder, relaxed_glob, stressed_glob, mode=mode)
+        claimed.update(name for name, _ in relaxed + stressed)
+
+    return sorted(all_files - claimed)
 
 
 # ---------------------------------------------------------------------------
@@ -324,10 +372,29 @@ def main():
     # docstring.
     render_config("Default mode (current evaluation_data/)",
                   eval_dir, "relaxed_*.csv", "stressed_*.csv", out, mode="default")
+    _current_modes = ["default"]
     for _mode, _label in (("studying", "Studying"), ("hospital", "Hospital"),
                           ("driving", "Driving")):
         render_config(f"{_label} mode (current evaluation_data/)",
                       eval_dir, "relaxed_*.csv", "stressed_*.csv", out, mode=_mode)
+        _current_modes.append(_mode)
+
+    # Cross-check every relaxed_*/stressed_* CSV in evaluation_data/ landed
+    # in exactly one of the sections just rendered - see
+    # find_unclaimed_files()'s docstring for why this exists at all.
+    _unclaimed = find_unclaimed_files(eval_dir, "relaxed_*.csv", "stressed_*.csv",
+                                      _current_modes)
+    if _unclaimed:
+        out.append("\n" + "!" * 78)
+        out.append("UNCLAIMED FILES - excluded from EVERY mode section above")
+        out.append("!" * 78)
+        out.append("  These matched relaxed_*.csv/stressed_*.csv but were not claimed")
+        out.append("  by any task-mode section - they contribute to NO reported number.")
+        out.append("  This is exactly the failure mode that silently excluded 48 valid")
+        out.append("  PP1 samples for months (relaaxed_2.csv, see RECORDING_PROTOCOL.md).")
+        out.append("  Check each name below for a typo or a corrupted field:")
+        for _name in _unclaimed:
+            out.append(f"    {_name}")
 
     out.append("\n### Studying mode (archived baseline_v1/study*)")
     out.append("  CAUTION: RECORDING_PROTOCOL.md documents this folder as unreconciled")
