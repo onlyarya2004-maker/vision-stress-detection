@@ -245,6 +245,85 @@ outcome in the same honest style, positive or negative.
 
 ---
 
+## Phase 6 — External review response (~1 week; mostly unblocked, one item waits on team recordings)
+
+Three external reviewers assessed the PP2 report (2026-08-24) and returned "Borderline" with
+11 distinct technical shortcomings between them. **No report/paper editing** — same rule as
+Phase 5: this phase is scoped to the *project*, not the manuscript. Where a reviewer's
+number is already stale (the project moved past it and the paper text just hasn't caught
+up), that is a paper-editing problem, not a Phase 6 item, and is excluded below on purpose.
+
+### Reviewer feedback → project status
+
+| Reviewer point | Status | Where |
+|---|---|---|
+| DaiSEE CNN below majority floor; need balanced accuracy/F1; need CNN-removed ablation | ✅ **Already done** | `models/daisee_test_report.txt` (balanced acc, precision/recall/F1, confusion matrix, explicit verdict); `ablation_study.py`'s `'- DaiSEE CNN (W_DAISEE=0)'` condition |
+| LSTM branch at weight zero but still in the fusion equation — evaluate or remove | ✅ **Already done** | Replaced by the GRU (Phase 2.1), evaluated honestly (45.74%, below floor), `W_LSTM`→`W_TEMPORAL`, old branch archived |
+| WESAD-percentile-to-behavioral-index mapping assumes distributional comparability | ✅ **Already correctly avoided** | `config.USE_WESAD_CUTOFFS = False`, with the reasoning documented — this was recognized as invalid and deliberately never wired in, not overlooked |
+| WESAD LOSO cited as 85.56%; small live sample (176/293) | ⚠️ **Reviewer number is stale** | Real current numbers are 91.86% WESAD LOSO and n=224 Default-mode (relaaxed_2.csv fix) — a paper-text fix, not a Phase 6 item |
+| Single-subject live evaluation; per-user calibration never tested across individuals; small live sample size; lighting/skin-tone/angle diversity | 🟡 **Partially addressed, remainder blocked on you** | UBFC-Phys (10 real subjects, per-subject calibration exercised) already answers "calibration across individuals" for the offline pipeline. The *live-webcam-protocol* version of this — new people, your camera, the actual app — needs team recordings (Phase 1.5, still the sole blocker). Not a Phase 6 item; already tracked in Phase 1 |
+| DaiSEE label construct validity (Eq. 1's weighted formula) | 🟡 **New: 6.1** | See below |
+| Real-time performance benchmarks (FPS/latency) | 🟡 **New: 6.2** | See below |
+| Ethics/privacy for hospital and driving deployment specifically | 🟡 **New: 6.3** | See below |
+| Context-specific weight multipliers — empirical or heuristic? | 🟡 **New: 6.4** | See below (blocked on team recordings) |
+| Abstract garbled; decimal-comma typo in Table 4 | N/A — paper text only | Not a project/code concern; out of scope here same as every other Phase 5/6 rule |
+
+### New work
+
+- [ ] **6.1 — DaiSEE branch construct-validity check.** Eq. 1's weights (frustration 0.45 >
+      confusion 0.30 > disengagement 0.15 > boredom 0.10) are grounded in affect-computing
+      literature per the code's own docstring, but never checked against real stress ground
+      truth — DaiSEE has none to check against. What we *do* have: `session_history.db`'s
+      growing set of self-reported sessions (Phase 3.1), each with a per-frame DaiSEE branch
+      score already stored alongside the user's own "how stressed did you actually feel"
+      answer. New script, `correlate_daisee_selfreport.py`, same shape as
+      `correlate_physiology.py` (Phase 4.4's precedent): per-session mean DaiSEE score vs.
+      self-report, Pearson/Spearman, direction-agreement rate, folded into
+      `run_all_evaluations.py` once it exists. Honest framing either way — this checks
+      whether the CNN branch's *output* tracks real self-reported stress, which is the
+      construct-validity question that actually matters for this system, even though it
+      can't validate the *DaiSEE-training-label formula* in isolation (that would need a
+      dataset with both video and independent stress ground truth, which doesn't exist).
+      Needs `>= 2` self-reported sessions to produce a real number — currently has 1, so
+      this accumulates alongside normal app use, no dedicated recording session required.
+- [ ] **6.2 — Inference performance benchmark report.** The real numbers already exist
+      (~7fps CPU-only before this session's `tf.function` fix, effective frame rate roughly
+      doubled after) but only as a paragraph in this file's engineering log, not a citable
+      artifact. New `benchmark_inference.py`: measures and reports per-component cost
+      (MediaPipe FaceMesh, MediaPipe Pose, DaiSEE ensemble inference, full per-frame
+      pipeline) and effective end-to-end FPS, on this machine, output to
+      `models/inference_benchmark_report.txt` — same "regenerate, never hand-transcribe"
+      discipline as everything else here. No blockers, no new data needed, ~half a day.
+- [ ] **6.3 — Ethics & deployment considerations.** Expand `README.md`'s existing Privacy
+      section (which already correctly states on-device processing, no frame storage,
+      user-initiated sessions) into a fuller section covering what it currently doesn't:
+      explicit non-clinical-tool framing for Hospital mode (this is a behavioral-signal
+      monitor, not a diagnostic device, and should say so plainly), a consent-and-awareness
+      expectation for anyone other than the primary user being recorded, and a
+      not-a-certified-safety-device disclaimer for Driving mode's PERCLOS display (shown,
+      not fused into the score, precisely so it never becomes an implied safety claim -
+      say why explicitly). This is liability-adjacent language - draft it, then have the
+      user (and the faculty guide, given the healthcare framing) review before treating it
+      as final, rather than shipping it unreviewed.
+- [ ] **6.4 — Task-mode weight empirical check** (blocked on team recordings). The four
+      `config.TASK_MODES` multiplier sets are hand-tuned from domain reasoning, not fit
+      against labeled per-context data — confirmed by reading the code, no such data
+      currently exists to fit against. Once team recordings (Phase 1.5) produce labeled
+      sessions across more than one task mode, add a
+      `'- Task-mode reweighting (Default weights used everywhere)'` condition to
+      `ablation_study.py`'s existing `CONDITIONS` dict (same pattern as every other branch
+      already ablated there) and report whether the current multipliers actually improve
+      discrimination over using Default's neutral weights in every context, or whether
+      they're a plausible-sounding no-op. Not startable until Phase 1.5 has data - tracked
+      here so it isn't forgotten once that data exists.
+
+**Priority**: 6.2 first (cheapest, zero dependencies, ~half a day). 6.1 next (also
+unblocked, though its statistical power grows slowly with normal use). 6.3 whenever there's
+time for careful wording, ideally before any hospital/driving-context demo. 6.4 stays
+blocked until team recordings land, same gate as Phase 1.5/3.2/3.3/4.3.
+
+---
+
 ## Status snapshot — 2026-08-22
 
 Checked line-by-line against the phases above, verified against disk/config/DB state (not
@@ -281,6 +360,10 @@ memory) on 2026-08-22. ✅ done · 🟡 partial · ❌ not started.
 | | 5.4 Fix code/README.md false claims | ✅ rewritten 2026-08-16 |
 | | 5.5 Demo rehearsal | ❌ |
 | | 5.6 Professional UI redesign + mission-control pass | ✅ context switcher / guidance / agent-core bugs fixed, dead panel-background CSS found & fixed app-wide, calibration HUD moved above the fold, corner-bracket + scan-sweep + grid-texture pass |
+| **6 (0%)** | 6.1 DaiSEE branch construct-validity check (self-report correlation) | ❌ |
+| | 6.2 Inference performance benchmark report (FPS/latency) | ❌ |
+| | 6.3 Ethics & deployment considerations (hospital/driving specific) | ❌ |
+| | 6.4 Task-mode weight empirical check | ❌ blocked on team recordings (Phase 1.5) |
 
 Unplanned-but-done: personal-calibration fixes (posture baseline, relative blink threshold,
 calibrated blink rate) — found via 1.3, regression-tested. Also: the git backup for
