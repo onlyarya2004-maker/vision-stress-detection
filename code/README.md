@@ -20,6 +20,7 @@
 | `session_history.py` | SQLite persistence: sessions, per-frame samples, self-reports, user profiles + per-user calibration baselines (Phase 1 prerequisite for team recordings) |
 | `session_report.py` | Phase 5.2: renders one saved session into a downloadable 2-page PDF (summary stats + timeline) via matplotlib's `PdfPages` — no separate PDF library. `session_history.summarize_history()` supplies the same duration/mean/max/pct numbers `save_session()` persists, so the report and the DB row can never drift apart |
 | `app_naming.py` | Canonical evaluation-CSV naming + parsing |
+| `recording_intake.py` | Validates freshly-exported session CSVs against `RECORDING_PROTOCOL.md` (filename, condition, mode, 60s minimum) at a staging folder (`../evaluation_data/incoming/`) before they reach `evaluation_data/` proper - the pipeline-entry-point guard against a repeat of the `relaaxed_2.csv` incident |
 | `stress_detector.py` | OpenCV-only runner (no Streamlit) — uses `daisee_ensemble.py` for CNN inference, same as `app.py`/`evaluate_video_file.py`, so all three runners are provably identical rather than three hand-kept copies |
 
 ## The switches (all in `config.py`)
@@ -76,7 +77,7 @@ it does not carry a `W_*` switch because it doesn't feed the fusion score at all
 python -m pytest tests -q        # from code/, or: python -m pytest code/tests from the root
 ```
 
-364+ tests. The load-bearing ones: Default-mode fusion equals the archived pre-task-aware
+377+ tests. The load-bearing ones: Default-mode fusion equals the archived pre-task-aware
 implementation **exactly** (diff 0.00e+00); uncalibrated posture/blink behaviour is
 byte-identical to PP1; rPPG methods recover a synthetic pulse of known frequency; every
 default-off switch above leaves output unchanged.

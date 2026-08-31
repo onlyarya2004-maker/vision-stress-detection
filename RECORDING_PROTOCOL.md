@@ -104,7 +104,16 @@ Rules:
 
 ## After recording
 
-1. Move the CSVs into `evaluation_data/`.
+1. Drop the CSVs into `evaluation_data/incoming/`, then run:
+   ```bash
+   cd code && python recording_intake.py
+   ```
+   This validates filename, condition, mode, and the 60-second minimum before
+   moving each file into `evaluation_data/` - a blind manual copy is exactly
+   how `relaaxed_2.csv` got in unnoticed. Anything flagged stays in
+   `incoming/` with the specific reason printed; fix it (usually a re-export)
+   and run the command again. Add `--dry-run` to check without moving
+   anything.
 2. Regenerate every number:
    ```bash
    cd code && python run_all_evaluations.py
@@ -137,7 +146,9 @@ Fill this in as you go. It is the only place that captures things the filename c
 - [ ] Shoulders visible in frame
 - [ ] At least 60 seconds
 - [ ] One condition only, start to finish
-- [ ] CSV downloaded and moved to `evaluation_data/`
+- [ ] CSV downloaded into `evaluation_data/incoming/`
+- [ ] `recording_intake.py` run and the file landed in `evaluation_data/` clean
+      (nothing flagged)
 - [ ] Streamlit restarted before the next recording
 - [ ] `run_all_evaluations.py` re-run and committed alongside the new CSVs
 - [ ] Row added to the recording log

@@ -1,0 +1,1 @@
+Drop freshly-exported session CSVs here. python recording_intake.py validates them and moves the good ones into evaluation_data/.

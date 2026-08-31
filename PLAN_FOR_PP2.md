@@ -338,7 +338,7 @@ memory) on 2026-08-22. ✅ done · 🟡 partial · ❌ not started.
 | | 1.2 Offline video pipeline (media clock, feature dump, rPPG traces) | ✅ |
 | | 1.3 Cross-subject validation + calibration fixes (posture/blink/blink-rate) | ✅ for all 10 subjects |
 | | 1.4 Stress-index ↔ EDA/BVP continuous correlation | ✅ real results for s6–s10 (4/5 subjects direction-agree, well above ~50% chance) - s1–s5's ground truth was deleted (never git-tracked, by design) and won't be re-downloaded, so those 5 will never have this |
-| | 1.5 Team recordings + multi-user profiles | 🟡 multi-user profiles built (`users` table, per-user baselines, sidebar picker) - the prerequisite piece; team recordings themselves remain **user-gated — the only remaining blocker in this phase** (evaluation_data/ root still only has the original single-subject PP1 recordings) |
+| | 1.5 Team recordings + multi-user profiles | 🟡 multi-user profiles built (`users` table, per-user baselines, sidebar picker); `recording_intake.py` validation pipeline built ahead of the recording session (2026-08-31) - the prerequisite pieces; team recordings themselves remain **user-gated — the only remaining blocker in this phase**, scheduled for 2026-09-01 |
 | **2 (~60%)** | 2.1 Feature-based temporal model (GRU/TCN) | ✅ built, trained, wired in, honest negative result — 45.74% acc (GBT baseline 84.59%), both below the 86.60% floor; W_TEMPORAL=0.0 |
 | | 2.2 rPPG branch (offline 3.52 bpm POS; live module, quality-gated, W_RPPG=0) | ✅ pending webcam validation |
 | | 2.3 PERCLOS for Driving | ✅ computed always, displayed in Driving mode only, not fused |
@@ -933,10 +933,29 @@ left to the manual benchmark run itself, same boundary `test_daisee_ensemble.py`
 draws. 364/364 tests passing.
 
 Next: (user) team recordings tomorrow (2026-09-01), unblocking Phase 1.5/3.2/3.3/4.3/6.4
-all at once. (code) a recording-intake pipeline for tomorrow's session is in progress
-alongside this entry (`code/recording_intake.py`, validates + auto-files freshly-exported
-CSVs against RECORDING_PROTOCOL.md before they reach `evaluation_data/`). 6.1 (construct-
-validity check) remains unstarted - not yet requested for today.
+all at once. 6.1 (construct-validity check) remains unstarted - not yet requested.
+
+---
+
+Recording-intake pipeline, built ahead of tomorrow's team recordings (2026-08-31): new
+`code/recording_intake.py` is the pipeline-entry-point answer to this project's founding
+data-integrity bug - a typo'd filename (`relaaxed_2.csv`) silently excluded 48 valid samples
+from every reported number for months, caught only much later. Rather than relying solely on
+`run_all_evaluations.py`'s after-the-fact `find_unclaimed_files()` check (finding #4's fix,
+2026-08-23), freshly-exported session CSVs now get validated at a staging folder
+(`evaluation_data/incoming/`) BEFORE they ever reach `evaluation_data/` proper: filename
+parses via the real `app_naming.parse_filename()`, condition/mode are exactly what they
+claim to be, and the recording meets RECORDING_PROTOCOL.md's 60-second minimum (measured
+from the file's own `ts` column, not assumed). An unlabelled export (forgot to set Subject
+ID/Condition in the app) gets a distinct, actionable message rather than reading as file
+corruption. Files that pass move automatically into `evaluation_data/`; anything flagged
+stays in `incoming/` untouched with its specific reason(s) printed - never silently
+overwritten, and a same-name collision against an already-accepted file is caught too. The
+harness itself is never auto-triggered (`run_all_evaluations.py` stays a deliberate, printed
+next step, consistent with every other manual-activation point in this project). 13 new
+tests, including the literal historical `relaaxed_2.csv`-style typo as a regression case.
+`RECORDING_PROTOCOL.md`'s "After recording" step 1 and its Checklist updated to reference the
+new command in place of a blind manual copy. 377/377 tests passing.
 
 ---
 
