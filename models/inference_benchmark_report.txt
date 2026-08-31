@@ -1,0 +1,40 @@
+==============================================================================
+INFERENCE PERFORMANCE BENCHMARK
+==============================================================================
+generated : 2026-08-31 13:16:54
+frame size: 640x480 (config.FRAME_WIDTH/FRAME_HEIGHT)
+DaiSEE models loaded: 2/2
+
+No camera involved - real MediaPipe/TensorFlow inference against a
+synthetic frame built from a real on-disk DaiSEE face crop.
+
+  MediaPipe FaceMesh.process()
+    n=100  mean=8.8ms  median=8.8ms  stdev=0.7ms  min=7.2ms  max=10.8ms
+
+  MediaPipe Pose.process()
+    n=100  mean=47.9ms  median=47.4ms  stdev=3.4ms  min=43.6ms  max=63.5ms
+
+  crop_face() (bbox + array slice)
+    n=100  mean=0.4ms  median=0.4ms  stdev=0.0ms  min=0.3ms  max=0.5ms
+
+  BehavioralFeatureEngine.extract() (face+posture, reuses FaceMesh result)
+    n=100  mean=49.2ms  median=48.9ms  stdev=2.1ms  min=45.1ms  max=53.5ms
+
+  daisee_ensemble.ensemble_predict() (MobileNet+EfficientNet, tf.function)
+    n=30  mean=89.5ms  median=89.6ms  stdev=6.0ms  min=75.7ms  max=102.7ms
+
+------------------------------------------------------------------------------
+EFFECTIVE END-TO-END ESTIMATE
+------------------------------------------------------------------------------
+  As actually wired in app.py's capture loop: FaceMesh + crop_face +
+  behavioral extraction run every frame; the DaiSEE ensemble runs every 3rd
+  frame and its cost is amortized across that cadence. Pose is not summed
+  separately - it runs inside behavioral extraction, not on its own.
+  estimated per-frame cost : 88.2ms
+  estimated effective FPS  : 11.3
+
+  This is inference cost only - it excludes webcam capture/decode,
+  Streamlit re-render, and rPPG/rule-boost/smoothing, which are all
+  cheap numpy operations by comparison (sub-millisecond).
+
+==============================================================================
