@@ -68,6 +68,7 @@ it does not carry a `W_*` switch because it doesn't feed the fusion score at all
 | `correlate_physiology.py` | Phase 4.4: stress index ↔ EDA correlation per subject/task, within- and between-task. Called from `run_all_evaluations.py` (same compute/render split as `ablation_study.py`), still standalone-runnable |
 | `analyze_sessions.py` | Quick single-folder accuracy check (superseded by the harness) |
 | `evaluate_threshold_sweep.py` | DaiSEE decision-threshold sweep |
+| `benchmark_inference.py` | Phase 6.2: real, regenerable FPS/latency numbers for FaceMesh/Pose/behavioral extraction/the DaiSEE ensemble and the effective end-to-end frame rate they imply → `../models/inference_benchmark_report.txt`. No camera — benchmarks against a synthetic frame built from a real on-disk DaiSEE face crop |
 
 ## Tests
 
@@ -75,7 +76,7 @@ it does not carry a `W_*` switch because it doesn't feed the fusion score at all
 python -m pytest tests -q        # from code/, or: python -m pytest code/tests from the root
 ```
 
-354+ tests. The load-bearing ones: Default-mode fusion equals the archived pre-task-aware
+364+ tests. The load-bearing ones: Default-mode fusion equals the archived pre-task-aware
 implementation **exactly** (diff 0.00e+00); uncalibrated posture/blink behaviour is
 byte-identical to PP1; rPPG methods recover a synthetic pulse of known frequency; every
 default-off switch above leaves output unchanged.

@@ -360,8 +360,8 @@ memory) on 2026-08-22. ✅ done · 🟡 partial · ❌ not started.
 | | 5.4 Fix code/README.md false claims | ✅ rewritten 2026-08-16 |
 | | 5.5 Demo rehearsal | ❌ |
 | | 5.6 Professional UI redesign + mission-control pass | ✅ context switcher / guidance / agent-core bugs fixed, dead panel-background CSS found & fixed app-wide, calibration HUD moved above the fold, corner-bracket + scan-sweep + grid-texture pass |
-| **6 (0%)** | 6.1 DaiSEE branch construct-validity check (self-report correlation) | ❌ |
-| | 6.2 Inference performance benchmark report (FPS/latency) | ❌ |
+| **6 (~25%)** | 6.1 DaiSEE branch construct-validity check (self-report correlation) | ❌ |
+| | 6.2 Inference performance benchmark report (FPS/latency) | ✅ `code/benchmark_inference.py`, real measured numbers (11.3 fps effective, CPU-only), regenerable, plus a polished `PERFORMANCE_BENCHMARK_2026-08-31.md` write-up |
 | | 6.3 Ethics & deployment considerations (hospital/driving specific) | ❌ |
 | | 6.4 Task-mode weight empirical check | ❌ blocked on team recordings (Phase 1.5) |
 
@@ -909,6 +909,34 @@ Next actions: (user) team recordings, still the sole Phase 1 blocker - and now a
 per-user state reset (finding #5) was specifically fixed for. (code) demo rehearsal (5.5) is
 the only remaining Phase 5 item, and it isn't code work. No new Phase 6+ work starts until
 the user says so, per their own stated sequencing for this pass.
+
+---
+
+Phase 6.2 done (2026-08-31): FPS/latency benchmark, directly answering Reviewer #5's request
+for real-time performance numbers. New `code/benchmark_inference.py` measures real,
+regenerable component costs against a synthetic frame built from a real on-disk DaiSEE face
+crop (never touches the camera - standing policy) - MediaPipe FaceMesh (8.8ms), the
+behavioral feature engine's full extraction pass, which runs Pose internally rather than as
+a separate step (49.2ms), and the DaiSEE CNN ensemble (89.5ms, the dominant cost, run only
+every 3rd frame per `config.CNN_EVERY_N_FRAMES`). Effective end-to-end estimate: **11.3 fps**,
+CPU-only (this machine's TensorFlow build has no CUDA support, confirmed via
+`tf.test.is_built_with_cuda()` - a documented, known constraint, not new). Written to
+`models/inference_benchmark_report.txt`, same "regenerate, never hand-transcribe" discipline
+as every other reported number here. A polished write-up,
+`PERFORMANCE_BENCHMARK_2026-08-31.md`, turns the raw numbers into something presentable -
+methodology, results table, and an interpretation section arguing why 11.3fps is adequate
+for a slowly-varying physiological signal smoothed over a 5-6 second window, not a
+video-rate application. 10 new tests (`code/tests/test_benchmark_inference.py`) cover every
+pure component - the stats math, the effective-FPS formula (including the Pose-not-double-
+counted check), and the report renderer; real MediaPipe/TensorFlow loading is intentionally
+left to the manual benchmark run itself, same boundary `test_daisee_ensemble.py` already
+draws. 364/364 tests passing.
+
+Next: (user) team recordings tomorrow (2026-09-01), unblocking Phase 1.5/3.2/3.3/4.3/6.4
+all at once. (code) a recording-intake pipeline for tomorrow's session is in progress
+alongside this entry (`code/recording_intake.py`, validates + auto-files freshly-exported
+CSVs against RECORDING_PROTOCOL.md before they reach `evaluation_data/`). 6.1 (construct-
+validity check) remains unstarted - not yet requested for today.
 
 ---
 
