@@ -49,7 +49,8 @@ For each recording:
 4. **▶ Start**, then perform the condition (below) for at least 60 seconds.
 5. **⏸ Stop** — this auto-saves to the session database.
 6. **📥 Download session as CSV** — the filename is generated for you. Save it into
-   `evaluation_data/`.
+   `evaluation_data/incoming/` (see "After recording" below — `recording_intake.py`
+   validates it from there, it does not go straight into `evaluation_data/`).
 7. **Restart Streamlit before the next recording.** This clears the cached baseline so
    the next calibration genuinely starts fresh.
 
