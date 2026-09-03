@@ -16,6 +16,7 @@
 | `stress_fusion.py` | Branch fusion, task modes, rule boost, smoothing, hysteresis |
 | `rppg_live.py` | Heart rate from the camera (POS), quality-gated, abstains when noisy. `status()` drives the live HR topbar's text, dimmed while abstaining |
 | `learned_fusion.py` | Data-fitted fusion weights (meta-learner inference) |
+| `intervention_agent.py` | The agentic core: perceive → decide → act → measure → learn, on-device, no LLM/cloud (deliberate non-goal, stated in the module docstring). Targeting is Thompson-Sampling over a Beta(helped+1, no_effect+1) posterior per intervention kind (real exploration, not a fixed blend), bounded so a clear urgency gap always wins outright; retirement uses a Wilson confidence interval (`eval_scoring.wilson()`) instead of a raw trial-count floor; holds back if the index is already falling on its own; success is tracked per-(task_mode, kind) with a fallback to the global stat until a context bucket has enough evidence (`config.INTERVENTION_MODE_MIN_TRIALS`); the general break can compete against a specific signal when none clearly dominates; `status()` explains its own choice, not just its phase |
 | `temporal_model.py` | GRU temporal inference wrapper (disabled — see below). NumPy-only by design — the model trains in PyTorch (`.venv-train`) but this module has to load cleanly in the live app's TensorFlow venv, so a hand-verified NumPy replica of the GRU forward pass runs live instead of torch itself |
 | `session_history.py` | SQLite persistence: sessions, per-frame samples, self-reports, user profiles + per-user calibration baselines (Phase 1 prerequisite for team recordings) |
 | `session_report.py` | Phase 5.2: renders one saved session into a downloadable 2-page PDF (summary stats + timeline) via matplotlib's `PdfPages` — no separate PDF library. `session_history.summarize_history()` supplies the same duration/mean/max/pct numbers `save_session()` persists, so the report and the DB row can never drift apart |
@@ -77,7 +78,7 @@ it does not carry a `W_*` switch because it doesn't feed the fusion score at all
 python -m pytest tests -q        # from code/, or: python -m pytest code/tests from the root
 ```
 
-377+ tests. The load-bearing ones: Default-mode fusion equals the archived pre-task-aware
+393+ tests. The load-bearing ones: Default-mode fusion equals the archived pre-task-aware
 implementation **exactly** (diff 0.00e+00); uncalibrated posture/blink behaviour is
 byte-identical to PP1; rPPG methods recover a synthetic pulse of known frequency; every
 default-off switch above leaves output unchanged.

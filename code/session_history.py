@@ -461,6 +461,36 @@ def intervention_stats() -> Dict[str, Dict[str, int]]:
     return stats
 
 
+def intervention_stats_by_mode() -> Dict[str, Dict[str, Dict[str, int]]]:
+    """
+    Per-(task_mode, kind) helped/failed counts, via a join against
+    sessions - no schema change needed, sessions.task_mode already exists.
+    {mode: {kind: {'helped':, 'no_effect':}}}.
+
+    An intervention whose session_id is NULL or points at a deleted
+    session is excluded here (its context is unknown) but still counted
+    by the global, mode-blind intervention_stats() above - this function
+    only adds a context-aware VIEW on the same data, it doesn't change
+    what counts as a measured outcome.
+    """
+    conn = _get_conn()
+    try:
+        rows = conn.execute("""
+            SELECT s.task_mode, i.kind, i.outcome, COUNT(*)
+            FROM interventions i
+            JOIN sessions s ON s.id = i.session_id
+            WHERE i.outcome IN ('helped', 'no_effect')
+            GROUP BY s.task_mode, i.kind, i.outcome
+        """).fetchall()
+    finally:
+        conn.close()
+    stats: Dict[str, Dict[str, Dict[str, int]]] = {}
+    for mode, kind, outcome, n in rows:
+        stats.setdefault(mode, {}).setdefault(
+            kind, {'helped': 0, 'no_effect': 0})[outcome] = n
+    return stats
+
+
 def load_recent_sessions(n: int = 10) -> List[Dict]:
     """
     Return the most recent N session summaries, newest first.

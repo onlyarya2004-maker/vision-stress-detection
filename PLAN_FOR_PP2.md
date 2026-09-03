@@ -348,7 +348,7 @@ memory) on 2026-08-22. ✅ done · 🟡 partial · ❌ not started.
 | | 3.2 Meta-learner fusion (trainer + LOSO + live integration, default-off) | 🟡 `USE_LEARNED_FUSION=False`; enable after own-data retrain. Warm-start personalization now designed into `retrain_from_sessions.py` (below), same manual-activation policy |
 | | 3.3 Continual adaptation (retrain_from_sessions.py) | 🟡 rebuilt scoped per task mode + warm-started from the population model, gated per mode at 6 sessions (`MIN_LABELED_SESSIONS`) — only 1 exists (Default mode), so nothing trains yet. Calendar-gated, not code-gated. |
 | | 3.4 Uncertainty/abstention | ✅ rPPG's `status()` now drives the HR topbar chip live, dimmed when abstaining ("warming up", "hold still", etc.) instead of a bare "--" |
-| | 3.5 Intervention effectiveness tracking | ✅ agent built, wired into the live loop, schema + tests in place — 0 interventions logged yet since no real session has crossed the trigger threshold |
+| | 3.5 Intervention effectiveness tracking | ✅ agent built, wired into the live loop, schema + tests in place; upgraded 2026-08-31 to Thompson-Sampling targeting, Wilson-CI retirement, trend-aware hold-back, per-task-mode stats, multi-signal competition, and explainability — 0 interventions logged yet since no real session has crossed the trigger threshold |
 | **4 (~90%)** | 4.1 One regenerating script | ✅ learned-vs-hand-tuned, temporal old-vs-new, and DaiSEE held-out re-run all now regenerated/echoed rows |
 | | 4.2 Ablation table | ✅ each branch removed once, regenerated every run — see README |
 | | 4.3 Per-subject breakdown | 🟡 active for all 10 UBFC subjects; team data absent |
@@ -959,7 +959,70 @@ new command in place of a blind manual copy. 377/377 tests passing.
 
 ---
 
-## New features roadmap
+Intervention agent upgraded (2026-08-31, ahead of team recordings): the user asked
+specifically whether the "AI agent" was LLM/API-based like the agentic systems from their
+internship - it is not, and the module docstring already said so ("no LLM, no cloud, no
+personality"). That prompted a broader "how could this genuinely get better" discussion,
+which produced a rated list of concrete upgrades; the user greenlit everything except
+LLM-generated messages (needs the faculty guide's sign-off first, since it would mean
+sending behavioral data off-device - directly at odds with this project's privacy stance).
+Implemented in `code/intervention_agent.py`, all in one pass since every change touches the
+same small file:
+
+- **Thompson Sampling** replaces the old fixed 0.7/0.3 blend for ranking candidate signals -
+  a genuine stochastic draw from each intervention kind's Beta(helped+1, no_effect+1)
+  posterior (the same distribution `success_rate()` already averaged; this now also SAMPLES
+  from it). `config.INTERVENTION_EXPLORE_WEIGHT` bounds how far the draw can move a ranking,
+  calibrated so a real urgency gap (e.g. slouch 0.95 vs jaw 0.55) always wins outright and
+  exploration only matters for genuinely close calls - verified both by hand-derived bounds
+  and by 393 tests including several that run 60-200 seeded trials checking win-rate
+  distributions, not just single outcomes.
+- **Wilson-CI retirement** (`eval_scoring.wilson()`) replaces a raw trial-count floor for
+  deciding an intervention "doesn't work for this user" - retire only once 95% confident the
+  true success rate is below threshold. This is measurably stricter: a 0-success record now
+  needs ~12 trials before retiring (previously 4), so a short run of bad luck can no longer
+  prematurely retire something that might actually work. `INTERVENTION_RETIRE_MIN_TRIALS`
+  removed from config - Wilson's own interval width already self-regulates on sample size,
+  making the separate floor redundant.
+- **Trend-aware hold-back**: a new `declining` phase - if the smoothed index has dropped by
+  `INTERVENTION_TREND_DECLINE_DROP` over the last `INTERVENTION_TREND_WINDOW_SECONDS`, the
+  agent holds back even though still above `INTERVENTION_MIN_INDEX`, on the theory that
+  something already resolving on its own doesn't need an interruption.
+- **Per-(task_mode, intervention) success tracking**, with a safe fallback: new
+  `session_history.intervention_stats_by_mode()` (a join against `sessions.task_mode` via
+  `session_id` - no schema migration needed) feeds a mode-specific stat that's only trusted
+  once it has `INTERVENTION_MODE_MIN_TRIALS` outcomes, falling back to the global stat
+  otherwise. This directly applies the lesson the warm-start personalization research
+  already found (cross-context transfer can hurt) without the "many thin buckets" trap
+  flagged during design - stacking full context-splitting with the bandit and per-message
+  A/B testing all at once was explicitly identified and rejected as over-slicing a single
+  user's realistic data volume.
+- **Multi-signal general-break competition**: when two-plus signals are elevated with no
+  clear single driver (gap below `INTERVENTION_MULTI_SIGNAL_GAP`), the general break now
+  competes for the pick via the same bandit machinery instead of only ever being the
+  fallback when literally nothing crosses threshold.
+- **Explainability**: `status()`'s `'showing'`/`'evaluating'` detail now states WHY - the
+  triggering signal's value and the success rate the choice was made against - instead of
+  only the intervention's title. Surfaced automatically through the existing
+  `render_agent_phases()` UI wiring, no new UI code needed.
+
+16 new tests in `test_intervention_agent.py` plus 2 new DB tests in the same file for
+`intervention_stats_by_mode()` (confirms two sessions in different modes don't bleed into
+each other's bucket, and that session-less entries are correctly excluded from the
+mode-aware view while still counting in the global one). All 16 pre-existing tests kept
+their original intent - only the two retirement tests needed updated trial counts (0/8 → 0/15)
+to reflect the new, genuinely stricter statistical requirement; everything else (targeting,
+cooldown, measurement, persistence) passed unchanged, confirming the upgrade is additive
+rather than a rewrite of the agent's core contract. Verified beyond the test suite: a direct
+Python-level run of the exact construction/`update()`/`status()` call sequence `app.py`
+makes, using realistic data, to independently confirm the live integration path (a live
+browser check hit an inconclusive rendering quirk unrelated to this change - the app itself
+threw no exceptions and its main content rendered correctly throughout). 393/393 tests
+passing (up from 377).
+
+Next: (user) team recordings, still the sole blocker across Phase 1.5/3.2/3.3/4.3/6.4. LLM
+messages remain unbuilt pending the faculty guide's answer on whether they're allowed under
+the project's privacy constraints.
 
 | # | Feature | Needs | Phase | Why there |
 |---|---------|-------|-------|-----------|

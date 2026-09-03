@@ -77,7 +77,7 @@ TASK_LABELS = {
     'Driving':  ('Driving', 'DRV'),
 }
 
-AGENT_PHASES = ['warming', 'watching', 'showing', 'evaluating', 'cooldown']
+AGENT_PHASES = ['warming', 'watching', 'declining', 'showing', 'evaluating', 'cooldown']
 
 st.set_page_config(
     page_title="Vision-Based Behavioral Stress Detection",
@@ -1568,12 +1568,17 @@ def main():
 
         # The agentic core: decides when to interrupt, targets the driving
         # signal, then measures whether the intervention worked. Seeded with
-        # what has historically worked on this install.
+        # what has historically worked on this install, and (once a
+        # task-mode bucket has enough evidence) what's worked in THIS
+        # specific context - see InterventionAgent's own docstring for why
+        # both are passed rather than only the mode-specific one.
         try:
             _known = session_history.intervention_stats()
+            _known_by_mode = session_history.intervention_stats_by_mode()
         except Exception:
-            _known = {}
-        agent = InterventionAgent(stats=_known)
+            _known, _known_by_mode = {}, {}
+        agent = InterventionAgent(stats=_known, mode_stats=_known_by_mode,
+                                  task_mode=st.session_state.task_mode)
         agent.start_session(time.time())
         last_agent_status_update = 0.0
 

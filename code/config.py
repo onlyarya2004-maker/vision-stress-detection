@@ -184,9 +184,55 @@ INTERVENTION_MIN_EVAL_SECONDS = 60.0   # session ends earlier than this after
                                        # firing -> outcome recorded as unknown
 INTERVENTION_HELPED_DROP = 0.06        # smoothed-index drop that counts as
                                        # "helped" (vs. drift/noise)
-INTERVENTION_RETIRE_BELOW = 0.25       # success estimate below this...
-INTERVENTION_RETIRE_MIN_TRIALS = 4     # ...after this many measured outcomes
-                                       # -> stop suggesting it to this user
+# Retirement is now Wilson-CI-based (eval_scoring.wilson()): retire only
+# once we're 95% confident the TRUE success rate is below this, not just
+# because a small-sample point estimate happens to look bad. This
+# self-regulates on sample size - a raw trial-count floor is no longer
+# needed alongside it (a 0-success record needs ~12 trials before the CI's
+# upper bound clears 0.25; a lucky/unlucky run of 2-3 outcomes can no
+# longer retire something prematurely, which the old point-estimate +
+# fixed-trial-count rule could).
+INTERVENTION_RETIRE_BELOW = 0.25
+
+# Thompson Sampling (Beta(helped+1, no_effect+1) draw) replaces a fixed
+# blend constant for ranking candidate interventions - see
+# InterventionAgent._sample_success(). This bounds how far the stochastic
+# draw can move a candidate's score: max swing is +/-(WEIGHT/2). Set below
+# the smallest urgency gap the agent should treat as "clearly one signal
+# dominates" (see INTERVENTION_MULTI_SIGNAL_GAP) so a big, obvious driver
+# is never overridden by an unlucky draw - exploration only matters when
+# the choice was already close.
+INTERVENTION_EXPLORE_WEIGHT = 0.3
+
+# Per-(task_mode, intervention) success is tracked (session_history.
+# intervention_stats_by_mode()) but only TRUSTED once a mode/kind bucket
+# has this many outcomes - otherwise the agent falls back to the global,
+# mode-blind stat. Slicing by context is a real signal (personalization
+# research found cross-context transfer can actively hurt - see
+# PLAN_FOR_PP2.md), but with realistic single-user data volume, splitting
+# by mode from day one just starves every bucket of evidence. This gate
+# is what lets #5 (per-mode tracking) and #1 (the bandit) coexist without
+# the "too many thin buckets" trap.
+INTERVENTION_MODE_MIN_TRIALS = 6
+
+# Trend awareness: hold back from firing if the index is already falling
+# on its own (likely resolving without help) even though still above
+# INTERVENTION_MIN_INDEX - interrupting something that's already
+# resolving is the same "unnecessary nagging poisons outcome data"
+# problem the cooldown exists for for a different reason.
+INTERVENTION_TREND_WINDOW_SECONDS = 30.0     # how far back to look
+INTERVENTION_TREND_MIN_SPAN_SECONDS = 15.0   # need at least this much real
+                                             # time in the window to trust a
+                                             # slope at all
+INTERVENTION_TREND_DECLINE_DROP = 0.08       # drop over the window that
+                                             # counts as "already resolving"
+
+# Multi-signal awareness: when two or more signals are elevated with no
+# clearly dominant one (gap below this), let the general break compete
+# for the pick instead of always deferring to whichever signal happens to
+# be a few points higher - a real difference should still win outright
+# (see INTERVENTION_EXPLORE_WEIGHT's comment on why that stays safe).
+INTERVENTION_MULTI_SIGNAL_GAP = 0.15
 
 # ===========================================================================
 # LEARNED FUSION (Phase 3)
