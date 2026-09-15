@@ -163,8 +163,26 @@ def test_render_per_subject_noops_below_two_subjects():
     relaxed_files = [('relaxed_S01_default_2026-08-12.csv', _rows(['LOW', 'LOW']))]
     stressed_files = [('stressed_S01_default_2026-08-12.csv', _rows(['HIGH', 'HIGH']))]
     out = []
-    render_per_subject(relaxed_files, stressed_files, out)
+    n_subjects = render_per_subject(relaxed_files, stressed_files, out)
     assert out == []
+    assert n_subjects == 1
+
+
+def test_render_per_subject_returns_subject_count_when_two_or_more():
+    """Regression test: the closing 'READING THESE NUMBERS' summary in
+    main() decides whether to claim single-subject or multi-subject data
+    based on this return value - it silently said SINGLE-SUBJECT even
+    after real multi-subject recordings landed until this was wired up,
+    directly contradicting the PER-SUBJECT table printed just above it."""
+    relaxed_files = [
+        ('relaxed_S01_default_2026-08-12.csv', _rows(['LOW', 'LOW'])),
+        ('relaxed_S02_default_2026-08-12.csv', _rows(['LOW', 'HIGH'])),
+        ('relaxed_S03_default_2026-08-12.csv', _rows(['LOW', 'LOW'])),
+    ]
+    stressed_files = []
+    out = []
+    n_subjects = render_per_subject(relaxed_files, stressed_files, out)
+    assert n_subjects == 3
 
 
 def test_render_per_subject_groups_by_subject_when_two_or_more():
@@ -177,7 +195,7 @@ def test_render_per_subject_groups_by_subject_when_two_or_more():
         ('stressed_S02_default_2026-08-12.csv', _rows(['HIGH', 'LOW'])),      # 1/2 correct
     ]
     out = []
-    render_per_subject(relaxed_files, stressed_files, out)
+    n_subjects = render_per_subject(relaxed_files, stressed_files, out)
     text = "\n".join(out)
 
     assert 'PER-SUBJECT breakdown' in text
@@ -185,6 +203,7 @@ def test_render_per_subject_groups_by_subject_when_two_or_more():
     # S01: 4/4 correct = 100%; S02: 2/4 correct = 50% - hand-computed
     assert pct(1.0) in text
     assert pct(0.5) in text
+    assert n_subjects == 2
 
 
 def test_render_per_subject_skips_names_that_do_not_parse():

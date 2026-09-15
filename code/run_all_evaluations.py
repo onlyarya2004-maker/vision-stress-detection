@@ -165,7 +165,7 @@ def render_config(title, folder, relaxed_glob, stressed_glob, out, mode=None):
     relaxed_files, stressed_files = collect(folder, relaxed_glob, stressed_glob, mode=mode)
     if not relaxed_files and not stressed_files:
         out.append(f"\n### {title}\n  (no matching CSVs in {folder})")
-        return None
+        return None, 0
 
     fr = frame_scores(relaxed_files, stressed_files)
     se = session_scores(relaxed_files, stressed_files)
@@ -212,8 +212,8 @@ def render_config(title, folder, relaxed_glob, stressed_glob, out, mode=None):
                    f"(relaxed mean {fr['relaxed_mean']:.3f}, "
                    f"stressed mean {fr['stressed_mean']:.3f})")
 
-    render_per_subject(relaxed_files, stressed_files, out)
-    return fr
+    n_subjects = render_per_subject(relaxed_files, stressed_files, out)
+    return fr, n_subjects
 
 
 def render_per_subject(relaxed_files, stressed_files, out):
@@ -234,7 +234,7 @@ def render_per_subject(relaxed_files, stressed_files, out):
         entry[meta["condition"]].append((name, rows))
 
     if len(by_subject) < 2:
-        return          # nothing to compare against
+        return len(by_subject)          # nothing to compare against
 
     out.append("")
     out.append("  PER-SUBJECT breakdown:")
@@ -247,6 +247,7 @@ def render_per_subject(relaxed_files, stressed_files, out):
         out.append(f"    {subject:10s}{fr['n']:>6}{pct(fr['accuracy']):>11}"
                    f"{ci_str(fr['ci']):>20}")
     out.append("    NOTE: cross-subject spread is the real generalisation test.")
+    return len(by_subject)
 
 
 def render_artifacts(root, out):
@@ -370,8 +371,9 @@ def main():
     # truth. Legacy 2-part filenames (relaxed_1.csv) predate per-mode
     # recording and are kept as Default regardless - see collect()'s
     # docstring.
-    render_config("Default mode (current evaluation_data/)",
-                  eval_dir, "relaxed_*.csv", "stressed_*.csv", out, mode="default")
+    _, _default_n_subjects = render_config(
+        "Default mode (current evaluation_data/)",
+        eval_dir, "relaxed_*.csv", "stressed_*.csv", out, mode="default")
     _current_modes = ["default"]
     for _mode, _label in (("studying", "Studying"), ("hospital", "Hospital"),
                           ("driving", "Driving")):
@@ -449,9 +451,19 @@ def main():
     out.append("  frames within one recording are highly autocorrelated.")
     out.append("* Session-level accuracy uses the honest denominator (recordings),")
     out.append("  which is why its confidence interval is much wider.")
-    out.append("* All live recordings to date are SINGLE-SUBJECT. These measure")
-    out.append("  within-subject behaviour, not cross-user generalisation.")
-    out.append("  Multi-subject evaluation is Phase 1 of PLAN_FOR_PP2.md.")
+    if _default_n_subjects and _default_n_subjects >= 2:
+        out.append(f"* Default-mode live recordings now span {_default_n_subjects} "
+                   f"distinct subjects (see the PER-SUBJECT")
+        out.append("  breakdown above) - this is real cross-subject evidence, not "
+                   "within-subject only.")
+        out.append("  Studying/Hospital/Driving modes still have no live recordings "
+                   "yet, so those remain")
+        out.append("  single-subject or empty until Phase 1's team recordings extend "
+                   "to those modes.")
+    else:
+        out.append("* All live recordings to date are SINGLE-SUBJECT. These measure")
+        out.append("  within-subject behaviour, not cross-user generalisation.")
+        out.append("  Multi-subject evaluation is Phase 1 of PLAN_FOR_PP2.md.")
 
     text = "\n".join(out)
     print(text)
