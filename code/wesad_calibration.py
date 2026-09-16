@@ -107,9 +107,14 @@ def find_signal(chest_dict, *candidates):
 # ---------------- FEATURE EXTRACTION ----------------
 def extract_hr_rmssd(ecg_window, fs=CHEST_FS):
     """Heart rate (bpm) and RMSSD HRV (ms) from an ECG segment."""
-    # Bandpass 5-15 Hz to isolate QRS complexes
-    b, a = sps.butter(3, [5 / (fs / 2), 15 / (fs / 2)], btype='band')
-    filtered = sps.filtfilt(b, a, ecg_window)
+    # Bandpass 5-15 Hz to isolate QRS complexes. sos form, not (b, a) -
+    # see extract_resp_rate()'s docstring for why: this file's narrower
+    # bandpass at the same fs was confirmed to silently fabricate a
+    # constant wrong output under the (b, a) form. This band is less
+    # extreme (verified correct under both forms against a synthetic
+    # pulse train), but sos is strictly safer at zero cost.
+    sos = sps.butter(3, [5 / (fs / 2), 15 / (fs / 2)], btype='band', output='sos')
+    filtered = sps.sosfiltfilt(sos, ecg_window)
 
     # R-peak detection — distance enforces max ~150 bpm
     min_distance = int(0.4 * fs)
@@ -135,16 +140,20 @@ def extract_hr_rmssd(ecg_window, fs=CHEST_FS):
 
 def extract_eda_features(eda_window, fs=CHEST_FS):
     """Tonic (mean) and phasic (peaks/min) EDA features."""
-    # Low-pass at 5 Hz to remove noise
-    b, a = sps.butter(3, 5 / (fs / 2), btype='low')
-    eda_filt = sps.filtfilt(b, a, eda_window)
+    # Low-pass at 5 Hz to remove noise. sos form - see extract_resp_rate().
+    sos = sps.butter(3, 5 / (fs / 2), btype='low', output='sos')
+    eda_filt = sps.sosfiltfilt(sos, eda_window)
 
     tonic_mean = float(np.mean(eda_filt))
     tonic_std  = float(np.std(eda_filt))
 
-    # Phasic component (deviation from a slow trend)
-    b_low, a_low = sps.butter(3, 0.05 / (fs / 2), btype='low')
-    tonic = sps.filtfilt(b_low, a_low, eda_filt)
+    # Phasic component (deviation from a slow trend). 0.05Hz at fs=700 is
+    # an even more extreme normalized frequency than the resp-rate bandpass
+    # that was confirmed broken under (b, a) - verified this specific
+    # filter numerically fine under both forms against a synthetic slow-
+    # drift signal, but sos costs nothing and removes the latent risk.
+    sos_low = sps.butter(3, 0.05 / (fs / 2), btype='low', output='sos')
+    tonic = sps.sosfiltfilt(sos_low, eda_filt)
     phasic = eda_filt - tonic
 
     # SCRs (skin conductance responses) per minute
@@ -157,9 +166,22 @@ def extract_eda_features(eda_window, fs=CHEST_FS):
 
 
 def extract_resp_rate(resp_window, fs=CHEST_FS):
-    """Respiration rate in breaths per minute."""
-    b, a = sps.butter(3, [0.1 / (fs / 2), 0.5 / (fs / 2)], btype='band')
-    resp_filt = sps.filtfilt(b, a, resp_window)
+    """Respiration rate in breaths per minute.
+
+    Uses second-order-sections (sos) form, not the transfer-function
+    (b, a) form butter()/filtfilt() default to. At fs=700Hz, this band
+    (0.1-0.5Hz -> normalized ~0.00029-0.0014) is narrow enough that the
+    (b, a) polynomial coefficients lose catastrophic precision (b's
+    leading terms come out ~1e-8) - confirmed by direct test: a clean
+    sinusoid anywhere from 15 to 30 breaths/min all produced the exact
+    same fabricated ~13 breaths/min output with (b, a), while sos gives
+    the exact true rate in every case. This is a well-documented scipy
+    pitfall for narrow-relative-bandwidth IIR filters, not a signal
+    property - sos keeps each biquad section independently well-
+    conditioned regardless of how narrow the overall band is.
+    """
+    sos = sps.butter(3, [0.1 / (fs / 2), 0.5 / (fs / 2)], btype='band', output='sos')
+    resp_filt = sps.sosfiltfilt(sos, resp_window)
     peaks, _ = sps.find_peaks(resp_filt, distance=int(1.5 * fs))
     duration_min = len(resp_window) / fs / 60.0
     return len(peaks) / duration_min if duration_min > 0 else np.nan
@@ -405,7 +427,7 @@ def run_calibration():
     lines.append(f"  LOW < {cutoff_low_to_mod:.2f}")
     lines.append(f"  MODERATE between {cutoff_low_to_mod:.2f} and "
                  f"{cutoff_mod_to_high:.2f}")
-    lines.append(f"  HIGH ≥ {cutoff_mod_to_high:.2f}")
+    lines.append(f"  HIGH >= {cutoff_mod_to_high:.2f}")
     lines.append("\nTemporal smoothing recommendation:")
     lines.append(f"  Median stress block duration: "
                  f"{median_stress_duration_s:.1f} s")

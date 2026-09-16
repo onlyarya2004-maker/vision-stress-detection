@@ -1,0 +1,31 @@
+
+==============================================================================
+DAISEE BRANCH CONSTRUCT VALIDITY vs SELF-REPORT (Phase 6.1)
+==============================================================================
+  generated : 2026-09-16T11:49:44
+  This checks whether the CNN branch's own output tracks genuine
+  self-reported stress. It does NOT validate DaiSEE's own training-label
+  formula in isolation - no dataset exists with both video and independent
+  stress ground truth to check that against.
+
+    session  self_report  mean_daisee  n_frames
+  -----------------------------------------------
+         46            2        0.511        75
+         51            1        0.465       172
+         52            5        0.506       155
+         53            2        0.486       139
+         54            3        0.545       229
+         56            2        0.338       147
+         57            3        0.385       144
+         58            5        0.532       154
+         59            2        0.525       160
+
+  n = 9 labeled sessions
+  Pearson  r = +0.303
+  Spearman r = +0.404
+  CAUTION: n this small means these correlations are indicative only,
+  not inferential - they will firm up as more sessions accumulate.
+
+  Binary agreement (CNN branch mean-probability>0.5 'stressed' call vs
+  self-reported label, rating 3 excluded as ambiguous): 5/7 = 71.4%
+  (chance is ~50%)

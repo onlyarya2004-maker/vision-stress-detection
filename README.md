@@ -63,7 +63,7 @@ writes a timestamped file to `evaluation_data/`. Nothing here is transcribed by 
 | Cross-subject, behavioral-signals-only baseline (no CNN/boost/smoothing) | same data, LOSO | 55.19% | — |
 | Cross-subject, same baseline with learned weights (logistic / gradient boosting) | same data, LOSO | 66.74% / 77.06% | — |
 | rPPG heart rate vs Empatica E4 BVP (POS method) | 15 traces | **3.52 bpm** mean abs. error | — |
-| WESAD physiological validation (LOSO, 15 subjects) | 877 windows | **91.86%** (F1 0.874) | — |
+| WESAD physiological validation (LOSO, 15 subjects) | 877 windows | **91.53%** (F1 0.872) | — |
 | DaiSEE CNN ensemble, held-out test split | 28,531 images | 81.89% (*below* the 86.60% majority floor) | — |
 
 The gap between 99.11% (single-subject) and 49.75% (cross-subject, full system) is the

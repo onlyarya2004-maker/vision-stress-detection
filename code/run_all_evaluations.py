@@ -46,6 +46,9 @@ from eval_scoring import wilson, pct, ci_str, frame_scores, session_scores, STRE
 # still keeping the scoring code itself in exactly one place.
 from ablation_study import run_ablation_study, render as render_ablation_table
 from correlate_physiology import run_correlation_study, render as render_correlation
+from correlate_daisee_selfreport import (
+    run_daisee_selfreport_study, render as render_daisee_selfreport,
+)
 from train_meta_learner import run_learned_fusion_study, render as render_learned_fusion
 
 
@@ -433,6 +436,12 @@ def main():
     # truth, no reason for this to live only in its own separate report.
     render_correlation(run_correlation_study(
         root / "datasets" / "feature_traces", root / "datasets" / "UBFC-Phys"), out)
+
+    # Phase 6.1: does the CNN branch's own output track genuine self-reported
+    # stress? Reads the live session_history.db directly (the only section
+    # here that does) rather than a cached CSV/trace, since self-reports
+    # accumulate through normal app use, not a dedicated recording session.
+    render_daisee_selfreport(run_daisee_selfreport_study(), out)
 
     # Phase 4.1: the behavioral-signals-only LOSO comparison (hand-tuned vs
     # logistic regression vs gradient boosting) that the 55.19%/66.74%/
