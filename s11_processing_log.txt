@@ -1,0 +1,64 @@
+2026-09-16 22:36:26.676258: I tensorflow/core/util/port.cc:113] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+WARNING:tensorflow:From C:\Users\Arya\AppData\Local\Programs\Python\Python311\Lib\site-packages\keras\src\losses.py:2976: The name tf.losses.sparse_softmax_cross_entropy is deprecated. Please use tf.compat.v1.losses.sparse_softmax_cross_entropy instead.
+
+[stress_fusion] cutoffs 0.36/0.55 (empirically tuned; WESAD JSON cutoffs deliberately unused) | weights DaiSEE=0.20 Behavior=0.80 Temporal=0.10
+  LOW < 0.36  |  MODERATE [0.36 - 0.55]  |  HIGH >= 0.55
+[stress_fusion] WESAD reference present: 91.53% LOSO over 15 subjects (provenance only - does NOT set the cutoffs above)
+processing 3 video(s)
+
+  vid_s11_T1.avi: 6325 frames @ 35.1fps (180s)
+  [models] loading DaiSEE ensemble...
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+W0000 00:00:1789578392.976043    8688 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1789578392.990372    6052 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1789578393.070222   32744 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1789578393.096654    1732 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+WARNING:tensorflow:From C:\Users\Arya\AppData\Local\Programs\Python\Python311\Lib\site-packages\keras\src\backend.py:1398: The name tf.executing_eagerly_outside_functions is deprecated. Please use tf.compat.v1.executing_eagerly_outside_functions instead.
+
+2026-09-16 22:36:33.503210: I tensorflow/core/platform/cpu_feature_guard.cc:182] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: SSE SSE2 SSE3 SSE4.1 SSE4.2 AVX2 AVX_VNNI FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+WARNING:tensorflow:From C:\Users\Arya\AppData\Local\Programs\Python\Python311\Lib\site-packages\keras\src\layers\normalization\batch_normalization.py:979: The name tf.nn.fused_batch_norm is deprecated. Please use tf.compat.v1.nn.fused_batch_norm instead.
+
+C:\Users\Arya\AppData\Local\Programs\Python\Python311\Lib\site-packages\google\protobuf\symbol_database.py:55: UserWarning: SymbolDatabase.GetPrototype() is deprecated. Please use message_factory.GetMessageClass() instead. SymbolDatabase.GetPrototype() will be removed soon.
+  warnings.warn('SymbolDatabase.GetPrototype() is deprecated. Please '
+W0000 00:00:1789578764.441389   40024 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1789578764.451805   38132 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1789578764.526306    8672 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1789578764.540560    8672 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1789579136.226770   36860 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1789579136.236832   26052 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1789579136.304003   40904 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1789579136.317892   40904 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+    smoothing: 70 samples @ 35.1eff-fps = 1.99s (live is 2.00s)
+[stress_fusion] DaiSEE baseline set to 0.577
+    calibrated at 20.0s (face=True, daisee=True, 703 samples)
+    -> 5594 samples, 6277 rPPG frames, 28 without a face, 368.3s wall (0.49x realtime)
+    written: relaxed_U11_default_2026-09-16_vid_s11_T1.csv
+    written: rppg_vid_s11_T1.csv
+    written: features_vid_s11_T1.csv  (21 columns)
+    1.3 MB extracted - the 5.5 GB video is now disposable
+
+  vid_s11_T2.avi: 6325 frames @ 35.1fps (180s)
+    smoothing: 70 samples @ 35.1eff-fps = 1.99s (live is 2.00s)
+[stress_fusion] DaiSEE baseline set to 0.553
+    calibrated at 20.0s (face=True, daisee=True, 703 samples)
+    -> 5612 samples, 734 rPPG frames, 10 without a face, 371.7s wall (0.48x realtime)
+    written: stressed_U11_default_2026-09-16_vid_s11_T2.csv
+    written: rppg_vid_s11_T2.csv
+    written: features_vid_s11_T2.csv  (21 columns)
+    0.8 MB extracted - the 5.8 GB video is now disposable
+
+  vid_s11_T3.avi: 6325 frames @ 35.1fps (180s)
+    smoothing: 70 samples @ 35.1eff-fps = 1.99s (live is 2.00s)
+[stress_fusion] DaiSEE baseline set to 0.539
+    calibrated at 20.0s (face=True, daisee=True, 703 samples)
+    -> 5622 samples, 5989 rPPG frames, 0 without a face, 373.3s wall (0.48x realtime)
+    written: stressed_U11_default_2026-09-16_vid_s11_T3.csv
+    written: rppg_vid_s11_T3.csv
+    written: features_vid_s11_T3.csv  (21 columns)
+    1.3 MB extracted - the 5.7 GB video is now disposable
+
+
+3 CSV(s) written to C:\Users\Arya\Desktop\stress_project\evaluation_data\ubfc_phys
+next:  cd code && python run_all_evaluations.py

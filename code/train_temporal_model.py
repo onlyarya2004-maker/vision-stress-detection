@@ -39,7 +39,6 @@ from temporal_model import TEMPORAL_FEATURE_ORDER, gru_forward_numpy, normalize_
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
-from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.metrics import balanced_accuracy_score, classification_report, confusion_matrix
 
 # DaiSEE clips are ~10s; daisee_preprocessing.py sampled 16 frames evenly
@@ -436,6 +435,15 @@ def evaluate(y_true, y_pred_prob):
 
 
 def run_baseline_ablation(Xtr_stats, ytr, Xte_stats, yte):
+    # Imported lazily, not at module load: sklearn.ensemble's import chain
+    # (-> tree -> neighbors -> decomposition -> linear_model._glm ->
+    # sklearn._loss._loss, a compiled extension) has been blocked outright
+    # by a Windows Application Control policy in .venv-train, while
+    # sklearn.metrics (imported at module level above) is unaffected. A
+    # top-level import here would make that one blocked native DLL take
+    # down GRU training entirely, when only this secondary GBT-baseline
+    # comparison actually needs it.
+    from sklearn.ensemble import GradientBoostingClassifier
     clf = GradientBoostingClassifier(random_state=0)
     clf.fit(Xtr_stats, ytr)
     probs = clf.predict_proba(Xte_stats)[:, 1]
@@ -581,7 +589,17 @@ def main():
     print("-" * 74)
     Xtr_stats = compute_summary_stats(Xtr)
     Xte_stats = compute_summary_stats(Xte)
-    gbt_result = run_baseline_ablation(Xtr_stats, ytr, Xte_stats, yte)
+    try:
+        gbt_result = run_baseline_ablation(Xtr_stats, ytr, Xte_stats, yte)
+    except ImportError as e:
+        # sklearn.ensemble's compiled DLL is blocked by a Windows Application
+        # Control policy in .venv-train on some machines (see
+        # run_baseline_ablation()'s own lazy-import comment) - this must not
+        # crash the whole run AFTER the expensive GRU training above has
+        # already completed and BEFORE the model is exported below. Matches
+        # train_temporal_model_ubfc.py's identical guard on the same call.
+        print(f"  GBT baseline unavailable in this environment ({e}) - skipped")
+        gbt_result = None
 
     print("\n" + "-" * 74)
     print("EXPORT + PARITY VERIFICATION")
@@ -669,7 +687,8 @@ def main():
         out("")
 
     report_model("GRU (feature-sequence temporal model)", gru_result)
-    report_model("GBT baseline (mean/std/slope summary stats)", gbt_result)
+    if gbt_result is not None:
+        report_model("GBT baseline (mean/std/slope summary stats)", gbt_result)
 
     out("-" * 74)
     out("FALLBACK DIAGNOSTICS")
@@ -689,9 +708,12 @@ def main():
     out(f"  new GRU        : {gru_result['accuracy'] * 100:.2f}% accuracy, "
        f"{'ABOVE' if gru_result['above_floor'] else 'BELOW'} its "
        f"{gru_result['majority_floor'] * 100:.2f}% floor")
-    out(f"  GBT baseline   : {gbt_result['accuracy'] * 100:.2f}% accuracy, "
-       f"{'ABOVE' if gbt_result['above_floor'] else 'BELOW'} its "
-       f"{gbt_result['majority_floor'] * 100:.2f}% floor")
+    if gbt_result is not None:
+        out(f"  GBT baseline   : {gbt_result['accuracy'] * 100:.2f}% accuracy, "
+           f"{'ABOVE' if gbt_result['above_floor'] else 'BELOW'} its "
+           f"{gbt_result['majority_floor'] * 100:.2f}% floor")
+    else:
+        out("  GBT baseline   : unavailable in this environment (sklearn.ensemble blocked)")
     out("")
     out("This result is reported as-is, whichever way it went - no tuning was")
     out("performed specifically to cross the majority-class floor.")

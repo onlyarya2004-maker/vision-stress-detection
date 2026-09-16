@@ -21,7 +21,7 @@
 | `session_history.py` | SQLite persistence: sessions, per-frame samples, self-reports, user profiles + per-user calibration baselines (Phase 1 prerequisite for team recordings) |
 | `session_report.py` | Phase 5.2: renders one saved session into a downloadable 2-page PDF (summary stats + timeline) via matplotlib's `PdfPages` — no separate PDF library. `session_history.summarize_history()` supplies the same duration/mean/max/pct numbers `save_session()` persists, so the report and the DB row can never drift apart |
 | `app_naming.py` | Canonical evaluation-CSV naming + parsing |
-| `recording_intake.py` | Validates freshly-exported session CSVs against `RECORDING_PROTOCOL.md` (filename, condition, mode, 60s minimum) at a staging folder (`../evaluation_data/incoming/`) before they reach `evaluation_data/` proper - the pipeline-entry-point guard against a repeat of the `relaaxed_2.csv` incident |
+| `recording_intake.py` | Validates freshly-exported session CSVs against `RECORDING_PROTOCOL.md` (filename, condition, mode, 60s minimum) at a staging folder (`../evaluation_data/incoming/`) before they reach `evaluation_data/live_recordings/` - the pipeline-entry-point guard against a repeat of the `relaaxed_2.csv` incident |
 | `stress_detector.py` | OpenCV-only runner (no Streamlit) — uses `daisee_ensemble.py` for CNN inference, same as `app.py`/`evaluate_video_file.py`, so all three runners are provably identical rather than three hand-kept copies |
 
 ## The switches (all in `config.py`)

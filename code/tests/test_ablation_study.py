@@ -17,6 +17,7 @@ import stress_fusion
 from ablation_study import (
     fused_frame, smoothing_window, replay_condition, load_trace,
     discover_traces, run_ablation_study, CONDITIONS, NAME_RE, SIGNALS,
+    TEMPORAL_EXTRA_COLUMNS, compute_temporal_scores, load_held_out_test_subjects,
 )
 
 
@@ -104,13 +105,17 @@ def test_fused_frame_output_always_clipped_to_unit_range():
 # compute_stress_index()'s weight-allocation + rule-boost math, verified
 # equal to the real function only ONCE, manually, per PLAN_FOR_PP2.md
 # (2026-08-22) - not by any automated test. It would silently drift the
-# moment compute_stress_index() changes (e.g. W_RPPG raised above 0.0,
-# which this project's own README names as the plan). The tests below
-# close that gap: same synthetic signal dict fed into BOTH functions,
-# asserting the outputs agree, under today's shipped config where
-# W_TEMPORAL=W_RPPG=0.0 (so neither of those two branches can enter
-# compute_stress_index()'s fusion and this comparison stays apples-to-apples
-# with fused_frame(), which never modeled them at all).
+# moment compute_stress_index() changes. The tests below close that gap:
+# same synthetic signal dict fed into BOTH functions, asserting the
+# outputs agree.
+#
+# W_RPPG stays out of scope here (still 0.0, still no rPPG term in
+# fused_frame() - see the module docstring for why: the cached traces
+# never captured the raw pixel colors it needs). The temporal branch WAS
+# in this same boat until 2026-09-16 - fused_frame() now has a real
+# w_temporal/temporal_score term, so this comparison covers both
+# W_TEMPORAL=0.0 (today's shipped default) AND a nonzero value (proving
+# the fix itself, not just that it doesn't break the zero case).
 
 FUSION_EQUIVALENCE_CASES = {
     "low values, no daisee": (
@@ -157,9 +162,9 @@ def _clean_daisee_baseline():
 
 @pytest.mark.parametrize("name", sorted(FUSION_EQUIVALENCE_CASES))
 def test_fused_frame_matches_real_compute_stress_index(name, _clean_daisee_baseline):
-    assert config.W_TEMPORAL == 0.0 and config.W_RPPG == 0.0, (
-        "premise: this equivalence check is only valid for the currently-"
-        "shipped config, where those two branches cannot enter the fusion"
+    assert config.W_RPPG == 0.0, (
+        "premise: this equivalence check is only valid while rPPG cannot "
+        "enter the fusion - fused_frame() has no rPPG term at all"
     )
     features, daisee_probs = FUSION_EQUIVALENCE_CASES[name]
     features = dict(features, calibrating=False)
@@ -174,10 +179,114 @@ def test_fused_frame_matches_real_compute_stress_index(name, _clean_daisee_basel
     row['daisee_stress'] = real['daisee_stress']
     row['behavior_stress'] = real['behavior_stress']
 
+    # temporal_score=None, w_temporal=0.0 explicitly - deliberately fixed
+    # regardless of the live config.W_TEMPORAL value (0.10 as of
+    # 2026-09-16), so this parametrized set stays pure DaiSEE/behavioral-
+    # path regression coverage. See the two dedicated tests below for the
+    # temporal branch's own equivalence at a nonzero weight.
     ablation_out = fused_frame(row, w_daisee=config.W_DAISEE, w_behavior=config.W_BEHAVIOR,
-                               rule_boost_amount=config.RULE_BOOST_AMOUNT)
+                               rule_boost_amount=config.RULE_BOOST_AMOUNT,
+                               temporal_score=None, w_temporal=0.0)
 
     assert ablation_out == pytest.approx(real['stress_index'], abs=1e-9)
+
+
+def test_fused_frame_matches_real_compute_stress_index_with_temporal_branch_active(
+    monkeypatch, _clean_daisee_baseline,
+):
+    """Same equivalence check as above, but with the temporal branch given
+    a real, nonzero weight and a real score - the actual case
+    config.py's W_TEMPORAL comment says fused_frame() couldn't handle
+    until this fix. Patches stress_fusion.W_TEMPORAL directly (the
+    module-level constant compute_stress_index() closes over), not
+    config.W_TEMPORAL, since stress_fusion.py copies it once at import
+    time and never re-reads config afterward."""
+    monkeypatch.setattr(stress_fusion, 'W_TEMPORAL', 0.10)
+    features = dict({s: 0.30 for s in SIGNALS}, calibrating=False)
+    temporal_score = 0.72
+
+    real = stress_fusion.compute_stress_index(
+        None, features, task_mode='Default', temporal_score=temporal_score,
+    )
+
+    row = {s: features[s] for s in SIGNALS}
+    row['daisee_stress'] = real['daisee_stress']
+    row['behavior_stress'] = real['behavior_stress']
+
+    ablation_out = fused_frame(row, w_daisee=config.W_DAISEE, w_behavior=config.W_BEHAVIOR,
+                               rule_boost_amount=config.RULE_BOOST_AMOUNT,
+                               temporal_score=temporal_score, w_temporal=0.10)
+
+    assert ablation_out == pytest.approx(real['stress_index'], abs=1e-9)
+    # Sanity check this test actually exercises blending, not an
+    # accidental no-op - a nonzero temporal weight with a high temporal
+    # score must move the result above the temporal-free equivalent.
+    without_temporal = fused_frame(row, w_daisee=config.W_DAISEE, w_behavior=config.W_BEHAVIOR,
+                                   rule_boost_amount=config.RULE_BOOST_AMOUNT,
+                                   temporal_score=None, w_temporal=0.0)
+    assert ablation_out > without_temporal
+
+
+def test_fused_frame_temporal_weight_is_ignored_when_score_is_none():
+    """A nonzero w_temporal with no actual score (buffer not full yet,
+    matching temporal_model.GRUTemporalInference.predict()'s real None
+    contract) must not enter the weighted average - the same guard
+    compute_stress_index() itself applies."""
+    row = _row(daisee_stress=0.5, behavior_stress=0.5)
+    with_none_score = fused_frame(row, w_daisee=0.20, w_behavior=0.80,
+                                  rule_boost_amount=0.0,
+                                  temporal_score=None, w_temporal=0.5)
+    without_temporal_at_all = fused_frame(row, w_daisee=0.20, w_behavior=0.80,
+                                          rule_boost_amount=0.0)
+    assert with_none_score == pytest.approx(without_temporal_at_all)
+
+
+# --------------------------------------------------------------------------
+# compute_temporal_scores
+# --------------------------------------------------------------------------
+
+def _temporal_row(i):
+    """A frame dict carrying all 10 TEMPORAL_FEATURE_ORDER values plus the
+    other fields _row()/load_trace() expect - compute_temporal_scores()
+    only reads the TEMPORAL_FEATURE_ORDER subset, so constant filler
+    values are fine; only the frame count matters for this test."""
+    row = {s: 0.1 for s in SIGNALS}
+    row.update({name: 0.1 for name in TEMPORAL_EXTRA_COLUMNS})
+    return row
+
+
+def test_compute_temporal_scores_matches_the_live_sliding_window_contract():
+    """Uses the actual shipped models/temporal_gru.npz (skipped gracefully
+    below if unavailable) - None for the first 15 frames, a real float
+    from frame 16 onward, exactly GRUTemporalInference.predict()'s own
+    documented contract. This is what proves compute_temporal_scores()
+    replays the REAL live inference path, not a reimplementation of it."""
+    from temporal_model import GRUTemporalInference
+    if not GRUTemporalInference().is_available():
+        pytest.skip("no live temporal model artifact in this checkout")
+
+    rows = [_temporal_row(i) for i in range(20)]
+    scores = compute_temporal_scores(rows)
+
+    assert len(scores) == len(rows)
+    assert all(s is None for s in scores[:15])
+    assert scores[15] is not None
+    assert 0.0 <= scores[15] <= 1.0
+
+
+def test_compute_temporal_scores_all_none_when_model_unavailable(monkeypatch):
+    """A missing/corrupted model must degrade to None for every frame,
+    never raise - matching GRUTemporalInference's own fail-safe contract,
+    not a special case invented here."""
+    import ablation_study
+
+    class _Unavailable:
+        def is_available(self):
+            return False
+
+    monkeypatch.setattr(ablation_study, 'GRUTemporalInference', lambda: _Unavailable())
+    rows = [_temporal_row(i) for i in range(5)]
+    assert compute_temporal_scores(rows) == [None] * 5
 
 
 # --------------------------------------------------------------------------
@@ -207,7 +316,8 @@ def test_smoothing_window_degenerate_single_row_falls_back_safely():
 def test_replay_condition_preserves_frame_count_and_range():
     rows = [_row(daisee_stress=0.5, behavior_stress=0.5) | {'t': i * 0.1}
            for i in range(50)]
-    out = replay_condition(rows, **CONDITIONS['Full system (current config)'])
+    out = replay_condition(rows, [None] * len(rows),
+                           **CONDITIONS['Full system (current config)'])
     assert len(out) == len(rows)
     assert all(0.0 <= r['stress_index'] <= 1.0 for r in out)
     assert all(r['level'] in ('LOW', 'MODERATE', 'HIGH') for r in out)
@@ -223,9 +333,10 @@ def test_replay_condition_smoothing_dampens_a_single_spike():
 
     smoothed_params = dict(CONDITIONS['Full system (current config)'])
     unsmoothed_params = dict(CONDITIONS['- Temporal smoothing (window=1 frame)'])
+    none_scores = [None] * len(spike)
 
-    smoothed_out = replay_condition(spike, **smoothed_params)
-    unsmoothed_out = replay_condition(spike, **unsmoothed_params)
+    smoothed_out = replay_condition(spike, none_scores, **smoothed_params)
+    unsmoothed_out = replay_condition(spike, none_scores, **unsmoothed_params)
 
     assert smoothed_out[-1]['stress_index'] < unsmoothed_out[-1]['stress_index']
 
@@ -239,8 +350,9 @@ def test_replay_condition_is_stateless_across_independent_calls():
     cold = [_row(daisee_stress=0.0, behavior_stress=0.0) | {'t': i * 0.1}
            for i in range(5)]
 
-    replay_condition(hot, **CONDITIONS['Full system (current config)'])
-    cold_out = replay_condition(cold, **CONDITIONS['Full system (current config)'])
+    replay_condition(hot, [None] * len(hot), **CONDITIONS['Full system (current config)'])
+    cold_out = replay_condition(cold, [None] * len(cold),
+                                **CONDITIONS['Full system (current config)'])
     assert cold_out[0]['level'] == 'LOW'
 
 
@@ -249,7 +361,7 @@ def test_replay_condition_is_stateless_across_independent_calls():
 # --------------------------------------------------------------------------
 
 TRACE_HEADER = (
-    ['t'] + SIGNALS
+    ['t'] + SIGNALS + TEMPORAL_EXTRA_COLUMNS
     + ['posture_detected', 'daisee_raw', 'daisee_stress', 'behavior_stress',
        'raw_index', 'stress_index_frame', 'stress_index_smoothed', 'level',
        'active_signals', 'boost_applied']
@@ -262,6 +374,7 @@ def _write_trace(path, n_frames, daisee_every=3):
         w.writeheader()
         for i in range(n_frames):
             row = {name: 0.1 for name in SIGNALS}
+            row.update({name: 0.0 for name in TEMPORAL_EXTRA_COLUMNS})
             row.update({
                 't': i * 0.1, 'posture_detected': 1,
                 'daisee_raw': 0.4 if i % daisee_every == 0 else '',
@@ -289,6 +402,80 @@ def test_load_trace_marks_skipped_cnn_frames_as_none(tmp_path):
     assert rows[1]['daisee_stress'] is None                 # i=1, skipped
     assert rows[2]['daisee_stress'] is None                 # i=2, skipped
     assert rows[3]['daisee_stress'] == pytest.approx(0.2)   # i=3
+
+
+def test_load_trace_excludes_file_missing_temporal_columns_without_raising(tmp_path, capsys):
+    """A pre-v7-schema trace file (no ear/ear_asymmetry/blinks_per_minute
+    header) must be excluded with a printed warning, not raise or silently
+    vanish with zero signal."""
+    path = tmp_path / 'features_vid_s1_T1.csv'
+    legacy_header = ['t'] + SIGNALS + [
+        'posture_detected', 'daisee_raw', 'daisee_stress', 'behavior_stress',
+        'raw_index', 'stress_index_frame', 'stress_index_smoothed', 'level',
+        'active_signals', 'boost_applied',
+    ]
+    with open(path, 'w', newline='') as f:
+        w = csv.DictWriter(f, fieldnames=legacy_header)
+        w.writeheader()
+        row = {name: 0.1 for name in SIGNALS}
+        row.update({'t': 0.0, 'posture_detected': 1, 'daisee_raw': 0.4,
+                    'daisee_stress': 0.2, 'behavior_stress': 0.3, 'raw_index': 0.25,
+                    'stress_index_frame': 0.25, 'stress_index_smoothed': 0.25,
+                    'level': 'LOW', 'active_signals': 1, 'boost_applied': 0})
+        w.writerow(row)
+
+    rows = load_trace(path)
+    assert rows == []
+    assert 'features_vid_s1_T1.csv' in capsys.readouterr().out
+
+
+def test_discover_traces_subjects_filter_skips_excluded_files_before_loading(tmp_path, capsys):
+    """The subjects filter must exclude a file BEFORE load_trace()/
+    compute_temporal_scores() ever touch it - proven here by giving the
+    excluded subject a malformed file that load_trace() would otherwise
+    print a warning for. If discover_traces still reads it, this test's
+    capsys check fails."""
+    _write_trace(tmp_path / 'features_vid_s1_T1.csv', 10)
+    (tmp_path / 'features_vid_s2_T1.csv').write_text('not,a,valid,trace,header\n1,2,3,4,5\n')
+
+    by_subject = discover_traces(tmp_path, subjects={'s1'})
+    assert set(by_subject.keys()) == {'s1'}
+    assert 'features_vid_s2_T1.csv' not in capsys.readouterr().out
+
+
+def test_compute_temporal_scores_reused_instance_resets_between_files():
+    """Passing a shared `inf` (the discover_traces() efficiency fix) must
+    behave identically to a fresh instance per call - no leaked buffer
+    state from a previous file's frames."""
+    from temporal_model import GRUTemporalInference
+    rows_a = [{name: 0.1 for name in SIGNALS + TEMPORAL_EXTRA_COLUMNS} for _ in range(20)]
+    rows_b = [{name: 0.9 for name in SIGNALS + TEMPORAL_EXTRA_COLUMNS} for _ in range(20)]
+
+    shared = GRUTemporalInference()
+    if not shared.is_available():
+        pytest.skip("no shipped temporal model artifact available")
+    scores_a_shared = compute_temporal_scores(rows_a, inf=shared)
+    scores_b_shared = compute_temporal_scores(rows_b, inf=shared)
+
+    scores_a_fresh = compute_temporal_scores(rows_a)
+    scores_b_fresh = compute_temporal_scores(rows_b)
+
+    assert scores_a_shared == scores_a_fresh
+    assert scores_b_shared == scores_b_fresh
+
+
+def test_load_held_out_test_subjects_parses_report_line(tmp_path):
+    report = tmp_path / 'report.txt'
+    report.write_text("SOME HEADER\nHELD_OUT_TEST_SUBJECTS: s9,s7\nmore text\n")
+    assert load_held_out_test_subjects(str(report)) == {'s9', 's7'}
+
+
+def test_load_held_out_test_subjects_returns_none_when_missing_or_absent(tmp_path):
+    assert load_held_out_test_subjects(str(tmp_path / 'does_not_exist.txt')) is None
+
+    report = tmp_path / 'no_line.txt'
+    report.write_text("just some other report text, no held-out line\n")
+    assert load_held_out_test_subjects(str(report)) is None
 
 
 def test_discover_traces_groups_by_subject_and_task(tmp_path):
@@ -329,6 +516,7 @@ def test_run_ablation_study_removing_a_perfectly_discriminative_branch_hurts_acc
                 # the rule boost on every frame, swamping the DaiSEE signal
                 # this test is trying to isolate.
                 row = {name: 0.0 for name in SIGNALS}
+                row.update({name: 0.0 for name in TEMPORAL_EXTRA_COLUMNS})
                 row.update({
                     't': i * 0.1, 'posture_detected': 1,
                     'daisee_raw': daisee_val, 'daisee_stress': daisee_val,
@@ -368,3 +556,22 @@ def test_run_ablation_study_covers_all_named_conditions(tmp_path):
     for fr, se in results.values():
         assert fr['n'] == 160   # 2 subjects x 2 files x 40 frames
         assert se['n'] == 4     # 2 subjects x 2 conditions
+
+
+def test_run_ablation_study_subjects_filter_restricts_to_named_subjects(tmp_path):
+    for subj in ('s1', 's2', 's3'):
+        _write_trace(tmp_path / f'features_vid_{subj}_T1.csv', 40)
+        _write_trace(tmp_path / f'features_vid_{subj}_T2.csv', 40)
+
+    results = run_ablation_study(tmp_path, subjects={'s2'})
+    assert results is not None
+    for fr, se in results.values():
+        assert fr['n'] == 80    # only s2: 2 files x 40 frames
+        assert se['n'] == 2     # only s2: 2 conditions
+
+
+def test_run_ablation_study_subjects_filter_empty_intersection_returns_none(tmp_path):
+    _write_trace(tmp_path / 'features_vid_s1_T1.csv', 40)
+    _write_trace(tmp_path / 'features_vid_s1_T2.csv', 40)
+
+    assert run_ablation_study(tmp_path, subjects={'s99'}) is None

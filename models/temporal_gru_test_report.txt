@@ -1,63 +1,27 @@
+UBFC-PHYS TEMPORAL MODEL - v2 (true held-out test subjects)
 ==========================================================================
-PHASE 2.1 TEMPORAL MODEL - TEST REPORT
-==========================================================================
-generated : 2026-08-21 22:35:00
-clips     : train=5356 val=1429 test=1784
-best val balanced accuracy during training: 0.5511
+HELD_OUT_TEST_SUBJECTS: s6,s9,s2
+windows=17520  subjects=11
+class balance: 5843 relaxed / 11677 stressed
 
-KNOWN LIMITATION: datasets/processed_daisee/ crops are face-only
-(FaceMesh bbox + 15% padding). neck_strain and slouch are structurally
-~0 for nearly every frame in this training set, since posture scoring
-requires both-shoulder visibility >= 0.7 that a face-only crop
-essentially never has. Not redesigned around - re-decoding the 8231
-original DaiSEE videos for 2 of 10 dims was judged not worth it.
+LOSO GRU result (method-level estimate, fresh model per fold, all
+10 subjects each genuinely held out once, nothing deployable comes
+out of this loop - it is a sanity check on the APPROACH):
+  accuracy=76.51%  balanced_accuracy=74.20%  precision=0.832  recall=0.812  f1=0.822
+  majority floor: 66.65%  verdict: ABOVE
 
---------------------------------------------------------------------------
-GRU (feature-sequence temporal model)
---------------------------------------------------------------------------
-  n                    : 1784
-  accuracy             : 45.74%
-  balanced accuracy    : 54.17%
-  precision (stressed) : 0.151
-  recall (stressed)    : 0.657
-  f1 (stressed)        : 0.245
-  majority-class floor : 86.60%
-  verdict              : BELOW the majority-class floor
-  confusion matrix (rows=true, cols=pred [not_stressed, stressed]):
-    [659, 886]
-    [82, 157]
+EXPORTED ARTIFACT result (the actual file below, scored ONLY on ['s6', 's9', 's2'], never seen during its training or its early-stopping - this is the number that matters for deployment):
+  accuracy=84.24%  balanced_accuracy=81.91%  precision=0.876  recall=0.889  f1=0.883
+  majority floor: 66.63%  verdict: ABOVE
 
---------------------------------------------------------------------------
-GBT baseline (mean/std/slope summary stats)
---------------------------------------------------------------------------
-  n                    : 1784
-  accuracy             : 84.59%
-  balanced accuracy    : 49.37%
-  precision (stressed) : 0.071
-  recall (stressed)    : 0.013
-  f1 (stressed)        : 0.021
-  majority-class floor : 86.60%
-  verdict              : BELOW the majority-class floor
-  confusion matrix (rows=true, cols=pred [not_stressed, stressed]):
-    [1506, 39]
-    [236, 3]
+REAL WEBCAM CHECK (team recordings, this project's own feature
+engine and camera pipeline, never in UBFC training data - the
+closest thing to a live-deployment test available today):
+  accuracy=75.00%  balanced_accuracy=73.61%  precision=0.678  recall=1.000  f1=0.808
+  majority floor: 52.63%  verdict: ABOVE
 
---------------------------------------------------------------------------
-FALLBACK DIAGNOSTICS
---------------------------------------------------------------------------
-Frames where extraction fell back to the previous frame's vector -
-no face found, or an unreadable image. Fallback strategy itself is
-unchanged by these numbers; this is reporting only.
-  [train] frames=85696  none=2  unreadable=0  fallback=2 (0.00%)  clips_affected=2/5356
-  [val] frames=22864  none=0  unreadable=0  fallback=0 (0.00%)  clips_affected=0/1429
-  [test] frames=28544  none=5  unreadable=0  fallback=5 (0.02%)  clips_affected=3/1784
+old DaiSEE-trained GRU: 45.74% accuracy, BELOW its 86.60% floor
 
-==========================================================================
-COMPARISON TO THE OLD PIXEL-LSTM (models/lstm_test_report.txt)
-==========================================================================
-  old pixel-LSTM : 71.13% accuracy, BELOW its 86.6% majority floor
-  new GRU        : 45.74% accuracy, BELOW its 86.60% floor
-  GBT baseline   : 84.59% accuracy, BELOW its 86.60% floor
-
-This result is reported as-is, whichever way it went - no tuning was
-performed specifically to cross the majority-class floor.
+The export at models/temporal_gru_ubfc.npz is NOT the live model.
+Manually copy it to models/temporal_gru.npz and set config.W_TEMPORAL
+to a nonzero value to activate, after review.

@@ -1,0 +1,236 @@
+device: cuda
+
+==========================================================================
+BUILDING SLIDING-WINDOW DATASET FROM UBFC-PHYS TRACES
+==========================================================================
+  windows        : 15421
+  subjects       : 10 ([np.str_('s1'), np.str_('s10'), np.str_('s2'), np.str_('s3'), np.str_('s4'), np.str_('s5'), np.str_('s6'), np.str_('s7'), np.str_('s8'), np.str_('s9')])
+  class balance  : 5145 relaxed / 10276 stressed
+
+==========================================================================
+LEAVE-ONE-SUBJECT-OUT EVALUATION
+==========================================================================
+
+  --- held out: s1 (train windows=12334, val=2103, test=984) ---
+  epoch   0  train_loss=0.2766  val_balanced_acc=0.7942
+  epoch   1  train_loss=0.2016  val_balanced_acc=0.7707
+  epoch   2  train_loss=0.1764  val_balanced_acc=0.7454
+  epoch   3  train_loss=0.1582  val_balanced_acc=0.7150
+  epoch   4  train_loss=0.1450  val_balanced_acc=0.6576
+  epoch   5  train_loss=0.1326  val_balanced_acc=0.6797
+  epoch   6  train_loss=0.1267  val_balanced_acc=0.6637
+  epoch   7  train_loss=0.1192  val_balanced_acc=0.6748
+  epoch   8  train_loss=0.1121  val_balanced_acc=0.7272
+  epoch   9  train_loss=0.1062  val_balanced_acc=0.6462
+  epoch  10  train_loss=0.1010  val_balanced_acc=0.5670
+  early stopping at epoch 10 (patience=10)
+    [s1] GBT this fold: acc=80.7%  balanced_acc=78.4%
+
+  --- held out: s10 (train windows=12334, val=984, test=2103) ---
+  epoch   0  train_loss=0.2754  val_balanced_acc=0.8018
+  epoch   1  train_loss=0.2042  val_balanced_acc=0.7111
+  epoch   2  train_loss=0.1795  val_balanced_acc=0.7043
+  epoch   3  train_loss=0.1638  val_balanced_acc=0.7477
+  epoch   4  train_loss=0.1500  val_balanced_acc=0.7294
+  epoch   5  train_loss=0.1386  val_balanced_acc=0.7309
+  epoch   6  train_loss=0.1299  val_balanced_acc=0.6982
+  epoch   7  train_loss=0.1234  val_balanced_acc=0.7302
+  epoch   8  train_loss=0.1188  val_balanced_acc=0.6921
+  epoch   9  train_loss=0.1130  val_balanced_acc=0.7271
+  epoch  10  train_loss=0.1077  val_balanced_acc=0.7165
+  early stopping at epoch 10 (patience=10)
+    [s10] GBT this fold: acc=89.3%  balanced_acc=88.4%
+
+  --- held out: s2 (train windows=13463, val=979, test=979) ---
+  epoch   0  train_loss=0.2685  val_balanced_acc=0.6550
+  epoch   1  train_loss=0.2030  val_balanced_acc=0.7808
+  epoch   2  train_loss=0.1795  val_balanced_acc=0.6717
+  epoch   3  train_loss=0.1611  val_balanced_acc=0.6991
+  epoch   4  train_loss=0.1476  val_balanced_acc=0.6567
+  epoch   5  train_loss=0.1389  val_balanced_acc=0.6345
+  epoch   6  train_loss=0.1324  val_balanced_acc=0.6047
+  epoch   7  train_loss=0.1247  val_balanced_acc=0.6291
+  epoch   8  train_loss=0.1193  val_balanced_acc=0.6459
+  epoch   9  train_loss=0.1163  val_balanced_acc=0.6170
+  epoch  10  train_loss=0.1096  val_balanced_acc=0.5903
+  epoch  11  train_loss=0.1058  val_balanced_acc=0.5994
+  early stopping at epoch 11 (patience=10)
+    [s2] GBT this fold: acc=92.3%  balanced_acc=91.1%
+
+  --- held out: s3 (train windows=13458, val=979, test=984) ---
+  epoch   0  train_loss=0.2605  val_balanced_acc=0.7466
+  epoch   1  train_loss=0.1913  val_balanced_acc=0.7077
+  epoch   2  train_loss=0.1711  val_balanced_acc=0.7009
+  epoch   3  train_loss=0.1557  val_balanced_acc=0.6956
+  epoch   4  train_loss=0.1440  val_balanced_acc=0.6910
+  epoch   5  train_loss=0.1348  val_balanced_acc=0.6277
+  epoch   6  train_loss=0.1269  val_balanced_acc=0.6987
+  epoch   7  train_loss=0.1184  val_balanced_acc=0.6994
+  epoch   8  train_loss=0.1117  val_balanced_acc=0.6881
+  epoch   9  train_loss=0.1057  val_balanced_acc=0.6400
+  epoch  10  train_loss=0.0997  val_balanced_acc=0.6476
+  early stopping at epoch 10 (patience=10)
+    [s3] GBT this fold: acc=84.8%  balanced_acc=83.5%
+
+  --- held out: s4 (train windows=12342, val=2100, test=979) ---
+  epoch   0  train_loss=0.2544  val_balanced_acc=0.7460
+  epoch   1  train_loss=0.1862  val_balanced_acc=0.7161
+  epoch   2  train_loss=0.1675  val_balanced_acc=0.7093
+  epoch   3  train_loss=0.1535  val_balanced_acc=0.7421
+  epoch   4  train_loss=0.1408  val_balanced_acc=0.7046
+  epoch   5  train_loss=0.1320  val_balanced_acc=0.6586
+  epoch   6  train_loss=0.1206  val_balanced_acc=0.6419
+  epoch   7  train_loss=0.1115  val_balanced_acc=0.6861
+  epoch   8  train_loss=0.1008  val_balanced_acc=0.6133
+  epoch   9  train_loss=0.0936  val_balanced_acc=0.6893
+  epoch  10  train_loss=0.0869  val_balanced_acc=0.6055
+  early stopping at epoch 10 (patience=10)
+    [s4] GBT this fold: acc=82.9%  balanced_acc=74.8%
+
+  --- held out: s5 (train windows=13453, val=984, test=984) ---
+  epoch   0  train_loss=0.2508  val_balanced_acc=0.7774
+  epoch   1  train_loss=0.1764  val_balanced_acc=0.7340
+  epoch   2  train_loss=0.1497  val_balanced_acc=0.7752
+  epoch   3  train_loss=0.1331  val_balanced_acc=0.7561
+  epoch   4  train_loss=0.1237  val_balanced_acc=0.7431
+  epoch   5  train_loss=0.1125  val_balanced_acc=0.7492
+  epoch   6  train_loss=0.1031  val_balanced_acc=0.7271
+  epoch   7  train_loss=0.0948  val_balanced_acc=0.7264
+  epoch   8  train_loss=0.0904  val_balanced_acc=0.7149
+  epoch   9  train_loss=0.0848  val_balanced_acc=0.7142
+  epoch  10  train_loss=0.0807  val_balanced_acc=0.6761
+  early stopping at epoch 10 (patience=10)
+    [s5] GBT this fold: acc=79.2%  balanced_acc=70.0%
+
+  --- held out: s6 (train windows=12334, val=984, test=2103) ---
+  epoch   0  train_loss=0.2600  val_balanced_acc=0.4901
+  epoch   1  train_loss=0.1857  val_balanced_acc=0.5244
+  epoch   2  train_loss=0.1604  val_balanced_acc=0.5335
+  epoch   3  train_loss=0.1434  val_balanced_acc=0.5267
+  epoch   4  train_loss=0.1303  val_balanced_acc=0.5175
+  epoch   5  train_loss=0.1206  val_balanced_acc=0.5137
+  epoch   6  train_loss=0.1133  val_balanced_acc=0.5168
+  epoch   7  train_loss=0.1065  val_balanced_acc=0.5069
+  epoch   8  train_loss=0.1001  val_balanced_acc=0.5114
+  epoch   9  train_loss=0.0976  val_balanced_acc=0.5000
+  epoch  10  train_loss=0.0935  val_balanced_acc=0.5084
+  epoch  11  train_loss=0.0881  val_balanced_acc=0.5008
+  epoch  12  train_loss=0.0840  val_balanced_acc=0.5137
+  early stopping at epoch 12 (patience=10)
+    [s6] GBT this fold: acc=73.0%  balanced_acc=77.2%
+
+  --- held out: s7 (train windows=12339, val=979, test=2103) ---
+  epoch   0  train_loss=0.2832  val_balanced_acc=0.9533
+  epoch   1  train_loss=0.2161  val_balanced_acc=0.9264
+  epoch   2  train_loss=0.1921  val_balanced_acc=0.9179
+  epoch   3  train_loss=0.1773  val_balanced_acc=0.9020
+  epoch   4  train_loss=0.1647  val_balanced_acc=0.8965
+  epoch   5  train_loss=0.1549  val_balanced_acc=0.9049
+  epoch   6  train_loss=0.1423  val_balanced_acc=0.8827
+  epoch   7  train_loss=0.1364  val_balanced_acc=0.9048
+  epoch   8  train_loss=0.1311  val_balanced_acc=0.9102
+  epoch   9  train_loss=0.1218  val_balanced_acc=0.9117
+  epoch  10  train_loss=0.1210  val_balanced_acc=0.8917
+  early stopping at epoch 10 (patience=10)
+    [s7] GBT this fold: acc=83.7%  balanced_acc=86.6%
+
+  --- held out: s8 (train windows=12342, val=979, test=2100) ---
+  epoch   0  train_loss=0.2544  val_balanced_acc=0.7347
+  epoch   1  train_loss=0.1862  val_balanced_acc=0.7370
+  epoch   2  train_loss=0.1675  val_balanced_acc=0.7744
+  epoch   3  train_loss=0.1535  val_balanced_acc=0.7339
+  epoch   4  train_loss=0.1408  val_balanced_acc=0.7057
+  epoch   5  train_loss=0.1320  val_balanced_acc=0.7217
+  epoch   6  train_loss=0.1206  val_balanced_acc=0.6912
+  epoch   7  train_loss=0.1115  val_balanced_acc=0.6866
+  epoch   8  train_loss=0.1008  val_balanced_acc=0.6089
+  epoch   9  train_loss=0.0936  val_balanced_acc=0.6752
+  epoch  10  train_loss=0.0869  val_balanced_acc=0.6935
+  epoch  11  train_loss=0.0811  val_balanced_acc=0.6805
+  epoch  12  train_loss=0.0773  val_balanced_acc=0.6424
+  early stopping at epoch 12 (patience=10)
+    [s8] GBT this fold: acc=79.3%  balanced_acc=71.8%
+
+  --- held out: s9 (train windows=11216, val=2103, test=2102) ---
+  epoch   0  train_loss=0.2694  val_balanced_acc=0.8156
+  epoch   1  train_loss=0.1955  val_balanced_acc=0.8516
+  epoch   2  train_loss=0.1627  val_balanced_acc=0.8659
+  epoch   3  train_loss=0.1361  val_balanced_acc=0.8573
+  epoch   4  train_loss=0.1217  val_balanced_acc=0.8217
+  epoch   5  train_loss=0.1090  val_balanced_acc=0.8491
+  epoch   6  train_loss=0.0989  val_balanced_acc=0.8327
+  epoch   7  train_loss=0.0922  val_balanced_acc=0.8620
+  epoch   8  train_loss=0.0886  val_balanced_acc=0.8495
+  epoch   9  train_loss=0.0811  val_balanced_acc=0.8598
+  epoch  10  train_loss=0.0813  val_balanced_acc=0.8556
+  epoch  11  train_loss=0.0735  val_balanced_acc=0.8588
+  epoch  12  train_loss=0.0703  val_balanced_acc=0.8563
+  early stopping at epoch 12 (patience=10)
+    [s9] GBT this fold: acc=70.8%  balanced_acc=62.6%
+
+  GRU (feature-sequence temporal model, trained on UBFC-Phys)
+    n                    : 15421
+    accuracy             : 76.88%
+    balanced accuracy    : 74.95%
+    precision (stressed) : 0.840
+    recall (stressed)    : 0.807
+    f1 (stressed)        : 0.823
+    majority-class floor : 66.64%
+    verdict              : ABOVE the majority-class floor
+    confusion matrix (rows=true, cols=pred [not_stressed, stressed]):
+      [3559, 1586]
+      [1980, 8296]
+
+  GBT baseline (per-fold mean, secondary comparison only): 81.60%
+
+  OLD (DaiSEE-trained) GRU : 45.74% accuracy, BELOW its 86.60% floor
+  NEW (UBFC-trained) GRU  : 76.88% accuracy, ABOVE its 66.64% floor
+
+==========================================================================
+EXPORT CANDIDATE: train / early-stop-val / held-out-TEST subjects
+==========================================================================
+  train subjects       (fit on these)      : [np.str_('s1'), np.str_('s10'), np.str_('s4'), np.str_('s5'), np.str_('s6'), np.str_('s8')]
+  validation subjects  (early-stop only)    : [np.str_('s2'), np.str_('s3')]
+  TEST subjects        (never touched until scoring): [np.str_('s9'), np.str_('s7')]
+  epoch   0  train_loss=0.2894  val_balanced_acc=0.8757
+  epoch   1  train_loss=0.1999  val_balanced_acc=0.8761
+  epoch   2  train_loss=0.1691  val_balanced_acc=0.8329
+  epoch   3  train_loss=0.1443  val_balanced_acc=0.8490
+  epoch   4  train_loss=0.1314  val_balanced_acc=0.8482
+  epoch   5  train_loss=0.1173  val_balanced_acc=0.8624
+  epoch   6  train_loss=0.1086  val_balanced_acc=0.8570
+  epoch   7  train_loss=0.1022  val_balanced_acc=0.8363
+  epoch   8  train_loss=0.0924  val_balanced_acc=0.8627
+  epoch   9  train_loss=0.0842  val_balanced_acc=0.8516
+  epoch  10  train_loss=0.0792  val_balanced_acc=0.8482
+  epoch  11  train_loss=0.0731  val_balanced_acc=0.8463
+  early stopping at epoch 11 (patience=10)
+
+  EXPORTED ARTIFACT - true held-out test ([np.str_('s9'), np.str_('s7')])
+    n                    : 4205
+    accuracy             : 76.46%
+    balanced accuracy    : 76.65%
+    precision (stressed) : 0.870
+    recall (stressed)    : 0.761
+    f1 (stressed)        : 0.812
+    majority-class floor : 66.66%
+    verdict              : ABOVE the majority-class floor
+    confusion matrix (rows=true, cols=pred [not_stressed, stressed]):
+      [1083, 319]
+      [671, 2132]
+
+  REAL WEBCAM CHECK - team recordings ['S5'] (never in UBFC training data)
+    n                    : 37
+    accuracy             : 62.16%
+    balanced accuracy    : 59.71%
+    precision (stressed) : 0.600
+    recall (stressed)    : 0.900
+    f1 (stressed)        : 0.720
+    majority-class floor : 54.05%
+    verdict              : ABOVE the majority-class floor
+    confusion matrix (rows=true, cols=pred [not_stressed, stressed]):
+      [5, 12]
+      [2, 18]
+  export parity check: OK (20/20 sequences)
+  written: ..\models\temporal_gru_ubfc.npz  (NOT the live model - models/temporal_gru.npz is untouched)
+  report written: ../models/temporal_gru_ubfc_test_report.txt

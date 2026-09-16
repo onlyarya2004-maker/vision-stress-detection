@@ -12,9 +12,11 @@ Scans a staging folder (default evaluation_data/incoming/) for *.csv files
 dropped there straight from the app's "Download session as CSV" button,
 validates each one against the canonical naming scheme (app_naming.py) and
 RECORDING_PROTOCOL.md's rules, and moves only the files that pass every
-check into evaluation_data/ proper - where the harness already looks for
-them. Anything that fails stays in the staging folder untouched, with the
-specific reason(s) printed.
+check into evaluation_data/live_recordings/ - where the harness already
+looks for them (kept apart from evaluation_data/'s root since 2026-09-16,
+matching the existing baseline_v1/ and ubfc_phys/ subfolder convention, so
+the folder isn't a flat pile of dozens of CSVs). Anything that fails stays
+in the staging folder untouched, with the specific reason(s) printed.
 
 Pure file/CSV processing - no camera, no Streamlit, no TensorFlow/MediaPipe.
 
@@ -22,7 +24,7 @@ Usage
 -----
     cd code && python recording_intake.py
     python recording_intake.py --dry-run
-    python recording_intake.py --incoming ../evaluation_data/incoming --dest ../evaluation_data
+    python recording_intake.py --incoming ../evaluation_data/incoming --dest ../evaluation_data/live_recordings
 """
 
 import argparse
@@ -208,9 +210,9 @@ def main():
     ap.add_argument("--incoming", default="../evaluation_data/incoming",
                      help="staging folder to scan (default: ../evaluation_data/incoming, "
                           "i.e. when run from code/)")
-    ap.add_argument("--dest", default="../evaluation_data",
+    ap.add_argument("--dest", default="../evaluation_data/live_recordings",
                      help="destination folder for validated CSVs "
-                          "(default: ../evaluation_data)")
+                          "(default: ../evaluation_data/live_recordings)")
     ap.add_argument("--dry-run", action="store_true",
                      help="validate and report only - never move anything")
     args = ap.parse_args()

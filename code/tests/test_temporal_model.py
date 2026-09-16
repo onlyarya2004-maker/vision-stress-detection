@@ -188,6 +188,96 @@ def test_reset_clears_all_scheduling_state(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Real-time pacing (add_frame(timestamp=...))
+# ---------------------------------------------------------------------------
+
+def test_add_frame_without_timestamp_is_unpaced_matching_existing_tests(tmp_path):
+    """Omitting timestamp must keep the original one-call-one-frame
+    behavior - every test above relies on this, and it's how pure
+    window/cadence mechanics get tested in isolation from real-time
+    pacing."""
+    path = _make_fixture_npz(tmp_path)
+    inf = GRUTemporalInference(model_path=path)
+    for i in range(1, 17):
+        inf.add_frame(_feats(i))
+    assert inf.buffer_status() == (16, config.TEMPORAL_SEQ_LEN)
+
+
+def test_add_frame_with_timestamp_drops_frames_faster_than_training_fps(tmp_path):
+    """Live app.py calls add_frame() on every processed webcam frame
+    (~30fps); training data was sampled at ~17.6fps. Frames arriving
+    closer together than 1/TEMPORAL_TRAINING_FPS must be silently
+    dropped so the buffer's 16 frames span the same real time training
+    did, not a shorter window packed with correlated near-duplicate
+    frames."""
+    path = _make_fixture_npz(tmp_path)
+    inf = GRUTemporalInference(model_path=path)
+    min_dt = 1.0 / config.TEMPORAL_TRAINING_FPS
+
+    inf.add_frame(_feats(1), timestamp=0.0)
+    inf.add_frame(_feats(2), timestamp=min_dt / 2)   # too soon - dropped
+    inf.add_frame(_feats(3), timestamp=min_dt / 2)   # still too soon - dropped
+    assert inf.buffer_status() == (1, config.TEMPORAL_SEQ_LEN)
+
+    inf.add_frame(_feats(4), timestamp=min_dt * 1.01)  # far enough - accepted
+    assert inf.buffer_status() == (2, config.TEMPORAL_SEQ_LEN)
+
+
+def test_add_frame_with_timestamp_accepts_frames_at_or_above_training_fps(tmp_path):
+    path = _make_fixture_npz(tmp_path)
+    inf = GRUTemporalInference(model_path=path)
+    min_dt = 1.0 / config.TEMPORAL_TRAINING_FPS
+
+    t = 0.0
+    for i in range(1, 17):
+        inf.add_frame(_feats(i), timestamp=t)
+        t += min_dt * 1.1  # comfortably at-or-above training pace
+    assert inf.buffer_status() == (16, config.TEMPORAL_SEQ_LEN)
+    assert inf.predict() is not None
+
+
+def test_reset_clears_pacing_state(tmp_path):
+    path = _make_fixture_npz(tmp_path)
+    inf = GRUTemporalInference(model_path=path)
+    min_dt = 1.0 / config.TEMPORAL_TRAINING_FPS
+
+    inf.add_frame(_feats(1), timestamp=100.0)
+    inf.reset()
+    # After reset, the very next frame must be accepted regardless of how
+    # close its timestamp is to the pre-reset one - stale pacing state
+    # must not suppress it.
+    inf.add_frame(_feats(2), timestamp=100.0 + min_dt / 100)
+    assert inf.buffer_status() == (1, config.TEMPORAL_SEQ_LEN)
+
+
+def test_add_frame_accepts_backward_timestamp_instead_of_stalling(tmp_path):
+    """A timestamp earlier than the last accepted one (clock adjustment,
+    NTP correction, sleep/resume) must be accepted immediately, not
+    compared against min_dt - otherwise the negative delta looks "too
+    soon" forever, and the buffer stalls until wall-clock time climbs back
+    past the old high-water mark."""
+    path = _make_fixture_npz(tmp_path)
+    inf = GRUTemporalInference(model_path=path)
+    min_dt = 1.0 / config.TEMPORAL_TRAINING_FPS
+
+    inf.add_frame(_feats(1), timestamp=100.0)
+    assert inf.buffer_status() == (1, config.TEMPORAL_SEQ_LEN)
+
+    # Clock jumps backward by 5 seconds - must still be accepted, not
+    # silently dropped as "too soon" (100.0 - 95.0 = 5.0, nowhere near
+    # negative, but the OLD buggy check compared timestamp - last_accepted
+    # = 95.0 - 100.0 = -5.0 < min_dt, which would have dropped it).
+    inf.add_frame(_feats(2), timestamp=95.0)
+    assert inf.buffer_status() == (2, config.TEMPORAL_SEQ_LEN)
+
+    # And pacing resumes normally relative to the new (earlier) timestamp.
+    inf.add_frame(_feats(3), timestamp=95.0 + min_dt / 2)   # too soon - dropped
+    assert inf.buffer_status() == (2, config.TEMPORAL_SEQ_LEN)
+    inf.add_frame(_feats(4), timestamp=95.0 + min_dt * 1.1)  # far enough - accepted
+    assert inf.buffer_status() == (3, config.TEMPORAL_SEQ_LEN)
+
+
+# ---------------------------------------------------------------------------
 # Feature vocabulary consistency
 # ---------------------------------------------------------------------------
 

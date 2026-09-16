@@ -316,3 +316,63 @@ def test_legacy_sessions_have_null_user_id(temp_db):
         assert row[0] is None
     finally:
         conn.close()
+
+
+def test_v7_migration_adds_temporal_extra_columns(temp_db):
+    """Regression test: ear/ear_asymmetry/blinks_per_minute were computed
+    live every frame but never persisted - meaning no live recording,
+    however many got made, could ever become a real GRU training
+    sequence. This is the schema half of that fix."""
+    session_history.init_db()
+    conn = sqlite3.connect(str(temp_db))
+    try:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(samples)")}
+        for col in session_history.TEMPORAL_EXTRA_COLUMNS:
+            assert col in cols
+    finally:
+        conn.close()
+
+
+def test_save_session_persists_temporal_extra_columns(temp_db):
+    session_history.init_db()
+    history = _history(5)
+    for i, r in enumerate(history):
+        r['ear'] = 0.25 + i * 0.01
+        r['ear_asymmetry'] = 0.02
+        r['blinks_per_minute'] = 12.0
+    sid = session_history.save_session(history)
+
+    rows = session_history.load_session_temporal_rows(sid)
+    assert len(rows) == 5
+    assert rows[0]['ear'] == pytest.approx(0.25)
+    assert rows[0]['ear_asymmetry'] == pytest.approx(0.02)
+    assert rows[0]['blinks_per_minute'] == pytest.approx(12.0)
+    assert rows[4]['ear'] == pytest.approx(0.29)
+
+
+def test_load_session_temporal_rows_returns_all_ten_columns_in_order(temp_db):
+    """Column order must exactly match temporal_model.TEMPORAL_FEATURE_
+    ORDER - a silent reorder here would feed the GRU a scrambled feature
+    vector without raising anything."""
+    session_history.init_db()
+    history = _history(3)
+    for r in history:
+        r.update({c: 0.1 for c in session_history.SIGNAL_COLUMNS})
+        r['ear'], r['ear_asymmetry'], r['blinks_per_minute'] = 0.3, 0.01, 10.0
+    sid = session_history.save_session(history)
+
+    rows = session_history.load_session_temporal_rows(sid)
+    expected_cols = session_history.SIGNAL_COLUMNS + session_history.TEMPORAL_EXTRA_COLUMNS
+    assert list(rows[0].keys()) == expected_cols
+
+
+def test_legacy_rows_have_null_temporal_extra_columns(temp_db):
+    """A session saved before v7 (simulated: history records that never
+    set the 3 new keys) must store NULL, not a fabricated 0.0 that would
+    look like real data to a training script."""
+    session_history.init_db()
+    sid = session_history.save_session(_history(5))   # no ear/etc. keys at all
+    rows = session_history.load_session_temporal_rows(sid)
+    assert rows[0]['ear'] is None
+    assert rows[0]['ear_asymmetry'] is None
+    assert rows[0]['blinks_per_minute'] is None

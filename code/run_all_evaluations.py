@@ -39,12 +39,15 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
+import config
 from app_naming import parse_filename
 from eval_scoring import wilson, pct, ci_str, frame_scores, session_scores, STRESSED_LEVELS
 # ablation_study imports eval_scoring too, not this module - importing it
 # here (rather than the other way around) avoids a circular import while
 # still keeping the scoring code itself in exactly one place.
-from ablation_study import run_ablation_study, render as render_ablation_table
+from ablation_study import (
+    run_ablation_study, render as render_ablation_table, load_held_out_test_subjects,
+)
 from correlate_physiology import run_correlation_study, render as render_correlation
 from correlate_daisee_selfreport import (
     run_daisee_selfreport_study, render as render_daisee_selfreport,
@@ -311,7 +314,9 @@ def render_artifacts(root, out):
 
     gru = root / "models" / "temporal_gru_test_report.txt"
     if gru.exists():
-        out.append("\n### Feature-sequence GRU temporal branch (Phase 2.1, DISABLED via W_TEMPORAL=0.0)")
+        status = (f"ACTIVE via W_TEMPORAL={config.W_TEMPORAL:.2f}" if config.W_TEMPORAL > 0.0
+                  else "DISABLED via W_TEMPORAL=0.0")
+        out.append(f"\n### Feature-sequence GRU temporal branch (Phase 2.1, {status})")
         out.append(f"  source: {gru.relative_to(root)}")
         for line in gru.read_text(encoding="utf-8", errors="replace").splitlines():
             stripped = line.strip()
@@ -369,25 +374,31 @@ def main():
     # mode="default" matters here, not just as documentation: relaxed_*/
     # stressed_* is condition-only and mode-blind by design (see
     # app_naming.export_filename), so without this filter a Studying/
-    # Hospital/Driving recording dropped straight into evaluation_data/ per
-    # RECORDING_PROTOCOL.md would silently count as Default-mode ground
-    # truth. Legacy 2-part filenames (relaxed_1.csv) predate per-mode
-    # recording and are kept as Default regardless - see collect()'s
-    # docstring.
+    # Hospital/Driving recording dropped straight into
+    # evaluation_data/live_recordings/ per RECORDING_PROTOCOL.md would
+    # silently count as Default-mode ground truth. Legacy 2-part filenames
+    # (relaxed_1.csv) predate per-mode recording and are kept as Default
+    # regardless - see collect()'s docstring.
+    #
+    # live_recordings/ (2026-09-16) holds every validated team/PP1 CSV that
+    # comes out of recording_intake.py - kept apart from evaluation_data/'s
+    # root so the folder isn't a flat pile of dozens of CSVs, matching the
+    # existing baseline_v1/ and ubfc_phys/ subfolder convention.
+    _live_dir = eval_dir / "live_recordings"
     _, _default_n_subjects = render_config(
-        "Default mode (current evaluation_data/)",
-        eval_dir, "relaxed_*.csv", "stressed_*.csv", out, mode="default")
+        "Default mode (evaluation_data/live_recordings/)",
+        _live_dir, "relaxed_*.csv", "stressed_*.csv", out, mode="default")
     _current_modes = ["default"]
     for _mode, _label in (("studying", "Studying"), ("hospital", "Hospital"),
                           ("driving", "Driving")):
-        render_config(f"{_label} mode (current evaluation_data/)",
-                      eval_dir, "relaxed_*.csv", "stressed_*.csv", out, mode=_mode)
+        render_config(f"{_label} mode (evaluation_data/live_recordings/)",
+                      _live_dir, "relaxed_*.csv", "stressed_*.csv", out, mode=_mode)
         _current_modes.append(_mode)
 
-    # Cross-check every relaxed_*/stressed_* CSV in evaluation_data/ landed
-    # in exactly one of the sections just rendered - see
+    # Cross-check every relaxed_*/stressed_* CSV in evaluation_data/live_recordings/
+    # landed in exactly one of the sections just rendered - see
     # find_unclaimed_files()'s docstring for why this exists at all.
-    _unclaimed = find_unclaimed_files(eval_dir, "relaxed_*.csv", "stressed_*.csv",
+    _unclaimed = find_unclaimed_files(_live_dir, "relaxed_*.csv", "stressed_*.csv",
                                       _current_modes)
     if _unclaimed:
         out.append("\n" + "!" * 78)
@@ -405,7 +416,7 @@ def main():
     out.append("  CAUTION: RECORDING_PROTOCOL.md documents this folder as unreconciled")
     out.append("  provenance - do not cite without re-checking which files were really")
     out.append("  in the original run. Kept for reference only, not the current number;")
-    out.append("  see the 'Studying mode (current evaluation_data/)' section above for that.")
+    out.append("  see the 'Studying mode (evaluation_data/live_recordings/)' section above for that.")
     render_config("  (detail)", eval_dir / "baseline_v1",
                   "studyrelaxed_*.csv", "studystressed_*.csv", out)
     render_config("Archived baseline_v1 non-study recordings",
@@ -430,6 +441,29 @@ def main():
     # venv as this script, so there is no reason for it to be anything but
     # regenerated here like every other number.
     render_ablation_table(run_ablation_study(root / "datasets" / "feature_traces"), out)
+
+    # Leak-free re-check (2026-09-16 fix): the table above uses all 10
+    # UBFC-Phys subjects, some of which the shipped GRU was trained on -
+    # any exported model will look artificially strong there regardless of
+    # whether it's actually generalizing. HELD_OUT_TEST_SUBJECTS (written by
+    # train_temporal_model_ubfc.py into the report below) names the
+    # subjects THIS model never trained on or early-stopped against - the
+    # only subjects a fair ablation check of the temporal branch can use.
+    # Re-run automatically here so this safeguard can't bit-rot into a
+    # one-off command nobody remembers to re-run.
+    held_out = load_held_out_test_subjects(str(root / "models" / "temporal_gru_test_report.txt"))
+    out.append("")
+    out.append("### Leak-free re-check: GRU branch, held-out subjects only")
+    if held_out is None:
+        out.append("  (no HELD_OUT_TEST_SUBJECTS recorded for the shipped model - skipped;")
+        out.append("   this line only exists once a model is trained by train_temporal_model_ubfc.py)")
+    else:
+        out.append(f"  subjects the shipped model never trained on: {sorted(held_out)}")
+        out.append(f"  n is small ({len(held_out)} subjects) by construction - this trades sample size for")
+        out.append("  being leak-free, which the full table above is not for this branch.")
+        render_ablation_table(
+            run_ablation_study(root / "datasets" / "feature_traces", subjects=held_out), out,
+        )
 
     # Phase 1.4 / 4.4: stress index vs EDA correlation, folded in the same
     # way - pure numpy/scipy over already-saved traces + UBFC-Phys ground

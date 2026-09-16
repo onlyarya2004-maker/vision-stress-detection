@@ -59,30 +59,86 @@ CALIBRATION_JSON_CANDIDATES = (
 # Hand-chosen during PP1, not fitted. PP2 Phase 3 learns these.
 W_DAISEE = 0.20
 W_BEHAVIOR = 0.80
-W_TEMPORAL = 0.0    # Temporal branch disabled: the Phase 2.1 feature-sequence
-                    # GRU that replaced the old pixel-LSTM (see
-                    # code/_archive/lstm_temporal.py) also came in BELOW the
-                    # majority-class floor - 45.74% vs 86.60%, balanced
-                    # accuracy 54.17% (barely above chance). See
-                    # models/temporal_gru_test_report.txt. Reported honestly,
-                    # not tuned to cross the floor - kept disabled like the
-                    # pixel-LSTM before it.
+W_TEMPORAL = 0.10   # ACTIVATED - 2026-09-16, after three findings and a fix.
                     #
-                    # SEPARATE BLOCKER if this is ever revisited: training
-                    # sequences are 16 frames spaced ~0.625s apart (~10s of
-                    # DaiSEE clip at the synthetic FRAME_RATE_HZ=1.6 used by
-                    # train_temporal_model.py). Live app.py calls
-                    # temporal_inf.add_frame() on every processed webcam
-                    # frame with no timestamp-based pacing, so the live
-                    # "most recent 16 frames" window spans well under 2
-                    # seconds of real time at ~30fps - a temporal-dynamics
-                    # distribution shift the model was never trained on,
-                    # on top of the accuracy result above. The NumPy/PyTorch
-                    # weight-parity check only verifies the math replica is
-                    # correct, not that live input timing matches training -
-                    # this must be fixed (e.g. pace add_frame() to ~1.6Hz
-                    # using real timestamps) before W_TEMPORAL is raised
-                    # above 0.0, independent of the accuracy question.
+                    # v1: ablation_study.py's harness gap (no w_temporal term)
+                    # fixed - compute_temporal_scores() replays the real
+                    # GRUTemporalInference over cached trace columns,
+                    # fused_frame() has a real w_temporal term matching
+                    # compute_stress_index() exactly (see
+                    # tests/test_ablation_study.py's
+                    # test_fused_frame_matches_real_compute_stress_index_with_temporal_branch_active).
+                    #
+                    # v2: the first export candidate held out only 3/10 UBFC
+                    # subjects for early stopping (0 for a true test) -
+                    # contaminated; removing the behavioral branch falsely
+                    # raised accuracy 60%->88%. Retrained
+                    # (train_temporal_model_ubfc.py) holding out 2 subjects
+                    # completely from both training and early-stopping:
+                    # scored 76.46% accuracy / 76.65% balanced accuracy on
+                    # them alone, matching the ~77% LOSO estimate - the
+                    # exported artifact itself genuinely generalizes.
+                    #
+                    # v3: re-running the FULL 10-subject ablation with this
+                    # model still showed the same symptom (60.94%->87.15%) -
+                    # but that's structural, not a recurring bug: those 10
+                    # subjects are necessarily both the GRU's training pool
+                    # AND ablation_study.py's test pool, so 8-of-10 being
+                    # touched during training will always look contaminated
+                    # when tested across all 10. The real check is
+                    # run_ablation_study(subjects=...) restricted to ONLY the
+                    # 2 subjects genuinely never trained on - and there, the
+                    # result flips to the expected direction: removing the
+                    # GRU HURTS accuracy (-7.29pp, 61.34%->54.05%), confirmed
+                    # independently on each of the 2 subjects alone (s7:
+                    # 71.97%->67.71%, s9: 50.71%->40.38%). Also scored 62.16%
+                    # (n=37, small) on S5's real webcam recording, never in
+                    # UBFC data at all. n=2 subjects is still thin - revisit
+                    # once more UBFC subjects are processed (47/57 zips
+                    # remain) or more team recordings (schema v7+, S5
+                    # onward) accumulate.
+                    #
+                    # Separately fixed: training sequences span ~0.91s
+                    # (traces sampled at a measured 17.57fps, see
+                    # TEMPORAL_TRAINING_FPS below), but live app.py called
+                    # add_frame() on every processed webcam frame (~30fps,
+                    # unpaced) - packing the same 16-frame window into ~0.5s,
+                    # a timing mismatch the NumPy/PyTorch parity check can't
+                    # catch since it only verifies the math replica, not live
+                    # input timing. Fixed: add_frame(timestamp=...) now drops
+                    # frames arriving faster than training pace (see
+                    # temporal_model.GRUTemporalInference.add_frame), wired
+                    # in app.py's capture loop.
+                    #
+                    # Behavioral engine note: the same 2-subject leak-free
+                    # check also showed removing W_BEHAVIOR IMPROVES accuracy
+                    # for s7/s9 specifically (+13.71pp pooled, confirmed on
+                    # each subject alone) - consistent with this project's
+                    # existing learned-fusion findings (some hand-tuned
+                    # weights, e.g. neck_strain, were already found INVERTED
+                    # against the learned coefficients) rather than a new
+                    # GRU-specific problem. Not addressed here; tracked as
+                    # existing Phase 3 (learned fusion) territory.
+                    #
+                    # v4 (2026-09-16, same day): an 11th UBFC-Phys subject
+                    # (lowercase "s11" - a different person from team member
+                    # "S6" below, naming collision only) was processed and
+                    # folded in, growing the true held-out test set from 2 to
+                    # 3 subjects (s6, s9, s2 - UBFC subject codes, picked by
+                    # train_temporal_model_ubfc.py's rng, unrelated to team
+                    # member S6). Result improved: 84.24% accuracy / 81.91%
+                    # balanced accuracy on those 3 (up from 76.46%/76.65% on
+                    # 2), and the leak-free ablation re-check on this larger
+                    # held-out set still shows the correct direction -
+                    # removing the GRU HURTS accuracy (-11.91pp, 63.35%->
+                    # 51.44%). A completely untouched 12th subject (s11 itself,
+                    # evaluated with the PRE-v4 model before it was folded into
+                    # training) independently scored 88.92%/86.65% - the
+                    # single strongest generalization result yet. The real
+                    # webcam check also grew from 1 team subject (S5, n=37) to
+                    # 2 (S5+S6, n=76): 75.00% accuracy / 73.61% balanced
+                    # accuracy, still above floor. models/temporal_gru.npz is
+                    # this v4 artifact; v2's report is superseded in place.
 
 # ===========================================================================
 # BEHAVIORAL SIGNAL WEIGHTS (Default mode; must sum to 1.0)
@@ -138,8 +194,10 @@ TASK_MODES = {
 # analysis (Cohen's d = +1.61, larger than every behavioural signal), and
 # until now it was the one strong signal the live system could not sense.
 #
-# Validated offline on UBFC-Phys, 15 traces vs Empatica E4 BVP:
-#     GREEN 16.57 bpm | CHROM 9.12 bpm | POS 3.52 bpm  mean absolute error
+# Validated offline on UBFC-Phys, 18 traces (6 subjects) vs real BVP - see
+# rppg_live.py's module docstring for the current numbers and the
+# 2026-09-16 correction to an earlier, less representative 15-trace figure:
+#     GREEN 16.12 bpm | CHROM 19.78 bpm | POS 18.11 bpm  mean absolute error
 #
 # W_RPPG = 0.0 DELIBERATELY. Those numbers come from a 1024x1024 MJPG camera
 # at 35fps. A laptop webcam is 640x480 and heavily compressed, and video
@@ -414,6 +472,19 @@ DB_PATH = '../data/sessions.db'
 TEMPORAL_MODEL_PATH = '../models/temporal_gru.npz'
 TEMPORAL_SEQ_LEN = 16
 TEMPORAL_PREDICT_EVERY_N_FRAMES = 8
+
+# Measured directly from datasets/feature_traces/*.csv (mean frame spacing
+# 0.0569s across 2632 consecutive gaps in features_vid_s1_T1.csv) - the real
+# rate UBFC-Phys's video was sampled at, and therefore the rate the GRU's
+# 16-frame training windows actually span (~0.91s). Live app.py calls
+# GRUTemporalInference.add_frame() on every processed webcam frame
+# (~30fps, no pacing) which would otherwise pack the same 16-frame window
+# into well under a second - a timing distribution shift, on top of and
+# independent of the accuracy question, that the NumPy/PyTorch parity
+# check cannot catch (it only verifies the math replica, not live input
+# timing). add_frame(timestamp=...) uses this to drop frames arriving
+# faster than training pace, so the live window duration matches training.
+TEMPORAL_TRAINING_FPS = 17.57
 
 
 def summary():

@@ -62,6 +62,7 @@ from pathlib import Path
 from typing import List, Dict, Optional
 
 import config
+from temporal_model import TEMPORAL_FEATURE_ORDER
 
 DB_PATH = Path(config.DB_PATH)
 
@@ -69,6 +70,17 @@ DB_PATH = Path(config.DB_PATH)
 # has real inputs to learn from (the fused index alone is not trainable data).
 SIGNAL_COLUMNS = ['eye_strain', 'blink_stress', 'brow_tension', 'jaw_tension',
                   'head_instability', 'neck_strain', 'slouch']
+
+# The 3 extra per-frame values temporal_model.TEMPORAL_FEATURE_ORDER needs
+# beyond SIGNAL_COLUMNS - raw EAR/blink-rate diagnostics the derived signals
+# above partially discard. Kept as a separate list (not merged into
+# SIGNAL_COLUMNS) since these are GRU-training inputs, not fusion-weighted
+# behavioral signals - a different purpose, even though both are per-frame
+# floats living in the same `samples` table. Derived from
+# TEMPORAL_FEATURE_ORDER (not hand-typed) so a future change to that
+# vocabulary is picked up here automatically instead of silently drifting
+# out of sync with what the GRU retrain script actually expects.
+TEMPORAL_EXTRA_COLUMNS = [c for c in TEMPORAL_FEATURE_ORDER if c not in SIGNAL_COLUMNS]
 
 
 def _get_conn():
@@ -183,6 +195,19 @@ def init_db():
                 "ALTER TABLE sessions ADD COLUMN user_id INTEGER "
                 "REFERENCES users(id)"
             )
+
+        # Migration v6 -> v7: the 3 extra per-frame values temporal_model.py's
+        # GRU needs (TEMPORAL_FEATURE_ORDER's last 3 dims) beyond the 7
+        # SIGNAL_COLUMNS. BehavioralFeatureEngine.extract() already computes
+        # these every frame, but until this migration they were used
+        # transiently and never persisted - meaning no live recording, no
+        # matter how many get made, could ever be turned into a real GRU
+        # training sequence. Same nullable-on-legacy-rows pattern as v5a.
+        sample_cols = {row[1] for row in
+                       conn.execute("PRAGMA table_info(samples)").fetchall()}
+        for col in TEMPORAL_EXTRA_COLUMNS:
+            if col not in sample_cols:
+                conn.execute(f"ALTER TABLE samples ADD COLUMN {col} REAL")
 
         conn.commit()
     finally:
@@ -350,8 +375,9 @@ def save_session(history: List[Dict], task_mode: str = 'Default',
 
         # Insert all samples in one batch, per-signal values included when
         # the record carries them (live sessions do; legacy replays may not).
-        sig_cols = ", ".join(SIGNAL_COLUMNS)
-        sig_marks = ", ".join("?" for _ in SIGNAL_COLUMNS)
+        extra_cols = SIGNAL_COLUMNS + TEMPORAL_EXTRA_COLUMNS
+        sig_cols = ", ".join(extra_cols)
+        sig_marks = ", ".join("?" for _ in extra_cols)
         sample_rows = [
             (
                 session_id,
@@ -361,7 +387,7 @@ def save_session(history: List[Dict], task_mode: str = 'Default',
                 float(r.get('daisee', 0.0)),
                 float(r.get('behavior', 0.0)),
                 *[None if r.get(c) is None else float(r[c])
-                  for c in SIGNAL_COLUMNS],
+                  for c in extra_cols],
             )
             for r in history
         ]
@@ -541,6 +567,50 @@ def load_session_samples(session_id: int) -> List[Dict]:
             }
             for r in rows
         ]
+    finally:
+        conn.close()
+
+
+def load_session_signal_rows(session_id: int) -> List[Dict]:
+    """
+    Load the per-frame BEHAVIOR SIGNAL values for a session (schema v5a's
+    columns: eye_strain, blink_stress, brow_tension, jaw_tension,
+    head_instability, neck_strain, slouch) - not returned by
+    load_session_samples() above, which only carries the fused-score
+    columns. This is what a meta-learner retrain needs as its feature
+    vector; NULL on any legacy row recorded before v5a.
+    """
+    conn = _get_conn()
+    try:
+        rows = conn.execute(f"""
+            SELECT {', '.join(SIGNAL_COLUMNS)}
+            FROM samples
+            WHERE session_id = ?
+            ORDER BY id ASC
+        """, (session_id,)).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def load_session_temporal_rows(session_id: int) -> List[Dict]:
+    """
+    Load all 10 of temporal_model.TEMPORAL_FEATURE_ORDER's per-frame values
+    for a session (SIGNAL_COLUMNS + TEMPORAL_EXTRA_COLUMNS, schema v7) -
+    what a GRU retrain/fine-tune needs to build a real sequence from a live
+    recording. NULL on any row recorded before v7 (ear/ear_asymmetry/
+    blinks_per_minute did not exist as columns yet).
+    """
+    conn = _get_conn()
+    try:
+        cols = SIGNAL_COLUMNS + TEMPORAL_EXTRA_COLUMNS
+        rows = conn.execute(f"""
+            SELECT {', '.join(cols)}
+            FROM samples
+            WHERE session_id = ?
+            ORDER BY id ASC
+        """, (session_id,)).fetchall()
+        return [dict(r) for r in rows]
     finally:
         conn.close()
 

@@ -1653,7 +1653,7 @@ def main():
                 # even been called yet).
                 temporal_score = None
                 if temporal_inf.is_available():
-                    temporal_inf.add_frame(behavioral_features)
+                    temporal_inf.add_frame(behavioral_features, timestamp=time.time())
                     temporal_score = temporal_inf.predict()
 
                 result = compute_stress_index(
@@ -1712,6 +1712,14 @@ def main():
                     # Per-signal values: without these the self-retraining
                     # loop has nothing to learn from.
                     _rec.update(result['contributions'])
+                    # The 3 extra raw values temporal_model.TEMPORAL_FEATURE_
+                    # ORDER needs beyond the 7 contributions above - without
+                    # these no live recording can ever become a GRU training
+                    # sequence, no matter how many get made (session_history
+                    # schema v7).
+                    _rec['ear'] = behavioral_features.get('ear', 0.0)
+                    _rec['ear_asymmetry'] = behavioral_features.get('ear_asymmetry', 0.0)
+                    _rec['blinks_per_minute'] = behavioral_features.get('blinks_per_minute', 0.0)
                     st.session_state.history.append(_rec)
 
                 now_ts = time.time()
@@ -1778,9 +1786,26 @@ def main():
                 st.markdown("**How stressed did you actually feel during that "
                             "session?** Your answer is stored with the session "
                             "and is what the system learns from — be honest, "
-                            "not agreeable.")
+                            "not agreeable. Rate what YOU personally felt, not "
+                            "how it compares to anyone else's stress.")
                 _cols = st.columns(6)
-                _labels = ["1 · calm", "2", "3 · neutral", "4", "5 · very stressed"]
+                # Explicit anchors on every point, not just the endpoints -
+                # "4" and "5" used to be unlabeled, and "5 · very stressed"
+                # alone is genuinely ambiguous between "clearly stressed"
+                # and "extreme distress." Different people anchor those
+                # words differently (e.g. reserving "5" for crying-level
+                # distress), which can make a real, moderate stress
+                # response get rated a "3" - not a personal-report error,
+                # a scale-wording gap. "4" now names the actual target
+                # state most recordings should land in: noticeable,
+                # uncomfortable, but not overwhelming.
+                _labels = [
+                    "1 · calm, relaxed",
+                    "2 · mild, barely noticeable",
+                    "3 · neutral / mixed, hard to tell",
+                    "4 · noticeably stressed, tense but OK",
+                    "5 · very stressed, overwhelmed",
+                ]
                 for _i, _lab in enumerate(_labels, start=1):
                     if _cols[_i - 1].button(_lab, key=f"selfrep_{_i}"):
                         try:
@@ -1828,8 +1853,9 @@ def main():
                 )
                 st.download_button("Download session CSV", csv_text, file_name=_fname,
                                    mime="text/csv")
-                st.caption(f"Saves as `{_fname}` — move it into `evaluation_data/`, "
-                           f"then re-run `python run_all_evaluations.py`.")
+                st.caption(f"Saves as `{_fname}` — drop it into "
+                           f"`evaluation_data/incoming/`, run `python recording_intake.py`, "
+                           f"then `python run_all_evaluations.py`.")
 
                 if st.session_state.viewing_session_id:
                     _report_task_mode = (st.session_state.viewing_session_task_mode

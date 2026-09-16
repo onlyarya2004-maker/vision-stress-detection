@@ -64,6 +64,10 @@ desktop.ini
 .DS_Store
 *.swp
 
+# Claude Code tool state (dev-server launch config, agent worktrees) - not
+# project source
+.claude/
+
 # Scratch
 *.log
 tmp/

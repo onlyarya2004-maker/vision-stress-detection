@@ -76,6 +76,28 @@ A genuine stressor (mental arithmetic under time pressure, a difficult task) is 
 science than acting, and should be preferred once you have baseline numbers.
 Whichever you use, **record it in the log** — the two are not interchangeable evidence.
 
+### Self-report scale (fixed 2026-09-16)
+
+The post-session self-report prompt asks "how stressed did you actually feel" on a
+1-5 scale, now anchored at every point:
+
+```
+1 · calm, relaxed
+2 · mild, barely noticeable
+3 · neutral / mixed, hard to tell
+4 · noticeably stressed, tense but OK
+5 · very stressed, overwhelmed
+```
+
+Before this fix, points 2 and 4 had no anchor text and "5" simply read "very stressed" —
+ambiguous between "clearly stressed" and "extreme distress." This caused at least one
+real case (S2/S3, see log) where someone who reserves "5" for crying-level distress
+rated a genuine but moderate stress response as "3." **Rate what you personally felt,
+not how it compares to anyone else's stress** — the scale is about your own felt
+intensity, not a competition. Existing recordings made before this fix are not
+retroactively altered; self-report must stay the honest in-the-moment answer, not a
+reconstructed one.
+
 ---
 
 ## Naming
@@ -110,8 +132,8 @@ Rules:
    cd code && python recording_intake.py
    ```
    This validates filename, condition, mode, and the 60-second minimum before
-   moving each file into `evaluation_data/` - a blind manual copy is exactly
-   how `relaaxed_2.csv` got in unnoticed. Anything flagged stays in
+   moving each file into `evaluation_data/live_recordings/` - a blind manual
+   copy is exactly how `relaaxed_2.csv` got in unnoticed. Anything flagged stays in
    `incoming/` with the specific reason printed; fix it (usually a re-export)
    and run the command again. Add `--dry-run` to check without moving
    anything.
@@ -135,6 +157,16 @@ Fill this in as you go. It is the only place that captures things the filename c
 | 2026-05-03 | S01 | relaxed | default | ~48 s | — | PP1 `relaxed_2.csv` (was misnamed `relaaxed_2`) |
 | 2026-05-03 | S01 | stressed | default | ~62 s | acted | PP1 `stressed_1.csv` |
 | 2026-05-03 | S01 | stressed | default | ~62 s | acted | PP1 `stressed_2.csv` |
+| 2026-09-15 | S1 | relaxed | default | — | — | PP2 team recording |
+| 2026-09-15 | S1 | stressed | default | — | acted | PP2 team recording |
+| 2026-09-15 | S2 | relaxed | default | — | — | PP2 team recording |
+| 2026-09-15 | S2 | stressed | default | — | acted | Self-report rated close to neutral. Post-hoc conversation with subject: they reserve the top of the scale for extreme (crying-level) distress, so a genuine but moderate stress response can land as a "neutral" self-report under the old 5-point scale (points 2 and 4 had no anchor text). Real stress was likely present but under-reported due to personal scale calibration, not absent. Raw value was **not** altered — see 2026-09-16 scale fix below. |
+| 2026-09-15 | S3 | relaxed | default | — | — | PP2 team recording |
+| 2026-09-15 | S3 | stressed | default | — | acted | Same scale-calibration note as S2 above. |
+| 2026-09-15 | S4 | relaxed | default | — | — | PP2 team recording |
+| 2026-09-15 | S4 | stressed | default | — | acted | PP2 team recording |
+| 2026-09-16 | S5 | relaxed | default | — | — | PP2 team recording. Self-report: 1 (clean) |
+| 2026-09-16 | S5 | stressed | default | — | acted | PP2 team recording. Self-report: 5 (clean, well-separated from relaxed) |
 | | | | | | | |
 
 ---
@@ -148,8 +180,8 @@ Fill this in as you go. It is the only place that captures things the filename c
 - [ ] At least 60 seconds
 - [ ] One condition only, start to finish
 - [ ] CSV downloaded into `evaluation_data/incoming/`
-- [ ] `recording_intake.py` run and the file landed in `evaluation_data/` clean
-      (nothing flagged)
+- [ ] `recording_intake.py` run and the file landed in `evaluation_data/live_recordings/`
+      clean (nothing flagged)
 - [ ] Streamlit restarted before the next recording
 - [ ] `run_all_evaluations.py` re-run and committed alongside the new CSVs
 - [ ] Row added to the recording log

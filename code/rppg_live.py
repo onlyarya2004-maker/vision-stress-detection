@@ -17,9 +17,19 @@ unreachable without a chest strap - rPPG makes it a property of pixels the
 camera already captures, which is the difference between "physiological-grade
 thresholds derived offline" and actually sensing physiology at runtime.
 
-Validated on UBFC-Phys, 15 traces vs Empatica E4 ground truth:
+Validated on UBFC-Phys, 18 traces (6 subjects x 3 tasks) vs real BVP ground
+truth (analyze_rppg.py --dir ../datasets/rppg_traces --ubfc-root
+../datasets/UBFC-Phys; only subjects with a matching bvp_s*_T*.csv are
+scored - s1-s5 lack one):
 
-    GREEN 16.57 bpm   CHROM 9.12 bpm   POS 3.52 bpm   (mean absolute error)
+    GREEN 16.12 bpm   CHROM 19.78 bpm   POS 18.11 bpm   (mean absolute error)
+
+2026-09-16 update: this replaces an earlier 15-trace/5-subject figure
+(GREEN 16.57, CHROM 9.12, POS 3.52) that is no longer representative - POS
+in particular looked far stronger on that smaller sample than it does here.
+The larger sample is the one to trust; it does not change the DISABLED
+verdict below, but the earlier "POS is nearly there" framing was optimistic
+and should not be cited going forward.
 
 DISABLED BY DEFAULT (config.W_RPPG = 0.0)
 -----------------------------------------

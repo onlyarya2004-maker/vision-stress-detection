@@ -206,6 +206,7 @@ class GRUTemporalInference:
         self._frame_count = 0
         self._last_prediction = None
         self._next_predict_at = config.TEMPORAL_SEQ_LEN
+        self._last_accepted_ts = None
 
     def _to_vector(self, behavioral_features):
         raw = np.array(
@@ -214,10 +215,35 @@ class GRUTemporalInference:
         )
         return normalize_features(raw, self.weights['feature_mean'], self.weights['feature_std'])
 
-    def add_frame(self, behavioral_features):
-        """behavioral_features: the dict BehavioralFeatureEngine.extract() returns."""
+    def add_frame(self, behavioral_features, timestamp=None):
+        """behavioral_features: the dict BehavioralFeatureEngine.extract()
+        returns. timestamp: optional wall-clock seconds (e.g. time.time()).
+
+        When given, frames arriving faster than config.TEMPORAL_TRAINING_FPS
+        (~17.6, the real rate the training traces were sampled at) are
+        silently dropped - live app.py calls this on every processed webcam
+        frame at ~30fps, which would otherwise pack a 16-frame window into
+        well under a second instead of the ~0.9s window training used.
+        Omitting timestamp (as every pre-existing sliding-window test does)
+        keeps the original unpaced, one-call-one-frame behavior, for testing
+        window/cadence mechanics in isolation from real-time pacing.
+
+        A timestamp that goes BACKWARDS relative to the last accepted one
+        (system clock adjustment, NTP correction, sleep/resume) is always
+        accepted rather than compared against min_dt - otherwise a single
+        backward jump would make every later delta look negative (always
+        "too soon"), silently stalling the buffer until wall-clock time
+        climbs back past the old high-water mark instead of degrading
+        gracefully."""
         if self.weights is None:
             return
+        if timestamp is not None:
+            min_dt = 1.0 / config.TEMPORAL_TRAINING_FPS
+            if self._last_accepted_ts is not None:
+                delta = timestamp - self._last_accepted_ts
+                if 0.0 <= delta < min_dt:
+                    return
+            self._last_accepted_ts = timestamp
         self._buffer.append(self._to_vector(behavioral_features))
         self._frame_count += 1
 
