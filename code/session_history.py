@@ -209,6 +209,53 @@ def init_db():
             if col not in sample_cols:
                 conn.execute(f"ALTER TABLE samples ADD COLUMN {col} REAL")
 
+        # Migration v7 -> v8: samples.daisee REAL NOT NULL -> REAL (nullable).
+        # app.py stored `result.get('daisee_raw') or 0.0`, which collapsed
+        # two different things into the same value: the CNN branch
+        # genuinely scoring near-zero, and the CNN branch not running at
+        # all this frame (it only runs every CNN_EVERY_N_FRAMES frames).
+        # datasets/feature_traces/*.csv already preserves this distinction
+        # (an empty field for a skipped frame, read back as None by
+        # ablation_study.load_trace) - this migration brings the live DB up
+        # to the same standard. SQLite can't drop a NOT NULL constraint via
+        # ALTER TABLE, so the table is rebuilt; existing rows keep whatever
+        # 0.0 they already have (the ambiguity in already-recorded data is
+        # not recoverable), but every row saved after this migration
+        # correctly distinguishes "CNN said 0" from "CNN didn't run."
+        daisee_notnull = next(
+            (row[3] for row in conn.execute("PRAGMA table_info(samples)").fetchall()
+             if row[1] == 'daisee'), 0)
+        if daisee_notnull:
+            current_cols = [row[1] for row in
+                           conn.execute("PRAGMA table_info(samples)").fetchall()]
+            col_list = ", ".join(current_cols)
+            conn.execute(f"""
+                CREATE TABLE samples_v8 (
+                    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id         INTEGER NOT NULL,
+                    ts                 TEXT NOT NULL,
+                    stress_index       REAL NOT NULL,
+                    level              TEXT NOT NULL,
+                    daisee             REAL,
+                    behavior           REAL NOT NULL,
+                    eye_strain         REAL,
+                    blink_stress       REAL,
+                    brow_tension       REAL,
+                    jaw_tension        REAL,
+                    head_instability   REAL,
+                    neck_strain        REAL,
+                    slouch             REAL,
+                    ear                REAL,
+                    ear_asymmetry      REAL,
+                    blinks_per_minute  REAL,
+                    FOREIGN KEY (session_id) REFERENCES sessions(id)
+                )
+            """)
+            conn.execute(f"INSERT INTO samples_v8 ({col_list}) SELECT {col_list} FROM samples")
+            conn.execute("DROP TABLE samples")
+            conn.execute("ALTER TABLE samples_v8 RENAME TO samples")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_samples_session ON samples(session_id)")
+
         conn.commit()
     finally:
         conn.close()
@@ -384,7 +431,7 @@ def save_session(history: List[Dict], task_mode: str = 'Default',
                 r['ts'].isoformat(),
                 float(r['stress_index']),
                 str(r.get('level', 'LOW')),
-                float(r.get('daisee', 0.0)),
+                None if r.get('daisee') is None else float(r['daisee']),
                 float(r.get('behavior', 0.0)),
                 *[None if r.get(c) is None else float(r[c])
                   for c in extra_cols],
@@ -562,7 +609,7 @@ def load_session_samples(session_id: int) -> List[Dict]:
                 'ts':           datetime.fromisoformat(r['ts']),
                 'stress_index': float(r['stress_index']),
                 'level':        str(r['level']),
-                'daisee':       float(r['daisee']),
+                'daisee':       None if r['daisee'] is None else float(r['daisee']),
                 'behavior':     float(r['behavior']),
             }
             for r in rows

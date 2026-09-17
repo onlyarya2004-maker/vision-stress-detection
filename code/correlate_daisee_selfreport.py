@@ -61,11 +61,19 @@ NEUTRAL = 3        # excluded from the binary agreement check as ambiguous
 def _session_mean_daisee(session_id):
     """Mean per-frame DaiSEE stress probability for one session, or None
     if the session has no samples (shouldn't happen for a real saved
-    session, but load_session_samples() can return [] if it does)."""
+    session, but load_session_samples() can return [] if it does) or no
+    frame ever got a real CNN score. `daisee` is None on frames the CNN
+    branch didn't evaluate (session_history.py's v7->v8 migration) -
+    excluded here rather than counted as 0.0, which used to silently pull
+    every session's mean toward zero by however many frames the CNN
+    happened to skip, understating true DaiSEE-selfreport agreement."""
     samples = session_history.load_session_samples(session_id)
     if not samples:
         return None
-    return float(np.mean([s['daisee'] for s in samples]))
+    values = [s['daisee'] for s in samples if s['daisee'] is not None]
+    if not values:
+        return None
+    return float(np.mean(values))
 
 
 # ---------------------------------------------------------------------------

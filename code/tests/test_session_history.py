@@ -376,3 +376,54 @@ def test_legacy_rows_have_null_temporal_extra_columns(temp_db):
     assert rows[0]['ear'] is None
     assert rows[0]['ear_asymmetry'] is None
     assert rows[0]['blinks_per_minute'] is None
+
+
+def test_v8_migration_makes_daisee_column_nullable(temp_db):
+    """samples.daisee was REAL NOT NULL - app.py stored `daisee_raw or 0.0`,
+    collapsing "CNN genuinely scored 0" and "CNN didn't run this frame"
+    into the same value. The column must accept NULL after init_db()."""
+    session_history.init_db()
+    conn = sqlite3.connect(str(temp_db))
+    try:
+        info = conn.execute("PRAGMA table_info(samples)").fetchall()
+    finally:
+        conn.close()
+    daisee_notnull = next(row[3] for row in info if row[1] == 'daisee')
+    assert daisee_notnull == 0
+    behavior_notnull = next(row[3] for row in info if row[1] == 'behavior')
+    assert behavior_notnull == 1, "behavior has no 'skipped' concept - must stay NOT NULL"
+
+
+def test_v8_migration_is_idempotent(temp_db):
+    """Running init_db() twice must not re-rebuild an already-nullable
+    samples table (and must not error or drop data)."""
+    session_history.init_db()
+    sid = session_history.save_session(_history(5))
+    session_history.init_db()   # second call - should be a no-op for this migration
+    assert session_history.load_session_samples(sid) != []
+
+
+def test_save_session_preserves_none_daisee_instead_of_zero(temp_db):
+    """A history record with daisee=None (CNN branch didn't score this
+    frame) must round-trip as None, not get coerced to 0.0 - the exact
+    ambiguity this migration exists to remove."""
+    session_history.init_db()
+    history = _history(3)
+    history[1]['daisee'] = None
+    sid = session_history.save_session(history)
+    samples = session_history.load_session_samples(sid)
+    assert samples[0]['daisee'] == pytest.approx(0.50)
+    assert samples[1]['daisee'] is None
+    assert samples[2]['daisee'] == pytest.approx(0.50)
+
+
+def test_save_session_missing_daisee_key_also_stores_none(temp_db):
+    """A record that never sets 'daisee' at all (not just None) must also
+    be stored as NULL, not silently default to 0.0 - a missing key means
+    the same 'not scored' thing an explicit None does."""
+    session_history.init_db()
+    history = _history(2)
+    del history[0]['daisee']
+    sid = session_history.save_session(history)
+    samples = session_history.load_session_samples(sid)
+    assert samples[0]['daisee'] is None

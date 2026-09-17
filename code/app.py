@@ -519,8 +519,22 @@ def render_full_timeline(history, height=150):
     paths = []
     for label, color in series.items():
         key = keymap[label]
-        pts = " ".join(f"{x_of(i):.1f},{y_of(rec[key]):.1f}"
-                       for i, rec in enumerate(history))
+        # 'daisee' can be None (CNN branch hasn't run yet this session, or
+        # never runs if no .h5 models are present - session_history.py's
+        # v7->v8 migration). Carry the last real value forward for display,
+        # matching how the live fusion itself reuses the last CNN score
+        # between evaluations (app.py's last_daisee_probs); 0.0 only until
+        # a real value has ever been seen. 'stress_index'/'behavior' are
+        # never None, so this is a no-op for those two series.
+        last = 0.0
+        vals = []
+        for rec in history:
+            v = rec[key]
+            if v is not None:
+                last = v
+            vals.append(last)
+        pts = " ".join(f"{x_of(i):.1f},{y_of(v):.1f}"
+                       for i, v in enumerate(vals))
         width_px = "2.5" if key == 'stress_index' else "1.6"
         paths.append(f'<polyline points="{pts}" fill="none" stroke="{color}" '
                      f'stroke-width="{width_px}"/>')
@@ -765,7 +779,7 @@ def history_to_csv(history):
             'ts':           rec['ts'].isoformat(),
             'stress_index': f"{rec['stress_index']:.4f}",
             'level':        rec['level'],
-            'daisee':       f"{rec['daisee']:.4f}",
+            'daisee':       '' if rec['daisee'] is None else f"{rec['daisee']:.4f}",
             'emotion':      "0.0000",   # column kept for backward-compat with analyzer
             'behavior':     f"{rec['behavior']:.4f}",
         })
@@ -1704,7 +1718,14 @@ def main():
                 now = datetime.now()
                 if (not st.session_state.history or
                     (now - st.session_state.history[-1]['ts']).total_seconds() >= 0.5):
-                    daisee_record = result.get('daisee_raw') or 0.0
+                    # None (not 0.0) when the CNN branch hasn't scored this
+                    # frame - result['daisee_raw'] is already None in that
+                    # case (stress_fusion.daisee_raw_score's contract); `or
+                    # 0.0` used to collapse that into an indistinguishable
+                    # "CNN says relaxed," which is what session_history.py's
+                    # v7->v8 migration and this None-preserving assignment
+                    # fix (2026-09-17).
+                    daisee_record = result.get('daisee_raw')
                     _rec = {
                         'ts': now, 'stress_index': smoothed, 'level': level,
                         'daisee': daisee_record, 'behavior': result['behavior_stress'],

@@ -393,7 +393,12 @@ def process_video(video_path, calib_seconds=None, sample_every=1,
             'ts': base_ts + timedelta(seconds=clock['t']),
             'stress_index': smoothed,
             'level': level,
-            'daisee': result.get('daisee_raw') or 0.0,
+            # None (not 0.0) on frames the CNN branch skipped
+            # (CNN_EVERY_N_FRAMES cadence) - matches feature_rows'
+            # 'daisee_raw' below and session_history.py's v7->v8 migration;
+            # write_csv() writes an empty field for None, same convention
+            # datasets/feature_traces/*.csv already used.
+            'daisee': result.get('daisee_raw'),
             'behavior': result['behavior_stress'],
         })
 
@@ -455,7 +460,7 @@ def write_csv(records, out_path):
                 'ts': r['ts'].isoformat(),
                 'stress_index': f"{r['stress_index']:.4f}",
                 'level': r['level'],
-                'daisee': f"{r['daisee']:.4f}",
+                'daisee': '' if r['daisee'] is None else f"{r['daisee']:.4f}",
                 'emotion': "0.0000",          # retained for column compat
                 'behavior': f"{r['behavior']:.4f}",
             })
