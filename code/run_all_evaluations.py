@@ -41,14 +41,22 @@ from pathlib import Path
 
 import config
 from app_naming import parse_filename
-from eval_scoring import wilson, pct, ci_str, frame_scores, session_scores, STRESSED_LEVELS
+from eval_scoring import (wilson, pct, ci_str, frame_scores, session_scores,
+                          balance_metrics, STRESSED_LEVELS)
 # ablation_study imports eval_scoring too, not this module - importing it
 # here (rather than the other way around) avoids a circular import while
 # still keeping the scoring code itself in exactly one place.
 from ablation_study import (
     run_ablation_study, render as render_ablation_table, load_held_out_test_subjects,
 )
-from correlate_physiology import run_correlation_study, render as render_correlation
+from correlate_physiology import (
+    run_correlation_study, render as render_correlation,
+    run_hr_correlation_study, render_hr as render_hr_correlation,
+)
+from derive_thresholds import (
+    load_ubfc_subjects, load_team_subjects,
+    run_loso_derivation, run_sensitivity_sweep, render as render_thresholds,
+)
 from correlate_daisee_selfreport import (
     run_daisee_selfreport_study, render as render_daisee_selfreport,
 )
@@ -204,6 +212,25 @@ def render_config(title, folder, relaxed_glob, stressed_glob, out, mode=None):
                "within a recording")
     out.append("          are autocorrelated, so frame-level n overstates the "
                "evidence.")
+
+    fb = balance_metrics(fr["relaxed_n"], fr["relaxed_ok"], fr["stressed_n"], fr["stressed_ok"])
+    if fb:
+        out.append("")
+        out.append("  CLASS-BALANCE CHECK (frame-level) - raw accuracy vs its trivial floor")
+        out.append(f"    majority-class baseline  {pct(fb['majority_baseline'])}  "
+                   f"(always predict '{fb['majority_class']}')")
+        out.append(f"    balanced accuracy        {pct(fb['balanced_accuracy'])}")
+        out.append(f"    macro-F1                 {fb['macro_f1']:.3f}")
+        out.append(f"    stressed precision       {pct(fb['stressed_precision'])}")
+    sr = [d for d in se["detail"] if d[1] == "relaxed"]
+    ss = [d for d in se["detail"] if d[1] == "stressed"]
+    sb = balance_metrics(len(sr), sum(1 for d in sr if d[2]), len(ss), sum(1 for d in ss if d[2]))
+    if sb:
+        out.append("  CLASS-BALANCE CHECK (session-level)")
+        out.append(f"    majority-class baseline  {pct(sb['majority_baseline'])}  "
+                   f"(always predict '{sb['majority_class']}')")
+        out.append(f"    balanced accuracy        {pct(sb['balanced_accuracy'])}")
+        out.append(f"    macro-F1                 {sb['macro_f1']:.3f}")
 
     out.append("")
     out.append("  Confusion (frame-level):")
@@ -470,6 +497,26 @@ def main():
     # truth, no reason for this to live only in its own separate report.
     render_correlation(run_correlation_study(
         root / "datasets" / "feature_traces", root / "datasets" / "UBFC-Phys"), out)
+
+    # Phase 1.5 / 4.4: same study against heart rate derived from BVP -
+    # answers the reviewer's "correlate against heart rate too" ask, not
+    # just EDA.
+    render_hr_correlation(run_hr_correlation_study(
+        root / "datasets" / "feature_traces", root / "datasets" / "UBFC-Phys"), out)
+
+    # Phase 1.4b: ROC/Youden's J derivation of the LOW-vs-stressed cutoff,
+    # LOSO across every subject with labeled ground truth (UBFC-Phys +
+    # team recordings) - answers "is 0.36 actually the right number, or
+    # just the one that was hand-picked" with a real, held-out-validated
+    # comparison instead of an assertion.
+    threshold_subjects = {}
+    threshold_subjects.update(load_ubfc_subjects(root / "datasets" / "feature_traces"))
+    threshold_subjects.update(load_team_subjects(root / "evaluation_data" / "live_recordings"))
+    render_thresholds(
+        run_loso_derivation(threshold_subjects) if threshold_subjects else None,
+        run_sensitivity_sweep(threshold_subjects) if threshold_subjects else None,
+        out,
+    )
 
     # Phase 6.1: does the CNN branch's own output track genuine self-reported
     # stress? Reads the live session_history.db directly (the only section
