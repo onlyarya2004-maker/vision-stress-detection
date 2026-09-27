@@ -92,6 +92,35 @@ def frame_scores(relaxed_files, stressed_files):
     }
 
 
+def balance_metrics(relaxed_n, relaxed_ok, stressed_n, stressed_ok):
+    """
+    Class-balance-aware companions to raw accuracy, from the same four counts
+    frame_scores()/session_scores() already produce: relaxed_ok = relaxed
+    items read LOW (true negatives), stressed_ok = stressed items read
+    MODERATE/HIGH (true positives).
+
+    Why: raw accuracy on imbalanced data can look fine while the system is
+    only good at the bigger class. Reports balanced accuracy (mean of the two
+    per-class recalls), macro-F1, and the accuracy a trivial "always predict
+    the majority class" classifier would score on the same data, so every
+    accuracy figure has its honest floor printed next to it.
+    """
+    n = relaxed_n + stressed_n
+    if n == 0 or relaxed_n == 0 or stressed_n == 0:
+        return None
+    tp, fn = stressed_ok, stressed_n - stressed_ok
+    tn, fp = relaxed_ok, relaxed_n - relaxed_ok
+    f1_stressed = 2 * tp / (2 * tp + fp + fn) if (2 * tp + fp + fn) else 0.0
+    f1_relaxed = 2 * tn / (2 * tn + fn + fp) if (2 * tn + fn + fp) else 0.0
+    return {
+        "balanced_accuracy": (tp / stressed_n + tn / relaxed_n) / 2,
+        "macro_f1": (f1_stressed + f1_relaxed) / 2,
+        "stressed_precision": tp / (tp + fp) if (tp + fp) else 0.0,
+        "majority_baseline": max(relaxed_n, stressed_n) / n,
+        "majority_class": "stressed" if stressed_n >= relaxed_n else "relaxed",
+    }
+
+
 def session_scores(relaxed_files, stressed_files):
     """
     Session-level accuracy: each recording gets ONE verdict by majority vote
