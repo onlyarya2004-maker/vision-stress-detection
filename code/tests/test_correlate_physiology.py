@@ -13,7 +13,8 @@ import numpy as np
 import pytest
 
 from correlate_physiology import (
-    align, load_eda, load_index, run_correlation_study, render,
+    align, align_hr, bvp_to_heart_rate, load_bvp, load_eda, load_index,
+    run_correlation_study, run_hr_correlation_study, render, render_hr,
 )
 
 
@@ -225,4 +226,158 @@ def test_render_formats_each_trace_status_distinctly():
     text = "\n".join(out)
     assert 'no EDA file' in text
     assert 'NaN in EDA' in text
+    assert '+0.50' in text and '+0.40' in text
+
+
+# --------------------------------------------------------------------------
+# _find_physio_file - tolerates both the doubled s{N}/s{N}/ layout (most
+# subjects) and the flat s{N}/ layout (s11) - see module docstring.
+# --------------------------------------------------------------------------
+
+def test_run_correlation_study_finds_eda_under_flat_s11_style_layout(tmp_path):
+    """
+    The original lookup only tried s{N}/s{N}/eda_*.csv, so a subject whose
+    files sit directly under s{N}/ (s11's actual layout) was silently
+    reported as 'no EDA file' even though the file exists. _find_physio_file
+    must find it either way.
+    """
+    t = np.linspace(0, 60, 601)
+    _write_trace(tmp_path / 'features_vid_s11_T1.csv', t, np.sin(t))
+
+    flat_dir = tmp_path / 's11'
+    flat_dir.mkdir(parents=True)
+    t_eda = np.arange(240) / 4.0
+    (flat_dir / 'eda_s11_T1.csv').write_text(
+        "\n".join(f"{v:.6f}" for v in np.sin(t_eda)))
+
+    results = run_correlation_study(tmp_path, tmp_path)
+    assert results['per_trace'][0]['status'] == 'ok'
+
+
+# --------------------------------------------------------------------------
+# bvp_to_heart_rate
+# --------------------------------------------------------------------------
+
+def _synthetic_bvp(bpm, seconds=30, fs=64.0):
+    """A clean PPG-like waveform at a known, hand-chosen heart rate."""
+    t = np.arange(0, seconds, 1.0 / fs)
+    freq_hz = bpm / 60.0
+    return t, np.sin(2 * np.pi * freq_hz * t)
+
+
+def test_bvp_to_heart_rate_recovers_known_rate():
+    _, bvp = _synthetic_bvp(bpm=72, seconds=30)
+    t_hr, hr = bvp_to_heart_rate(bvp)
+    assert len(hr) > 10
+    assert np.median(hr) == pytest.approx(72, abs=2)
+
+
+def test_bvp_to_heart_rate_handles_too_short_signal():
+    t_hr, hr = bvp_to_heart_rate(np.zeros(10))   # far under fs*5 samples
+    assert len(t_hr) == 0 and len(hr) == 0
+
+
+def test_bvp_to_heart_rate_handles_flat_signal_without_crashing():
+    # No peaks at all in a flat line - must return empty, not divide-by-zero.
+    t_hr, hr = bvp_to_heart_rate(np.zeros(64 * 30))
+    assert len(t_hr) == 0 and len(hr) == 0
+
+
+def test_bvp_to_heart_rate_drops_physiologically_impossible_intervals():
+    # One huge gap spliced into an otherwise-clean 72bpm signal would
+    # produce a sub-30bpm "beat" if not filtered out.
+    _, bvp = _synthetic_bvp(bpm=72, seconds=20)
+    gap = np.zeros(64 * 5)
+    bvp = np.concatenate([bvp[:64 * 10], gap, bvp[64 * 10:]])
+    t_hr, hr = bvp_to_heart_rate(bvp)
+    assert np.all((hr >= 30) & (hr <= 220))
+
+
+# --------------------------------------------------------------------------
+# align_hr
+# --------------------------------------------------------------------------
+
+def test_align_hr_returns_none_for_too_few_beats():
+    t_idx, x_idx = np.array([0.0, 10.0]), np.array([0.1, 0.5])
+    x, h = align_hr(t_idx, x_idx, np.array([1.0, 2.0]), np.array([70.0, 71.0]))
+    assert x is None and h is None
+
+
+def test_align_hr_resamples_index_onto_heart_rate_timestamps():
+    t_idx = np.linspace(0, 10, 101)
+    x_idx = t_idx.copy()
+    t_hr = np.linspace(1, 9, 20)          # irregular-ish, within [0,10]
+    hr = np.full(20, 70.0)
+    x, h = align_hr(t_idx, x_idx, t_hr, hr)
+    assert x is not None
+    assert x == pytest.approx(t_hr, abs=1e-9)
+    assert list(h) == pytest.approx([70.0] * 20)
+
+
+# --------------------------------------------------------------------------
+# run_hr_correlation_study / render_hr - end to end
+# --------------------------------------------------------------------------
+
+def test_run_hr_correlation_study_marks_missing_bvp_file(tmp_path):
+    t = np.linspace(0, 60, 601)
+    _write_trace(tmp_path / 'features_vid_s1_T1.csv', t, np.sin(t))
+    results = run_hr_correlation_study(tmp_path, tmp_path)
+    assert results is not None
+    assert results['per_trace'] == [{'label': 's1_T1', 'status': 'no_bvp'}]
+
+
+def test_run_hr_correlation_study_direction_agreement_hand_checked(tmp_path):
+    """
+    Two subjects engineered so the answer is known by construction: s1's
+    index rises with heart rate from rest to stress (agree), s2's index
+    falls while heart rate rises (disagree). Rest = 65bpm, stress = 95bpm -
+    clearly distinct after peak detection.
+    """
+    def write_subject(subj, rest_idx, rest_bpm, stress_idx, stress_bpm):
+        t = np.linspace(0, 30, 301)
+        for task, idx_val, bpm in ((1, rest_idx, rest_bpm),
+                                   (2, stress_idx, stress_bpm),
+                                   (3, stress_idx, stress_bpm)):
+            _write_trace(tmp_path / f'features_vid_s{subj}_T{task}.csv',
+                        t, np.full_like(t, idx_val))
+            bvp_dir = tmp_path / f's{subj}' / f's{subj}'
+            bvp_dir.mkdir(parents=True, exist_ok=True)
+            _, bvp = _synthetic_bvp(bpm=bpm, seconds=30)
+            (bvp_dir / f'bvp_s{subj}_T{task}.csv').write_text(
+                "\n".join(f"{v:.6f}" for v in bvp))
+
+    write_subject(1, rest_idx=0.1, rest_bpm=65, stress_idx=0.8, stress_bpm=95)  # agree
+    write_subject(2, rest_idx=0.8, rest_bpm=65, stress_idx=0.1, stress_bpm=95)  # disagree
+
+    results = run_hr_correlation_study(tmp_path, tmp_path)
+    assert results['total'] == 2
+    assert results['agree'] == 1
+    by_subject = {row['subject']: row['agree'] for row in results['agreement_rows']}
+    assert by_subject[1] is True
+    assert by_subject[2] is False
+
+
+def test_render_hr_handles_none_results():
+    out = []
+    render_hr(None, out)
+    assert any('no feature traces found' in line for line in out)
+
+
+def test_render_hr_formats_each_trace_status_distinctly():
+    results = {
+        'traces_dir': 'X', 'ubfc_dir': 'Y',
+        'per_trace': [
+            {'label': 's1_T1', 'status': 'no_bvp'},
+            {'label': 's2_T1', 'status': 'no_peaks'},
+            {'label': 's3_T1', 'status': 'nan', 'n': 50},
+            {'label': 's4_T1', 'status': 'ok', 'n': 50, 'pearson': 0.5, 'spearman': 0.4},
+        ],
+        'agreement_rows': [], 'agree': 0, 'total': 0,
+    }
+    out = []
+    render_hr(results, out)
+    text = "\n".join(out)
+    assert 'no BVP file' in text
+    assert 'too few detected heartbeats' in text
+    assert 'NaN in heart rate' in text
     assert '+0.50' in text and '+0.40' in text

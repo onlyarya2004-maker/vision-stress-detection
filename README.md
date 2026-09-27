@@ -2,8 +2,9 @@
 
 Real-time cognitive stress monitoring from an ordinary laptop webcam — no wearables, no
 contact sensors. Classifies stress as **LOW / MODERATE / HIGH** by fusing a DaiSEE-trained
-CNN ensemble with an interpretable MediaPipe behavioral feature engine, with decision
-boundaries anchored to the WESAD physiological reference dataset.
+CNN ensemble with an interpretable MediaPipe behavioral feature engine. Decision boundaries
+(0.24 / 0.55) are empirically tuned, not derived from WESAD — WESAD is used only as an
+independent physiological validation reference (`USE_WESAD_CUTOFFS = False` in `config.py`).
 
 B.M.S. College of Engineering — Department of CSE (Data Science)
 Project Work Phase 1 (23DS6PWPP1), AY 2025-2026
