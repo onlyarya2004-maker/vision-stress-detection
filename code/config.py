@@ -23,7 +23,15 @@ that.
 # ===========================================================================
 # These are EMPIRICALLY TUNED values, not the WESAD percentiles. See the
 # WESAD_CALIBRATION section below for why the JSON's cutoffs are not used.
-LOW_TO_MODERATE_CUTOFF = 0.36
+LOW_TO_MODERATE_CUTOFF = 0.24   # was 0.36 until 2026-09-27; ROC/Youden's J across
+                                # 17 subjects (derive_thresholds.py) found ~0.24 as the
+                                # data-optimal cut. Replayed end to end through the full
+                                # fusion+smoothing+hysteresis pipeline: UBFC-Phys leak-free
+                                # subjects improve sharply (66.67%->88.89% session), team
+                                # webcam drops slightly (83.33%->75.00% session). Chosen
+                                # deliberately for the larger, growing UBFC-Phys population
+                                # (heading to ~20 subjects) over the smaller live-recording
+                                # pool (~12, growing to ~20-28) - see PLAN_FOR_PP2.md.
 MODERATE_TO_HIGH_CUTOFF = 0.55
 
 # ===========================================================================

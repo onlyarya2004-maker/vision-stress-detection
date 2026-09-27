@@ -526,15 +526,15 @@ def test_run_ablation_study_removing_a_perfectly_discriminative_branch_hurts_acc
                 })
                 w.writerow(row)
 
-    # behavior_val=0.3 is chosen so behavior's own contribution
-    # (W_BEHAVIOR=0.80 x 0.3 = 0.24) stays safely below the LOW/MODERATE
-    # cutoff (0.36) on its own - only DaiSEE's swing (0.05 -> 0.95) decides
-    # the label. A behavior_val large enough to cross 0.36 by itself (e.g.
-    # 0.5) would make this scenario meaningless, since it would classify
-    # both classes identically regardless of what DaiSEE says.
+    # behavior_val=0.15 is chosen so behavior's own contribution
+    # (W_BEHAVIOR=0.80 x 0.15 = 0.12) stays safely below the LOW/MODERATE
+    # cutoff (0.24, was 0.36 until 2026-09-27) on its own - only DaiSEE's
+    # swing (0.05 -> 0.95) decides the label. A behavior_val large enough to
+    # cross 0.24 by itself would make this scenario meaningless, since it
+    # would classify both classes identically regardless of what DaiSEE says.
     for subj in ('s1', 's2', 's3'):
-        write(tmp_path / f'features_vid_{subj}_T1.csv', 40, daisee_val=0.05, behavior_val=0.3)
-        write(tmp_path / f'features_vid_{subj}_T2.csv', 40, daisee_val=0.95, behavior_val=0.3)
+        write(tmp_path / f'features_vid_{subj}_T1.csv', 40, daisee_val=0.05, behavior_val=0.15)
+        write(tmp_path / f'features_vid_{subj}_T2.csv', 40, daisee_val=0.95, behavior_val=0.15)
 
     results = run_ablation_study(tmp_path)
     assert results is not None
