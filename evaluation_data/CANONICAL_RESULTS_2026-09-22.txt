@@ -1,0 +1,607 @@
+==============================================================================
+CANONICAL EVALUATION RESULTS
+==============================================================================
+generated : 2026-09-22T17:01:29
+root      : C:\Users\Arya\Desktop\stress_project
+
+Every number this project reports must come from this file.
+Regenerate with:  cd code && python run_all_evaluations.py
+
+==============================================================================
+LIVE SYSTEM — END-TO-END EVALUATION
+==============================================================================
+
+### Default mode (evaluation_data/live_recordings/)
+  source: C:\Users\Arya\Desktop\stress_project\evaluation_data\live_recordings  (relaxed_*.csv / stressed_*.csv)
+
+  Per-file:
+    relaxed_1.csv                n=  52  mean_index=0.262  L/M/H=52/0/0
+    relaxed_2.csv                n=  48  mean_index=0.205  L/M/H=48/0/0
+    relaxed_S1_default_2026-09-15.csv n= 172  mean_index=0.100  L/M/H=172/0/0
+    relaxed_S2_default_2026-09-15.csv n= 139  mean_index=0.206  L/M/H=139/0/0
+    relaxed_S3_default_2026-09-15.csv n= 147  mean_index=0.157  L/M/H=147/0/0
+    relaxed_S4_default_2026-09-15.csv n= 160  mean_index=0.405  L/M/H=45/115/0
+    relaxed_S5_default_2026-09-16.csv n= 151  mean_index=0.228  L/M/H=145/6/0
+    relaxed_S6_default_2026-09-16.csv n= 167  mean_index=0.315  L/M/H=101/66/0
+    stressed_1.csv               n=  62  mean_index=0.543  L/M/H=1/35/26
+    stressed_2.csv               n=  62  mean_index=0.566  L/M/H=1/19/42
+    stressed_S1_default_2026-09-15.csv n= 155  mean_index=0.508  L/M/H=11/99/45
+    stressed_S2_default_2026-09-15.csv n= 229  mean_index=0.249  L/M/H=200/29/0
+    stressed_S3_default_2026-09-15.csv n= 144  mean_index=0.169  L/M/H=144/0/0
+    stressed_S4_default_2026-09-15.csv n= 154  mean_index=0.607  L/M/H=3/51/100
+    stressed_S5_default_2026-09-16.csv n= 169  mean_index=0.384  L/M/H=75/55/39
+    stressed_S6_default_2026-09-16.csv n= 169  mean_index=0.337  L/M/H=105/64/0
+
+  FRAME-level   n=2180
+    overall accuracy   66.65%  95% CI [64.6%, 68.6%]
+    relaxed  -> LOW    849/1036 = 81.95%  CI [79.5%, 84.2%]
+    stressed -> M/H    604/1144 = 52.80%  CI [49.9%, 55.7%]
+
+  SESSION-level n=16   (majority vote per recording)
+    accuracy           12/16 = 75.00%  95% CI [50.5%, 89.8%]
+    NOTE: the wide interval here is the honest one - frames within a recording
+          are autocorrelated, so frame-level n overstates the evidence.
+
+  Confusion (frame-level):
+                   LOW  MODERATE    HIGH
+    relaxed        849       187       0
+    stressed       540       352     252
+
+  Discrimination gap: +0.153   (relaxed mean 0.236, stressed mean 0.389)
+
+  PER-SUBJECT breakdown:
+    subject        n   accuracy              95% CI
+    S1           327     96.64%      [94.1%, 98.1%]
+    S2           368     45.65%      [40.6%, 50.8%]
+    S3           291     50.52%      [44.8%, 56.2%]
+    S4           314     62.42%      [56.9%, 67.6%]
+    S5           320     74.69%      [69.7%, 79.1%]
+    S6           336     49.11%      [43.8%, 54.4%]
+    NOTE: cross-subject spread is the real generalisation test.
+
+### Studying mode (evaluation_data/live_recordings/)
+  (no matching CSVs in C:\Users\Arya\Desktop\stress_project\evaluation_data\live_recordings)
+
+### Hospital mode (evaluation_data/live_recordings/)
+  (no matching CSVs in C:\Users\Arya\Desktop\stress_project\evaluation_data\live_recordings)
+
+### Driving mode (evaluation_data/live_recordings/)
+  (no matching CSVs in C:\Users\Arya\Desktop\stress_project\evaluation_data\live_recordings)
+
+### Studying mode (archived baseline_v1/study*)
+  CAUTION: RECORDING_PROTOCOL.md documents this folder as unreconciled
+  provenance - do not cite without re-checking which files were really
+  in the original run. Kept for reference only, not the current number;
+  see the 'Studying mode (evaluation_data/live_recordings/)' section above for that.
+
+###   (detail)
+  source: C:\Users\Arya\Desktop\stress_project\evaluation_data\baseline_v1  (studyrelaxed_*.csv / studystressed_*.csv)
+
+  Per-file:
+    studyrelaxed_1.csv           n=  58  mean_index=0.223  L/M/H=58/0/0
+    studyrelaxed_2.csv           n=  89  mean_index=0.299  L/M/H=83/6/0
+    studystressed_1.csv          n=  61  mean_index=0.543  L/M/H=8/26/27
+    studystressed_2.csv          n=  85  mean_index=0.502  L/M/H=2/60/23
+
+  FRAME-level   n=293
+    overall accuracy   94.54%  95% CI [91.3%, 96.6%]
+    relaxed  -> LOW    141/147 = 95.92%  CI [91.4%, 98.1%]
+    stressed -> M/H    136/146 = 93.15%  CI [87.9%, 96.2%]
+
+  SESSION-level n=4   (majority vote per recording)
+    accuracy           4/4 = 100.00%  95% CI [51.0%, 100.0%]
+    NOTE: the wide interval here is the honest one - frames within a recording
+          are autocorrelated, so frame-level n overstates the evidence.
+
+  Confusion (frame-level):
+                   LOW  MODERATE    HIGH
+    relaxed        141         6       0
+    stressed        10        86      50
+
+  Discrimination gap: +0.250   (relaxed mean 0.269, stressed mean 0.519)
+
+### Archived baseline_v1 non-study recordings
+  source: C:\Users\Arya\Desktop\stress_project\evaluation_data\baseline_v1  (relaxed_*.csv / stressed_*.csv)
+
+  Per-file:
+    relaxed_1.csv                n= 106  mean_index=0.356  L/M/H=80/26/0
+    relaxed_2.csv                n=  76  mean_index=0.361  L/M/H=46/30/0
+    stressed_1.csv               n= 115  mean_index=0.514  L/M/H=6/74/35
+    stressed_2.csv               n= 171  mean_index=0.552  L/M/H=14/83/74
+
+  FRAME-level   n=468
+    overall accuracy   83.76%  95% CI [80.1%, 86.8%]
+    relaxed  -> LOW    126/182 = 69.23%  CI [62.2%, 75.5%]
+    stressed -> M/H    266/286 = 93.01%  CI [89.4%, 95.4%]
+
+  SESSION-level n=4   (majority vote per recording)
+    accuracy           4/4 = 100.00%  95% CI [51.0%, 100.0%]
+    NOTE: the wide interval here is the honest one - frames within a recording
+          are autocorrelated, so frame-level n overstates the evidence.
+
+  Confusion (frame-level):
+                   LOW  MODERATE    HIGH
+    relaxed        126        56       0
+    stressed        20       157     109
+
+  Discrimination gap: +0.178   (relaxed mean 0.358, stressed mean 0.537)
+
+==============================================================================
+EXTERNAL VALIDATION — UBFC-PHYS
+==============================================================================
+Independent subjects with synchronised physiological ground
+truth. Kept in its own folder so it can never pool with the
+single-subject recordings above - mixing them would silently
+corrupt both numbers.
+  T1 rest -> relaxed | T2 speech, T3 arithmetic -> stressed
+
+### UBFC-Phys (cross-subject)
+  source: C:\Users\Arya\Desktop\stress_project\evaluation_data\ubfc_phys  (relaxed_*.csv / stressed_*.csv)
+
+  Per-file:
+    relaxed_U01_default_2026-08-15_vid_s1_T1.csv n=2634  mean_index=0.306  L/M/H=1674/863/97
+    relaxed_U02_default_2026-08-15_vid_s2_T1.csv n=2634  mean_index=0.244  L/M/H=2244/390/0
+    relaxed_U03_default_2026-08-15_vid_s3_T1.csv n=2634  mean_index=0.350  L/M/H=1268/1351/15
+    relaxed_U04_default_2026-08-15_vid_s4_T1.csv n=2634  mean_index=0.243  L/M/H=2178/416/40
+    relaxed_U05_default_2026-08-15_vid_s5_T1.csv n=2634  mean_index=0.136  L/M/H=2605/29/0
+    relaxed_U06_default_2026-08-21_vid_s6_T1.csv n=5622  mean_index=0.219  L/M/H=5610/12/0
+    relaxed_U07_default_2026-08-21_vid_s7_T1.csv n=5622  mean_index=0.104  L/M/H=5622/0/0
+    relaxed_U08_default_2026-08-21_vid_s8_T1.csv n=5621  mean_index=0.233  L/M/H=5356/265/0
+    relaxed_U09_default_2026-08-21_vid_s9_T1.csv n=5616  mean_index=0.434  L/M/H=1143/4017/456
+    relaxed_U10_default_2026-08-21_vid_s10_T1.csv n=5622  mean_index=0.197  L/M/H=4943/679/0
+    relaxed_U11_default_2026-09-16_vid_s11_T1.csv n=5594  mean_index=0.293  L/M/H=4056/1160/378
+    stressed_U01_default_2026-08-15_vid_s1_T2.csv n=2634  mean_index=0.209  L/M/H=2338/296/0
+    stressed_U01_default_2026-08-15_vid_s1_T3.csv n=2634  mean_index=0.253  L/M/H=2307/327/0
+    stressed_U02_default_2026-08-15_vid_s2_T2.csv n=2634  mean_index=0.417  L/M/H=789/1457/388
+    stressed_U02_default_2026-08-15_vid_s2_T3.csv n=2595  mean_index=0.510  L/M/H=144/1654/797
+    stressed_U03_default_2026-08-15_vid_s3_T2.csv n=2634  mean_index=0.493  L/M/H=489/1315/830
+    stressed_U03_default_2026-08-15_vid_s3_T3.csv n=2634  mean_index=0.374  L/M/H=1303/1150/181
+    stressed_U04_default_2026-08-15_vid_s4_T2.csv n=2634  mean_index=0.376  L/M/H=1244/1262/128
+    stressed_U04_default_2026-08-15_vid_s4_T3.csv n=2599  mean_index=0.326  L/M/H=1652/867/80
+    stressed_U05_default_2026-08-15_vid_s5_T2.csv n=2634  mean_index=0.315  L/M/H=1965/651/18
+    stressed_U05_default_2026-08-15_vid_s5_T3.csv n=2634  mean_index=0.225  L/M/H=2570/64/0
+    stressed_U06_default_2026-08-21_vid_s6_T2.csv n=5622  mean_index=0.290  L/M/H=4894/728/0
+    stressed_U06_default_2026-08-21_vid_s6_T3.csv n=5622  mean_index=0.319  L/M/H=3915/1707/0
+    stressed_U07_default_2026-08-21_vid_s7_T2.csv n=5622  mean_index=0.460  L/M/H=828/3812/982
+    stressed_U07_default_2026-08-21_vid_s7_T3.csv n=5622  mean_index=0.269  L/M/H=4618/1000/4
+    stressed_U08_default_2026-08-21_vid_s8_T2.csv n=5622  mean_index=0.257  L/M/H=5277/345/0
+    stressed_U08_default_2026-08-21_vid_s8_T3.csv n=5599  mean_index=0.344  L/M/H=3238/2314/47
+    stressed_U09_default_2026-08-21_vid_s9_T2.csv n=5622  mean_index=0.297  L/M/H=4287/1335/0
+    stressed_U09_default_2026-08-21_vid_s9_T3.csv n=5614  mean_index=0.455  L/M/H=1287/2899/1428
+    stressed_U10_default_2026-08-21_vid_s10_T2.csv n=5622  mean_index=0.263  L/M/H=4806/761/55
+    stressed_U10_default_2026-08-21_vid_s10_T3.csv n=5622  mean_index=0.226  L/M/H=5591/31/0
+    stressed_U11_default_2026-09-16_vid_s11_T2.csv n=5612  mean_index=0.429  L/M/H=1589/2970/1053
+    stressed_U11_default_2026-09-16_vid_s11_T3.csv n=5622  mean_index=0.441  L/M/H=1722/2616/1284
+
+  FRAME-level   n=140556
+    overall accuracy   52.32%  95% CI [52.1%, 52.6%]
+    relaxed  -> LOW    36699/46867 = 78.30%  CI [77.9%, 78.7%]
+    stressed -> M/H    36836/93689 = 39.32%  CI [39.0%, 39.6%]
+
+  SESSION-level n=33   (majority vote per recording)
+    accuracy           18/33 = 54.55%  95% CI [38.0%, 70.2%]
+    NOTE: the wide interval here is the honest one - frames within a recording
+          are autocorrelated, so frame-level n overstates the evidence.
+
+  Confusion (frame-level):
+                   LOW  MODERATE    HIGH
+    relaxed      36699      9182     986
+    stressed     56853     29561    7275
+
+  Discrimination gap: +0.092   (relaxed mean 0.249, stressed mean 0.341)
+
+  PER-SUBJECT breakdown:
+    subject        n   accuracy              95% CI
+    U01         7902     29.07%      [28.1%, 30.1%]
+    U02         7863     83.17%      [82.3%, 84.0%]
+    U03         7902     60.04%      [59.0%, 61.1%]
+    U04         7867     57.39%      [56.3%, 58.5%]
+    U05         7902     42.24%      [41.2%, 43.3%]
+    U06        16866     47.70%      [46.9%, 48.5%]
+    U07        16866     67.71%      [67.0%, 68.4%]
+    U08        16842     47.87%      [47.1%, 48.6%]
+    U09        16852     40.38%      [39.6%, 41.1%]
+    U10        16866     34.33%      [33.6%, 35.0%]
+    U11        16828     71.18%      [70.5%, 71.9%]
+    NOTE: cross-subject spread is the real generalisation test.
+
+### Ablation table (UBFC-Phys cross-subject, each branch removed once)
+  Frame-level accuracy, session-level accuracy, and the drop from the
+  full system, for each branch removed one at a time.
+
+  condition                                frame acc   session acc  delta (pp)
+  ----------------------------------------------------------------------------
+  Full system (current config)                62.56%        66.67%  (baseline)
+  - Behavioral engine (W_BEHAVIOR=0)          88.03%        93.94%      +25.47
+  - DaiSEE CNN (W_DAISEE=0)                   65.03%        66.67%       +2.46
+  - Rule boost (RULE_BOOST_AMOUNT=0)          62.36%        66.67%       -0.20
+  - Temporal smoothing (window=1 frame)       60.79%        69.70%       -1.78
+  - GRU temporal branch (W_TEMPORAL=0)        52.32%        54.55%      -10.25
+  - rPPG heart-rate branch                   (no-op)       (no-op)       +0.00
+
+  Full system (current config)
+    frame-level   n=140556  acc 62.56%  95% CI [62.3%, 62.8%]
+    session-level n=33      acc 66.67%  95% CI [49.6%, 80.2%]
+  - Behavioral engine (W_BEHAVIOR=0)
+    frame-level   n=140556  acc 88.03%  95% CI [87.9%, 88.2%]
+    session-level n=33      acc 93.94%  95% CI [80.4%, 98.3%]
+  - DaiSEE CNN (W_DAISEE=0)
+    frame-level   n=140556  acc 65.03%  95% CI [64.8%, 65.3%]
+    session-level n=33      acc 66.67%  95% CI [49.6%, 80.2%]
+  - Rule boost (RULE_BOOST_AMOUNT=0)
+    frame-level   n=140556  acc 62.36%  95% CI [62.1%, 62.6%]
+    session-level n=33      acc 66.67%  95% CI [49.6%, 80.2%]
+  - Temporal smoothing (window=1 frame)
+    frame-level   n=140556  acc 60.79%  95% CI [60.5%, 61.0%]
+    session-level n=33      acc 69.70%  95% CI [52.7%, 82.6%]
+  - GRU temporal branch (W_TEMPORAL=0)
+    frame-level   n=140556  acc 52.32%  95% CI [52.1%, 52.6%]
+    session-level n=33      acc 54.55%  95% CI [38.0%, 70.2%]
+
+  - rPPG heart-rate branch: already W_RPPG=0.0 - unproven on compressed webcam video (see rppg_live.py); removing it changes nothing by construction.
+
+### Leak-free re-check: GRU branch, held-out subjects only
+  subjects the shipped model never trained on: ['s2', 's6', 's9']
+  n is small (3 subjects) by construction - this trades sample size for
+  being leak-free, which the full table above is not for this branch.
+
+### Ablation table (UBFC-Phys cross-subject, each branch removed once)
+  Frame-level accuracy, session-level accuracy, and the drop from the
+  full system, for each branch removed one at a time.
+
+  condition                                frame acc   session acc  delta (pp)
+  ----------------------------------------------------------------------------
+  Full system (current config)                63.35%        66.67%  (baseline)
+  - Behavioral engine (W_BEHAVIOR=0)          84.98%        88.89%      +21.63
+  - DaiSEE CNN (W_DAISEE=0)                   65.99%        66.67%       +2.64
+  - Rule boost (RULE_BOOST_AMOUNT=0)          63.21%        66.67%       -0.14
+  - Temporal smoothing (window=1 frame)       64.23%        66.67%       +0.88
+  - GRU temporal branch (W_TEMPORAL=0)        51.44%        55.56%      -11.91
+  - rPPG heart-rate branch                   (no-op)       (no-op)       +0.00
+
+  Full system (current config)
+    frame-level   n=41581   acc 63.35%  95% CI [62.9%, 63.8%]
+    session-level n=9       acc 66.67%  95% CI [35.4%, 87.9%]
+  - Behavioral engine (W_BEHAVIOR=0)
+    frame-level   n=41581   acc 84.98%  95% CI [84.6%, 85.3%]
+    session-level n=9       acc 88.89%  95% CI [56.5%, 98.0%]
+  - DaiSEE CNN (W_DAISEE=0)
+    frame-level   n=41581   acc 65.99%  95% CI [65.5%, 66.4%]
+    session-level n=9       acc 66.67%  95% CI [35.4%, 87.9%]
+  - Rule boost (RULE_BOOST_AMOUNT=0)
+    frame-level   n=41581   acc 63.21%  95% CI [62.7%, 63.7%]
+    session-level n=9       acc 66.67%  95% CI [35.4%, 87.9%]
+  - Temporal smoothing (window=1 frame)
+    frame-level   n=41581   acc 64.23%  95% CI [63.8%, 64.7%]
+    session-level n=9       acc 66.67%  95% CI [35.4%, 87.9%]
+  - GRU temporal branch (W_TEMPORAL=0)
+    frame-level   n=41581   acc 51.44%  95% CI [51.0%, 51.9%]
+    session-level n=9       acc 55.56%  95% CI [26.7%, 81.1%]
+
+  - rPPG heart-rate branch: already W_RPPG=0.0 - unproven on compressed webcam video (see rppg_live.py); removing it changes nothing by construction.
+
+==========================================================================
+STRESS INDEX vs EDA  (UBFC-Phys ground truth)
+==========================================================================
+  traces : C:\Users\Arya\Desktop\stress_project\datasets\feature_traces
+  ubfc   : C:\Users\Arya\Desktop\stress_project\datasets\UBFC-Phys
+
+Within-task r is indicative only - EDA drifts and both series are
+autocorrelated. The between-task direction test is the real claim.
+
+  trace                      n   Pearson  Spearman
+  --------------------------------------------------
+  s10_T1                   639     +0.37     +0.16
+  s10_T2                   639     +0.26     +0.29
+  s10_T3                   639     -0.21     -0.25
+  s11_T1                   639     -0.31     -0.31
+  s11_T2                   639     -0.29     -0.34
+  s11_T3                   639     +0.55     +0.44
+  s1_T1                  (no EDA file)
+  s1_T2                  (no EDA file)
+  s1_T3                  (no EDA file)
+  s2_T1                  (no EDA file)
+  s2_T2                  (no EDA file)
+  s2_T3                  (no EDA file)
+  s3_T1                  (no EDA file)
+  s3_T2                  (no EDA file)
+  s3_T3                  (no EDA file)
+  s4_T1                  (no EDA file)
+  s4_T2                  (no EDA file)
+  s4_T3                  (no EDA file)
+  s5_T1                  (no EDA file)
+  s5_T2                  (no EDA file)
+  s5_T3                  (no EDA file)
+  s6_T1                    639     +0.08     +0.10
+  s6_T2                    639     +0.29     +0.36
+  s6_T3                    639     -0.40     -0.38
+  s7_T1                    639     -0.46     -0.53
+  s7_T2                    639     +0.30     +0.28
+  s7_T3                    639     +0.39     +0.40
+  s8_T1                    639     -0.24     -0.26
+  s8_T2                    639     +0.12     +0.15
+  s8_T3                    639     -0.20     -0.21
+  s9_T1                    639     -0.01     -0.06
+  s9_T2                    639     +0.37     +0.36
+  s9_T3                    639     -0.37     -0.31
+
+  BETWEEN-TASK (rest T1 -> stressors T2/T3): direction agreement
+  subject     EDA rest  EDA stress  idx rest  idx stress   agree?
+  --------------------------------------------------------------
+  s6             0.187       0.555     0.218       0.305   YES
+  s7             0.256       1.040     0.104       0.364   YES
+  s8             0.053       0.074     0.233       0.300   YES
+  s9             0.151       0.340     0.434       0.376   NO
+  s10            0.175       5.288     0.197       0.244   YES
+  s11            0.386       1.577     0.294       0.435   YES
+
+  direction agreement: 5/6 subjects
+  (chance is ~50%; this is the number that grows meaningful as
+   more subjects are processed)
+
+==========================================================================
+STRESS INDEX vs HEART RATE (from BVP)  (UBFC-Phys ground truth)
+==========================================================================
+  traces : C:\Users\Arya\Desktop\stress_project\datasets\feature_traces
+  ubfc   : C:\Users\Arya\Desktop\stress_project\datasets\UBFC-Phys
+
+Heart rate is derived from raw BVP via bandpass filtering + peak
+detection (no hardware HR channel exists in UBFC-Phys) - noisier than
+a real HR monitor. Within-task r is indicative only - both series
+drift and are autocorrelated. The between-task direction test is the
+real claim.
+
+  trace                      n   Pearson  Spearman
+  --------------------------------------------------
+  s10_T1                   249     +0.15     -0.14
+  s10_T2                   259     -0.03     -0.04
+  s10_T3                   241     -0.11     -0.15
+  s11_T1                   255     +0.01     +0.11
+  s11_T2                   285     +0.11     +0.10
+  s11_T3                   286     -0.14     -0.15
+  s1_T1                  (no BVP file)
+  s1_T2                  (no BVP file)
+  s1_T3                  (no BVP file)
+  s2_T1                  (no BVP file)
+  s2_T2                  (no BVP file)
+  s2_T3                  (no BVP file)
+  s3_T1                  (no BVP file)
+  s3_T2                  (no BVP file)
+  s3_T3                  (no BVP file)
+  s4_T1                  (no BVP file)
+  s4_T2                  (no BVP file)
+  s4_T3                  (no BVP file)
+  s5_T1                  (no BVP file)
+  s5_T2                  (no BVP file)
+  s5_T3                  (no BVP file)
+  s6_T1                    246     +0.17     +0.07
+  s6_T2                    270     -0.20     -0.17
+  s6_T3                    271     -0.11     -0.15
+  s7_T1                    189     -0.08     -0.08
+  s7_T2                    225     +0.08     +0.05
+  s7_T3                    226     +0.00     +0.01
+  s8_T1                    206     +0.06     +0.08
+  s8_T2                    225     -0.03     -0.04
+  s8_T3                    259     -0.09     -0.11
+  s9_T1                    265     -0.06     -0.17
+  s9_T2                    302     -0.01     -0.02
+  s9_T3                    275     +0.01     +0.02
+
+  BETWEEN-TASK (rest T1 -> stressors T2/T3): direction agreement
+  subject      HR rest   HR stress  idx rest  idx stress   agree?
+  --------------------------------------------------------------
+  s6              94.5       107.4     0.219       0.303   YES
+  s7              71.7        96.0     0.103       0.365   YES
+  s8              79.7       101.4     0.234       0.299   YES
+  s9             101.9       115.6     0.434       0.375   NO
+  s10             95.9       103.6     0.198       0.243   YES
+  s11            106.3       121.2     0.295       0.433   YES
+
+  direction agreement: 5/6 subjects
+  (chance is ~50%; this is the number that grows meaningful as
+   more subjects are processed)
+
+==============================================================================
+ROC / YOUDEN'S J THRESHOLD DERIVATION (LOSO)
+==============================================================================
+  current fixed cutoffs : LOW/MODERATE=0.36  MODERATE/HIGH=0.55
+
+Ground truth is binary (relaxed/stressed) everywhere in this project, so
+only the LOW-vs-stressed boundary can be derived this way. The
+MODERATE/HIGH split has no ground truth to validate against and is NOT
+addressed by this study - it remains a hand-set severity cut, reported
+here as an explicit limitation, not silently assumed solved.
+
+  LOSO folds run: 17
+  mean optimal threshold : 0.237  (std 0.006)
+  mean held-out accuracy, per-fold optimal threshold : 68.00%
+  mean held-out accuracy, CURRENT fixed threshold (0.36) : 56.56%
+
+  subject         n  opt.thr  acc@opt  acc@fixed  bal@opt  bal@fixed
+  ------------------------------------------------------------------
+  TS1           327    0.240   100.0%      97.2%   100.0%      97.1%
+  TS2           368    0.240    59.5%      46.5%    61.8%      57.0%
+  TS3           291    0.240    58.4%      50.5%    58.0%      50.0%
+  TS4           314    0.240    51.6%      62.4%    52.5%      63.1%
+  TS5           320    0.240    68.1%      74.7%    67.9%      75.8%
+  TS6           336    0.240    57.4%      49.4%    57.3%      49.5%
+  U01          7902    0.240    39.8%      29.0%    38.1%      37.7%
+  U02          7863    0.223    80.9%      83.0%    72.6%      83.6%
+  U03          7902    0.234    74.0%      60.0%    62.3%      57.0%
+  U04          7867    0.224    74.7%      57.3%    68.3%      63.6%
+  U05          7902    0.240    68.7%      42.2%    71.7%      56.4%
+  U06         16866    0.233    76.5%      47.6%    73.6%      60.6%
+  U07         16866    0.240    85.0%      67.8%    88.8%      75.8%
+  U08         16842    0.233    69.0%      47.9%    63.8%      59.7%
+  U09         16852    0.239    57.9%      40.5%    43.8%      35.4%
+  U10         16866    0.243    58.0%      34.3%    63.8%      47.7%
+  U11         16828    0.237    76.5%      71.2%    68.5%      71.5%
+
+------------------------------------------------------------------------------
+SENSITIVITY SWEEP (full pooled dataset, not held-out)
+------------------------------------------------------------------------------
+   threshold   accuracy   balanced acc
+  ------------------------------------
+        0.20      72.7%          65.7%
+        0.25      68.5%          66.1%
+        0.30      61.2%          62.9%
+        0.35      54.2%          59.8%
+        0.40      47.1%          55.9%
+        0.45      42.6%          54.0%
+        0.50      40.6%          54.2%
+        0.55      38.1%          52.9%
+        0.60      35.8%          51.5%
+        0.65      34.6%          50.7%
+        0.70      34.1%          50.4%
+
+==============================================================================
+DAISEE BRANCH CONSTRUCT VALIDITY vs SELF-REPORT (Phase 6.1)
+==============================================================================
+  This checks whether the CNN branch's own output tracks genuine
+  self-reported stress. It does NOT validate DaiSEE's own training-label
+  formula in isolation - no dataset exists with both video and independent
+  stress ground truth to check that against.
+
+    session  self_report  mean_daisee  n_frames
+  -----------------------------------------------
+         46            2        0.511        75
+         51            1        0.465       172
+         52            5        0.506       155
+         53            2        0.486       139
+         54            3        0.545       229
+         56            2        0.338       147
+         57            3        0.385       144
+         58            5        0.532       154
+         59            2        0.525       160
+         60            1        0.475       151
+         61            5        0.558       169
+         62            1        0.402       167
+         63            4        0.529       169
+         64            1        0.474        40
+         65            2        0.518        28
+         67            1        0.575       127
+         70            4        0.494       198
+         71            2        0.445       179
+
+  n = 18 labeled sessions
+  Pearson  r = +0.327
+  Spearman r = +0.387
+  CAUTION: n this small means these correlations are indicative only,
+  not inferential - they will firm up as more sessions accumulate.
+
+  Binary agreement (CNN branch mean-probability>0.5 'stressed' call vs
+  self-reported label, rating 3 excluded as ambiguous): 11/16 = 68.8%
+  (chance is ~50%)
+
+==========================================================================
+LEARNED FUSION - leave-one-subject-out
+==========================================================================
+  140556 frames from 11 subject(s)
+  class balance: 46867 relaxed / 93689 stressed
+
+--------------------------------------------------------------------------
+BASELINE - current hand-tuned weights
+--------------------------------------------------------------------------
+  hand-tuned fusion      acc  56.29%   F1 0.593   relaxed-recall  73.4%   stressed-recall  47.7%   cond-block 14/22
+
+--------------------------------------------------------------------------
+LEARNED (out-of-fold, 11 folds)
+--------------------------------------------------------------------------
+  logistic regression    acc  67.45%   F1 0.725   relaxed-recall  73.6%   stressed-recall  64.4%   cond-block 20/22
+  gradient boosting      acc  76.79%   F1 0.833   relaxed-recall  57.1%   stressed-recall  86.6%   cond-block 16/22
+
+--------------------------------------------------------------------------
+WHAT IT LEARNED (fitted on all subjects)
+--------------------------------------------------------------------------
+  signal              hand-tuned   learned     coef   direction
+  ------------------------------------------------------------
+  head_instability          0.05      0.46    +1.65   stress up
+  neck_strain               0.05      0.15    -0.54   stress down (INVERTED)
+  slouch                    0.10      0.12    +0.44   stress up
+  jaw_tension               0.25      0.08    +0.28   stress up
+  brow_tension              0.30      0.07    +0.25   stress up
+  blink_stress              0.15      0.06    +0.23   stress up
+  eye_strain                0.10      0.05    +0.19   stress up
+
+  Signals marked INVERTED carry a NEGATIVE learned coefficient:
+  the model found them anti-correlated with stress on this data,
+  which the hand-picked weights could not express - they are all
+  positive by construction.
+
+==============================================================================
+OFFLINE STAGE ARTIFACTS (read from generated files, not retyped)
+==============================================================================
+
+### DaiSEE CNN ensemble (held-out test split)
+  source: models\daisee_test_report.txt
+  generated : 2026-08-22 19:49:46
+  data root : C:\Users\Arya\Desktop\stress_project\datasets\processed_daisee
+  n images  : 28531 (24708 not_stressed, 3823 stressed)
+
+  MobileNetV2 (alone)
+  n                    : 28531
+  accuracy             : 81.88%
+  balanced accuracy    : 57.25%
+  precision (stressed) : 0.286
+  recall (stressed)    : 0.236
+  f1 (stressed)        : 0.259
+  majority-class floor : 86.60%
+  verdict              : BELOW the majority-class floor
+
+  EfficientNetB0 (alone)
+  n                    : 28531
+  accuracy             : 81.11%
+  balanced accuracy    : 59.78%
+  precision (stressed) : 0.300
+  recall (stressed)    : 0.306
+  f1 (stressed)        : 0.303
+  majority-class floor : 86.60%
+  verdict              : BELOW the majority-class floor
+
+  Ensemble (mean of both - what the live system uses)
+  n                    : 28531
+  accuracy             : 81.89%
+  balanced accuracy    : 59.68%
+  precision (stressed) : 0.313
+  recall (stressed)    : 0.293
+  f1 (stressed)        : 0.303
+  majority-class floor : 86.60%
+  verdict              : BELOW the majority-class floor
+
+  Regenerate with: python daisee_test_eval.py (loads the saved .h5
+  checkpoints, runs inference only - takes a few minutes, not retrained
+  here, so this section is NOT called from this script directly).
+
+### WESAD physiological calibration
+  source: models\calibrated_thresholds.json
+  LOSO mean accuracy : 91.53%
+  LOSO mean F1       : 0.872
+  subjects           : 15
+  windows            : 566 baseline / 311 stress
+  JSON cutoffs       : 0.035 / 0.712
+  WARNING: those JSON cutoffs are NOT what the live system uses.
+           config.py sets 0.36 / 0.55. See PLAN_FOR_PP2.md.
+
+### CNN+LSTM pixel temporal branch (RETIRED - code/_archive/lstm_temporal.py)
+  source: models\lstm_test_report.txt
+  Test set size: 1784 sequences
+  Test accuracy: 71.13%
+  Test loss: 0.6059
+  Majority-class floor for DaiSEE (~6.4:1) is 86.6% - the model
+  was BELOW it. Replaced in Phase 2.1 by a feature-sequence GRU -
+  see the next section.
+
+### Feature-sequence GRU temporal branch (Phase 2.1, ACTIVE via W_TEMPORAL=0.10)
+  source: models\temporal_gru_test_report.txt
+
+==============================================================================
+READING THESE NUMBERS
+==============================================================================
+* Frame-level accuracy is the familiar figure but its n is inflated:
+  frames within one recording are highly autocorrelated.
+* Session-level accuracy uses the honest denominator (recordings),
+  which is why its confidence interval is much wider.
+* Default-mode live recordings now span 6 distinct subjects (see the PER-SUBJECT
+  breakdown above) - this is real cross-subject evidence, not within-subject only.
+  Studying/Hospital/Driving modes still have no live recordings yet, so those remain
+  single-subject or empty until Phase 1's team recordings extend to those modes.

@@ -1,0 +1,123 @@
+
+==========================================================================
+STRESS INDEX vs EDA  (UBFC-Phys ground truth)
+==========================================================================
+  generated : 2026-09-22T16:54:23
+  traces : C:\Users\Arya\Desktop\stress_project\datasets\feature_traces
+  ubfc   : C:\Users\Arya\Desktop\stress_project\datasets\UBFC-Phys
+
+Within-task r is indicative only - EDA drifts and both series are
+autocorrelated. The between-task direction test is the real claim.
+
+  trace                      n   Pearson  Spearman
+  --------------------------------------------------
+  s10_T1                   639     +0.37     +0.16
+  s10_T2                   639     +0.26     +0.29
+  s10_T3                   639     -0.21     -0.25
+  s11_T1                   639     -0.31     -0.31
+  s11_T2                   639     -0.29     -0.34
+  s11_T3                   639     +0.55     +0.44
+  s1_T1                  (no EDA file)
+  s1_T2                  (no EDA file)
+  s1_T3                  (no EDA file)
+  s2_T1                  (no EDA file)
+  s2_T2                  (no EDA file)
+  s2_T3                  (no EDA file)
+  s3_T1                  (no EDA file)
+  s3_T2                  (no EDA file)
+  s3_T3                  (no EDA file)
+  s4_T1                  (no EDA file)
+  s4_T2                  (no EDA file)
+  s4_T3                  (no EDA file)
+  s5_T1                  (no EDA file)
+  s5_T2                  (no EDA file)
+  s5_T3                  (no EDA file)
+  s6_T1                    639     +0.08     +0.10
+  s6_T2                    639     +0.29     +0.36
+  s6_T3                    639     -0.40     -0.38
+  s7_T1                    639     -0.46     -0.53
+  s7_T2                    639     +0.30     +0.28
+  s7_T3                    639     +0.39     +0.40
+  s8_T1                    639     -0.24     -0.26
+  s8_T2                    639     +0.12     +0.15
+  s8_T3                    639     -0.20     -0.21
+  s9_T1                    639     -0.01     -0.06
+  s9_T2                    639     +0.37     +0.36
+  s9_T3                    639     -0.37     -0.31
+
+  BETWEEN-TASK (rest T1 -> stressors T2/T3): direction agreement
+  subject     EDA rest  EDA stress  idx rest  idx stress   agree?
+  --------------------------------------------------------------
+  s6             0.187       0.555     0.218       0.305   YES
+  s7             0.256       1.040     0.104       0.364   YES
+  s8             0.053       0.074     0.233       0.300   YES
+  s9             0.151       0.340     0.434       0.376   NO
+  s10            0.175       5.288     0.197       0.244   YES
+  s11            0.386       1.577     0.294       0.435   YES
+
+  direction agreement: 5/6 subjects
+  (chance is ~50%; this is the number that grows meaningful as
+   more subjects are processed)
+
+==========================================================================
+STRESS INDEX vs HEART RATE (from BVP)  (UBFC-Phys ground truth)
+==========================================================================
+  generated : 2026-09-22T16:54:23
+  traces : C:\Users\Arya\Desktop\stress_project\datasets\feature_traces
+  ubfc   : C:\Users\Arya\Desktop\stress_project\datasets\UBFC-Phys
+
+Heart rate is derived from raw BVP via bandpass filtering + peak
+detection (no hardware HR channel exists in UBFC-Phys) - noisier than
+a real HR monitor. Within-task r is indicative only - both series
+drift and are autocorrelated. The between-task direction test is the
+real claim.
+
+  trace                      n   Pearson  Spearman
+  --------------------------------------------------
+  s10_T1                   249     +0.15     -0.14
+  s10_T2                   259     -0.03     -0.04
+  s10_T3                   241     -0.11     -0.15
+  s11_T1                   255     +0.01     +0.11
+  s11_T2                   285     +0.11     +0.10
+  s11_T3                   286     -0.14     -0.15
+  s1_T1                  (no BVP file)
+  s1_T2                  (no BVP file)
+  s1_T3                  (no BVP file)
+  s2_T1                  (no BVP file)
+  s2_T2                  (no BVP file)
+  s2_T3                  (no BVP file)
+  s3_T1                  (no BVP file)
+  s3_T2                  (no BVP file)
+  s3_T3                  (no BVP file)
+  s4_T1                  (no BVP file)
+  s4_T2                  (no BVP file)
+  s4_T3                  (no BVP file)
+  s5_T1                  (no BVP file)
+  s5_T2                  (no BVP file)
+  s5_T3                  (no BVP file)
+  s6_T1                    246     +0.17     +0.07
+  s6_T2                    270     -0.20     -0.17
+  s6_T3                    271     -0.11     -0.15
+  s7_T1                    189     -0.08     -0.08
+  s7_T2                    225     +0.08     +0.05
+  s7_T3                    226     +0.00     +0.01
+  s8_T1                    206     +0.06     +0.08
+  s8_T2                    225     -0.03     -0.04
+  s8_T3                    259     -0.09     -0.11
+  s9_T1                    265     -0.06     -0.17
+  s9_T2                    302     -0.01     -0.02
+  s9_T3                    275     +0.01     +0.02
+
+  BETWEEN-TASK (rest T1 -> stressors T2/T3): direction agreement
+  subject      HR rest   HR stress  idx rest  idx stress   agree?
+  --------------------------------------------------------------
+  s6              94.5       107.4     0.219       0.303   YES
+  s7              71.7        96.0     0.103       0.365   YES
+  s8              79.7       101.4     0.234       0.299   YES
+  s9             101.9       115.6     0.434       0.375   NO
+  s10             95.9       103.6     0.198       0.243   YES
+  s11            106.3       121.2     0.295       0.433   YES
+
+  direction agreement: 5/6 subjects
+  (chance is ~50%; this is the number that grows meaningful as
+   more subjects are processed)
