@@ -1,28 +1,41 @@
 # Runtime dependencies for the live system.
 #
-# These pins are load-bearing and interlocked — do not bump one in isolation:
+# These pins are load-bearing and interlocked - do not bump one in isolation:
 #   - mediapipe 0.10.14 requires protobuf 4.25.x (newer protobuf breaks it)
 #   - tensorflow 2.15 requires numpy < 2
-#   - streamlit 1.30 is the version the dashboard's placeholder API was built against
+#   - streamlit 1.56.0: the app uses st.fragment and width='stretch' (needs >= ~1.50)
+#     and the browser-camera component relies on Streamlit's component protocol,
+#     so it is pinned to the exact version it was tested on. (This used to say
+#     "streamlit==1.30 is the version the placeholder API was built against" -
+#     stale: the code has not run on 1.30 for a long time.)
+#
+# Everything is pinned to the versions the test suite (622 tests) was last green on,
+# so a Docker build today reproduces what was tested.
 #
 # NOTE: TensorFlow dropped native-Windows GPU support after 2.10, so this stack is
 # CPU-only on Windows regardless of the GPU present. New model work in PP2 uses
-# PyTorch instead — see requirements-train.txt.
+# PyTorch instead - see requirements-train.txt. The hosted Dockerfile swaps in
+# `tensorflow-cpu` (same 2.15 API, ~1 GB smaller) and drops the two
+# test/evaluation-only lines at the bottom.
 
-streamlit==1.30
+streamlit==1.56.0
+pyarrow==24.0.0      # REQUIRED by Streamlit custom components (the browser camera); not pulled in by streamlit itself
 tensorflow==2.15.0
 mediapipe==0.10.14
 protobuf==4.25.3
 numpy==1.26.4
 
-# Unpinned by the original team; pin these to your working versions with
-# `pip freeze` once the environment is confirmed good.
-opencv-python
-scikit-learn
-pandas
-scipy
+# mediapipe depends on opencv-contrib-python; listing the plain opencv-python
+# as well just installs two copies of the same cv2 module on top of each other.
+opencv-contrib-python==4.11.0.86
+scikit-learn==1.8.0
+pandas==3.0.2
+scipy==1.17.1
+matplotlib==3.10.9   # PDF session reports (session_report.py) - PdfPages, no other PDF lib needed
 
-# Evaluation / reporting
-statsmodels        # Wilson confidence intervals in the evaluation harness
-pytest             # unit test suite
-matplotlib         # PDF session reports (session_report.py) - PdfPages, no other PDF lib needed
+# Hosted mode: login (Supabase Auth) + per-user database (Row Level Security).
+supabase>=2.10,<3
+
+# --- Evaluation / tests only (not installed in the hosted image) ---
+statsmodels==0.14.6  # Wilson confidence intervals in the evaluation harness
+pytest==9.1.1        # unit test suite

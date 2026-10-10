@@ -445,8 +445,12 @@ class BehavioralFeatureEngine:
                 return True
         return False
 
-    def _extract_posture(self, rgb_frame, face_bbox):
-        result = self.pose.process(rgb_frame)
+    def _extract_posture(self, rgb_frame, face_bbox, pose_results=None):
+        # Same precomputed-results escape hatch as _extract_face's
+        # face_mesh_results: lets a caller that already has a Pose result
+        # (session_pipeline's POSE_EVERY_N_FRAMES cadence reuses the last one
+        # between runs) pass it in instead of this re-running Pose.
+        result = pose_results if pose_results is not None else self.pose.process(rgb_frame)
         if not result.pose_landmarks:
             return {'neck_strain': 0.0, 'slouch': 0.0, 'posture_detected': False}
 
@@ -518,13 +522,13 @@ class BehavioralFeatureEngine:
             'posture_calibrated': self.baseline.posture_calibrated,
         }
 
-    def extract(self, rgb_frame, face_mesh_results=None):
+    def extract(self, rgb_frame, face_mesh_results=None, pose_results=None):
         face_result = self._extract_face(rgb_frame, face_mesh_results=face_mesh_results)
         if face_result is None:
             return None
         face_feats, face_bbox = face_result
         if face_feats is None:
             return None
-        posture_feats = self._extract_posture(rgb_frame, face_bbox)
+        posture_feats = self._extract_posture(rgb_frame, face_bbox, pose_results=pose_results)
         face_feats.update(posture_feats)
         return face_feats

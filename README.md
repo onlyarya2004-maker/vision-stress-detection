@@ -238,6 +238,30 @@ cd code && streamlit run app.py
 Then: pick a context mode → **Calibrate** (sit relaxed, 20 seconds) → **Start** → **Stop**
 (auto-saves to the session history database).
 
+By default the camera is read **in the browser** (it plays locally at full quality and
+posts 640×480 snapshots to the app — see *Hosted mode* below), so allow camera access in
+Chrome when asked. To read the webcam from Python instead (old behaviour, no browser
+camera): `STRESS_CAPTURE_MODE=local streamlit run app.py`.
+
+### Hosted mode (login + online database)
+
+For the public demo the same app runs in a Docker container with **per-user login and a
+Supabase (Postgres) database**, each person seeing only their own data (Row Level Security
+enforced by the database). Architecture, privacy model and the step-by-step runbook are in
+[`deploy/DEPLOY.md`](deploy/DEPLOY.md); the schema is [`supabase/schema.sql`](supabase/schema.sql).
+
+```bash
+docker build -t stress-app .
+docker run --rm -p 8501:8501 --cpus=2 -m 4g -e SUPABASE_URL=... -e SUPABASE_ANON_KEY=... stress-app
+python scripts/rls_check.py --url ... --key ... --email-a ... --password-a ... --email-b ... --password-b ...   # proves isolation
+python scripts/load_test.py --video datasets/UBFC-Phys/s11/vid_s11_T1.avi --users 2                              # capacity
+```
+
+Environment switches: `STRESS_CAPTURE_MODE` (`browser`|`local`), `STRESS_STORAGE_BACKEND`
+(`sqlite`|`supabase`), `STRESS_DB_PATH`, `SUPABASE_URL`, `SUPABASE_ANON_KEY` — see
+[`.env.example`](.env.example). Only the **public** Supabase key ever goes to the app; it
+refuses to start with a service/secret key.
+
 All paths in the code are relative, so commands **must** be run from `code/`. If you use
 VS Code, the committed `.vscode/launch.json` handles this — just press F5.
 
@@ -257,9 +281,13 @@ for a quick single-folder check.)
 python -m pytest code/tests -v
 ```
 
-41 tests covering session persistence, fusion maths, the behavioral heuristics, and
-export naming. The key one compares Default-mode fusion output against the archived
-pre-task-aware implementation in `code/_archive/` — the difference is exactly zero.
+About 620 tests: session persistence, fusion maths, the behavioral heuristics, evaluation
+scoring, the hosted-mode pieces (browser-batch validation, per-user state, the Supabase store,
+login, and the whole app driven end to end under Streamlit's test harness with a fake camera
+and a fake database — including a check that every database query is scoped to the signed-in
+user). The key fusion test compares Default-mode output against the archived pre-task-aware
+implementation in `code/_archive/` — the difference is exactly zero. The tests never open the
+real webcam (any attempt raises).
 
 ### Recording new evaluation sessions
 

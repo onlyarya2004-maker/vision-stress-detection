@@ -1,0 +1,341 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>browser_camera</title>
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; overflow: hidden;
+               font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  #wrap { position: relative; width: 100%; background: #0B0F14; border-radius: 10px; overflow: hidden;
+          min-height: 120px; }
+  /* The picture is mirrored with CSS only: the user sees a mirror image, the
+     canvas that feeds the model is mirrored separately in grab(). */
+  #v, #disp { display: block; width: 100%; height: auto; transform: scaleX(-1); background: #0B0F14; }
+  #disp { display: none; }
+  #ov { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; }
+  #msg { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
+         justify-content: center; text-align: center; color: #C9D4E0; font-size: 14px; line-height: 1.5;
+         padding: 24px; background: rgba(11, 15, 20, 0.86); gap: 12px; }
+  #msg.hidden { display: none; }
+  #msg b { color: #fff; }
+  #msg button { background: #2F6FED; color: #fff; border: 0; border-radius: 8px; padding: 8px 16px;
+                font-size: 13px; cursor: pointer; }
+  #stat { position: absolute; right: 8px; bottom: 6px; font-size: 11px; color: #AEBBCB;
+          background: rgba(11, 15, 20, 0.55); padding: 2px 8px; border-radius: 999px; pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <video id="v" playsinline muted autoplay></video>
+  <canvas id="disp"></canvas>
+  <canvas id="ov"></canvas>
+  <div id="msg"><div id="msgtext">Starting camera&hellip;</div></div>
+  <div id="stat"></div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---- Streamlit custom-component protocol (verified against the bundle) ----
+  function post(type, data) {
+    window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, data || {}), "*");
+  }
+  const ST = {
+    ready: () => post("streamlit:componentReady", { apiVersion: 1 }),
+    setHeight: (h) => post("streamlit:setFrameHeight", { height: h }),
+    setValue: (v) => post("streamlit:setComponentValue", { value: v, dataType: "json" }),
+  };
+
+  const $ = (id) => document.getElementById(id);
+  const wrap = $("wrap"), vid = $("v"), disp = $("disp"), ov = $("ov"),
+        msg = $("msg"), msgtext = $("msgtext"), stat = $("stat");
+  const octx = ov.getContext("2d");
+
+  // ---- state ----
+  let cfg = { fps: 10, quality: 0.85, batch_ms: 500, proc_w: 640, proc_h: 480, test_url: "", local_box: true };
+  let mode = "idle", epoch = -1, ack = 0, overlay = {};
+  let seq = 0, sentSeq = 0, inflight = false, lastSendAt = 0, tOrigin = performance.now();
+  let buffer = [];
+  let camReady = false, camError = "", source = null;       // source: <video> or test <img>
+  let rttMs = 0, sentCount = 0, sentWindowStart = performance.now(), fpsSent = 0;
+  let boxDrawn = null, localBox = null, detector = null, lastDetectAt = 0;
+  let testImgs = [], testN = 0, testI = 0;
+
+  const cap = document.createElement("canvas");
+  const cctx = cap.getContext("2d");
+  cctx.imageSmoothingEnabled = true;
+  cctx.imageSmoothingQuality = "high";
+
+  function showMsg(html, retry) {
+    msg.classList.remove("hidden");
+    msgtext.innerHTML = html;
+    const old = msg.querySelector("button");
+    if (old) old.remove();
+    if (retry) {
+      const b = document.createElement("button");
+      b.textContent = "Try again";
+      b.onclick = startCamera;
+      msg.appendChild(b);
+    }
+  }
+  function hideMsg() { msg.classList.add("hidden"); }
+
+  // ---- camera ----
+  async function startCamera() {
+    camError = "";
+    camReady = false;
+    showMsg("Starting camera&hellip;<br><span style='opacity:.7'>Allow camera access when your browser asks.</span>");
+    if (cfg.test_url) { return startTestSource(); }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      camError = "no-getusermedia";
+      showMsg("<b>Camera not available here.</b><br>The camera needs a secure (https) page. " +
+              "Open the app through its https:// address.", true);
+      return;
+    }
+    try {
+      if (vid.srcObject) vid.srcObject.getTracks().forEach(t => t.stop());
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1920 }, height: { ideal: 1080 }, facingMode: "user" },
+        audio: false,
+      });
+      vid.srcObject = stream;
+      await vid.play();
+      source = vid;
+      camReady = true;
+      hideMsg();
+      vid.style.display = "block"; disp.style.display = "none";
+      initDetector();
+      resizeFrame();
+    } catch (e) {
+      camError = (e && e.name) || "error";
+      const denied = camError === "NotAllowedError" || camError === "SecurityError";
+      showMsg(denied
+        ? "<b>Camera blocked.</b><br>Click the camera icon in the address bar, choose <b>Allow</b>, then press Try again."
+        : "<b>Could not open the camera</b> (" + camError + ").<br>Close other apps using it, then press Try again.", true);
+      sendError(camError);
+    }
+  }
+
+  // Test source (automated end-to-end tests only; enabled by cfg.test_url): a
+  // folder of numbered JPEGs + manifest.json stands in for the camera.
+  async function startTestSource() {
+    try {
+      const m = await (await fetch(cfg.test_url + "/manifest.json")).json();
+      testN = m.n | 0;
+      testImgs = new Array(testN);
+      const load = (i) => new Promise((res) => {
+        const im = new Image(); im.crossOrigin = "anonymous";
+        im.onload = () => res(im); im.onerror = () => res(null);
+        im.src = cfg.test_url + "/" + String(i).padStart(4, "0") + ".jpg";
+      });
+      testImgs[0] = await load(0);
+      source = testImgs[0];
+      camReady = true; hideMsg();
+      vid.style.display = "none"; disp.style.display = "block";
+      disp.width = source.naturalWidth; disp.height = source.naturalHeight;
+      for (let i = 1; i < testN; i++) load(i).then(im => { testImgs[i] = im; });
+      resizeFrame();
+    } catch (e) {
+      showMsg("<b>Test source failed:</b> " + e, true);
+    }
+  }
+  function advanceTestFrame() {
+    if (!testN) return;
+    testI = (testI + 1) % testN;
+    const im = testImgs[testI];
+    if (!im) return;
+    source = im;
+    disp.getContext("2d").drawImage(im, 0, 0);
+  }
+
+  // Cosmetic face box, computed in the browser so it follows the head with no
+  // network delay. NEVER used for scoring - the server finds the face itself
+  // with the validated model. Entirely optional: if the library can't load
+  // (offline / blocked network) the server's box is drawn instead.
+  async function initDetector() {
+    if (!cfg.local_box || detector || cfg.test_url) return;
+    try {
+      const base = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+      const mod = await import(base + "/vision_bundle.mjs");
+      const fileset = await mod.FilesetResolver.forVisionTasks(base + "/wasm");
+      detector = await mod.FaceDetector.createFromOptions(fileset, {
+        baseOptions: { modelAssetPath:
+          "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite" },
+        runningMode: "VIDEO",
+      });
+    } catch (e) { detector = null; }
+  }
+  function detectLocal(now) {
+    if (!detector || source !== vid || vid.readyState < 2 || now - lastDetectAt < 66) return;
+    lastDetectAt = now;
+    try {
+      const r = detector.detectForVideo(vid, now);
+      const d = r && r.detections && r.detections[0];
+      localBox = d ? { x: d.boundingBox.originX, y: d.boundingBox.originY,
+                       w: d.boundingBox.width, h: d.boundingBox.height } : null;
+    } catch (e) { localBox = null; }
+  }
+
+  // ---- capture: 4:3 centre crop -> 640x480 -> mirrored -> JPEG ----
+  function grab() {
+    const vw = source.videoWidth || source.naturalWidth, vh = source.videoHeight || source.naturalHeight;
+    if (!vw || !vh) return null;
+    const W = cfg.proc_w, H = cfg.proc_h, target = W / H;
+    let sw, sh;
+    if (vw / vh > target) { sh = vh; sw = Math.round(vh * target); }
+    else { sw = vw; sh = Math.round(vw / target); }
+    const sx = Math.floor((vw - sw) / 2), sy = Math.floor((vh - sh) / 2);
+    if (cap.width !== W) { cap.width = W; cap.height = H; cctx.imageSmoothingQuality = "high"; }
+    cctx.setTransform(-1, 0, 0, 1, W, 0);          // mirror, like the old cv2.flip(frame, 1)
+    cctx.drawImage(source, sx, sy, sw, sh, 0, 0, W, H);
+    return cap.toDataURL("image/jpeg", cfg.quality).substring(23);   // strip "data:image/jpeg;base64,"
+  }
+
+  function captureTick() {
+    if (cfg.test_url && camReady) advanceTestFrame();      // the fake camera "plays" even while idle
+    if (mode === "idle" || !camReady || !source) return;
+    if (!cfg.test_url && vid.readyState < 2) return;
+    const j = grab();
+    if (!j) return;
+    if (cfg.test_url) window.__dbg = { i: testI, j: j };   // last snapshot, for automated end-to-end checks (fake camera only)
+    buffer.push({ t: +((performance.now() - tOrigin) / 1000).toFixed(3), j: j });
+    if (buffer.length > 40) buffer.splice(0, buffer.length - 40);     // never grow unbounded
+  }
+
+  function maybeSend() {
+    const now = performance.now();
+    if (inflight && now - lastSendAt > 6000) { inflight = false; buffer.splice(0, Math.max(0, buffer.length - 10)); }
+    if (mode === "idle" || inflight || buffer.length === 0) return;
+    if (now - lastSendAt < cfg.batch_ms) return;
+    seq += 1; sentSeq = seq; inflight = true; lastSendAt = now;
+    const frames = buffer.splice(0, buffer.length);
+    sentCount += frames.length;
+    ST.setValue({ epoch: epoch, seq: seq, frames: frames, tz: -new Date().getTimezoneOffset(), ready: true });
+  }
+  function sendError(code) {
+    seq += 1; sentSeq = seq;
+    ST.setValue({ epoch: epoch, seq: seq, frames: [], err: code, tz: -new Date().getTimezoneOffset() });
+  }
+
+  // ---- overlay drawing ----
+  function sizeOverlay() {
+    const r = wrap.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+    const w = Math.round(r.width * dpr), h = Math.round(r.height * dpr);
+    if (ov.width !== w || ov.height !== h) { ov.width = w; ov.height = h; }
+    return { w: r.width, h: r.height, dpr: dpr };
+  }
+  function corners(x1, y1, x2, y2, len, color, lw) {
+    octx.strokeStyle = color; octx.lineWidth = lw; octx.beginPath();
+    octx.moveTo(x1, y1 + len); octx.lineTo(x1, y1); octx.lineTo(x1 + len, y1);
+    octx.moveTo(x2 - len, y1); octx.lineTo(x2, y1); octx.lineTo(x2, y1 + len);
+    octx.moveTo(x1, y2 - len); octx.lineTo(x1, y2); octx.lineTo(x1 + len, y2);
+    octx.moveTo(x2 - len, y2); octx.lineTo(x2, y2); octx.lineTo(x2, y2 - len);
+    octx.stroke();
+  }
+  function draw(now) {
+    requestAnimationFrame(draw);
+    detectLocal(now);
+    const s = sizeOverlay();
+    octx.setTransform(s.dpr, 0, 0, s.dpr, 0, 0);
+    octx.clearRect(0, 0, s.w, s.h);
+    const vw = source ? (source.videoWidth || source.naturalWidth) : 0;
+    const vh = source ? (source.videoHeight || source.naturalHeight) : 0;
+    if (!vw || !vh) return;
+    const k = s.w / vw;                                    // video px -> screen px
+    const color = overlay.color || "#2F6FED";
+
+    // The part of the picture the models analyse (centre 4:3), as faint corners.
+    const target = cfg.proc_w / cfg.proc_h;
+    let sw, sh;
+    if (vw / vh > target) { sh = vh; sw = vh * target; } else { sw = vw; sh = vw / target; }
+    const sx = (vw - sw) / 2, sy = (vh - sh) / 2;
+    if (mode !== "idle" || (Math.abs(vw / vh - target) > 0.02)) {
+      corners(sx * k + 4, sy * k + 4, (sx + sw) * k - 4, (sy + sh) * k - 4, 18, "rgba(255,255,255,0.22)", 1.5);
+    }
+
+    // Face box: local detector if running, else the server's box (smoothed).
+    let target_box = null;
+    if (localBox) {
+      target_box = [(vw - (localBox.x + localBox.w)) * k, localBox.y * k,
+                    (vw - localBox.x) * k, (localBox.y + localBox.h) * k];     // mirrored
+    } else if (overlay.bbox && overlay.bbox.length === 4) {
+      const bx = overlay.bbox, mx = sw / cfg.proc_w, my = sh / cfg.proc_h;       // processed -> video px
+      target_box = [(sx + bx[0] * mx) * k, (sy + bx[1] * my) * k, (sx + bx[2] * mx) * k, (sy + bx[3] * my) * k];
+    }
+    if (target_box) {
+      boxDrawn = boxDrawn ? boxDrawn.map((v, i) => v + (target_box[i] - v) * 0.35) : target_box;
+      octx.strokeStyle = color; octx.lineWidth = 2;
+      octx.strokeRect(boxDrawn[0], boxDrawn[1], boxDrawn[2] - boxDrawn[0], boxDrawn[3] - boxDrawn[1]);
+      corners(boxDrawn[0], boxDrawn[1], boxDrawn[2], boxDrawn[3], 14, color, 3);
+    } else { boxDrawn = null; }
+
+    // Label (top-left) and optional progress bar (calibration).
+    if (overlay.label) {
+      octx.font = "600 15px system-ui, sans-serif";
+      const tw = octx.measureText(overlay.label).width;
+      octx.fillStyle = "rgba(11,15,20,0.6)"; octx.fillRect(10, 10, tw + 18, 28);
+      octx.fillStyle = color; octx.fillText(overlay.label, 19, 30);
+    }
+    if (typeof overlay.progress === "number") {
+      octx.fillStyle = "rgba(255,255,255,0.15)"; octx.fillRect(0, s.h - 5, s.w, 5);
+      octx.fillStyle = color; octx.fillRect(0, s.h - 5, s.w * Math.max(0, Math.min(1, overlay.progress)), 5);
+    }
+    if (overlay.note) {
+      octx.font = "13px system-ui, sans-serif";
+      const tw = octx.measureText(overlay.note).width;
+      octx.fillStyle = "rgba(11,15,20,0.7)"; octx.fillRect((s.w - tw) / 2 - 10, s.h - 44, tw + 20, 26);
+      octx.fillStyle = "#F5C26B"; octx.fillText(overlay.note, (s.w - tw) / 2, s.h - 26);
+    }
+  }
+
+  // ---- layout ----
+  function resizeFrame() {
+    const h = Math.ceil(wrap.getBoundingClientRect().height);
+    if (h > 0) ST.setHeight(h);
+  }
+  new ResizeObserver(resizeFrame).observe(wrap);
+  vid.addEventListener("loadedmetadata", resizeFrame);
+
+  // ---- messages from Streamlit ----
+  function onRender(args) {
+    if (args.cfg) cfg = Object.assign(cfg, args.cfg);
+    overlay = args.overlay || {};
+    const newEpoch = (typeof args.epoch === "number") ? args.epoch : epoch;
+    if (newEpoch !== epoch) {                   // Calibrate / Start / Stop pressed: fresh run
+      epoch = newEpoch; seq = 0; sentSeq = 0; inflight = false; buffer = [];
+      tOrigin = performance.now(); sentCount = 0; sentWindowStart = performance.now();
+    }
+    mode = args.mode || "idle";
+    if (inflight && typeof args.ack === "number" && args.ack >= sentSeq) {
+      inflight = false;
+      rttMs = performance.now() - lastSendAt;
+    }
+    if (!camReady && !camError && !source) startCamera();
+  }
+  window.addEventListener("message", (ev) => {
+    if (ev.data && ev.data.type === "streamlit:render") onRender(ev.data.args || {});
+  });
+
+  // ---- timers ----
+  // Capture cadence follows cfg.fps (re-read every tick); sending is gated by
+  // the batch interval and the server's acknowledgement.
+  (function captureLoop() {
+    captureTick();
+    setTimeout(captureLoop, 1000 / Math.max(1, cfg.fps));
+  })();
+  setInterval(maybeSend, 100);
+  setInterval(() => {
+    const now = performance.now(), dt = (now - sentWindowStart) / 1000;
+    if (dt >= 2) { fpsSent = sentCount / dt; sentCount = 0; sentWindowStart = now; }
+    stat.textContent = (mode === "idle" || !camReady) ? "" :
+      (fpsSent.toFixed(0) + " fps sent" + (rttMs ? " · " + (rttMs / 1000).toFixed(1) + " s round trip" : ""));
+  }, 500);
+
+  ST.ready();
+  ST.setHeight(300);
+  requestAnimationFrame(draw);
+})();
+</script>
+</body>
+</html>

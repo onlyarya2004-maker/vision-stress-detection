@@ -1,0 +1,30 @@
+# Keep the build context (and therefore the image) to code + models only.
+# In particular NOTHING personal may enter an image: the team recordings,
+# evaluation exports, local databases and raw research datasets stay out.
+.git
+.gitattributes
+.claude
+.vscode
+.venv*
+**/__pycache__
+**/.pytest_cache
+**/*.pyc
+
+datasets/
+evaluation_data/
+data/
+BACKUP_DEMO_FINAL/
+supabase/
+deploy/
+scripts/
+*.md
+*.txt
+!requirements.txt
+*.log
+*.db
+*.db-*
+
+# code/ is copied, but not the things the running app never imports
+code/tests/
+code/_archive/
+code/README.md

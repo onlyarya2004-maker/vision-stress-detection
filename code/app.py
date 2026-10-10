@@ -14,9 +14,10 @@ Run:
     streamlit run app.py
 """
 
+import html
 import io
 import csv
-import dataclasses
+import os
 import time
 from datetime import datetime
 
@@ -24,22 +25,24 @@ import cv2
 import numpy as np
 import streamlit as st
 
-from behavioral_features import BehavioralBaseline, BehavioralFeatureEngine
 from stress_fusion import (
-    compute_stress_index, TemporalSmoother, stress_level, stress_level_advice,
-    HysteresisLevel,
-    set_daisee_baseline, reset_daisee_baseline, is_daisee_calibrated,
-    get_daisee_baseline,
+    stress_level, stress_level_advice,
     VALID_TASK_MODES,
 )
-from temporal_model import GRUTemporalInference
 from app_naming import export_filename
-from rppg_live import get_live_rppg, reset_live_rppg
 from intervention_agent import InterventionAgent, CATALOGUE
 import daisee_ensemble
 import session_history
 import session_report
+import session_store
+import auth
 import config
+# crop_face / annotate_frame used to be defined in this file; they moved to
+# frame_ops.py so session_pipeline.py can share them. Re-exported here because
+# existing tests (and anything else) call app.crop_face.
+from frame_ops import crop_face, annotate_frame, bbox_to_source
+from session_pipeline import UserState, CalibrationRun, LiveRun, BatchGate
+from browser_camera import browser_camera
 
 # ---------------- CONFIG ----------------
 # All values now live in config.py; these aliases keep the rest of the file
@@ -411,64 +414,46 @@ def load_models():
     """Load only the active live-system models (DaiSEE ensemble). Shared
     with evaluate_video_file.py via daisee_ensemble.py, so live and
     offline inference are provably running the same code, each with its
-    own caching (Streamlit's decorator here)."""
-    return {'pairs': daisee_ensemble.build_pairs()}
+    own caching (Streamlit's decorator here). The weights themselves come
+    from daisee_ensemble.shared_pairs(), which main() starts loading in the
+    background before login so a cold start isn't a minute of blank page."""
+    return {'pairs': daisee_ensemble.shared_pairs()}
 
 
-@st.cache_resource
-def get_feature_engine():
-    return BehavioralFeatureEngine()
+def get_user_state():
+    """This browser session's private UserState (feature engine + baselines +
+    GRU buffer + rPPG). It used to be three process-wide singletons
+    (@st.cache_resource get_feature_engine / get_temporal_inference,
+    rppg_live.get_live_rppg) plus a module-global DaiSEE baseline - fine for
+    one local user, but on a hosted server two people calibrating at once
+    would overwrite each other's baselines. The CNN models in load_models()
+    stay shared: they are stateless."""
+    if 'user_state' not in st.session_state:
+        if UserState.active_count() >= config.MAX_USER_SESSIONS:
+            st.warning("The demo server is at capacity right now "
+                       f"({config.MAX_USER_SESSIONS} simultaneous sessions). "
+                       "Please try again in a minute.")
+            st.stop()
+        with st.spinner("Preparing your session..."):
+            st.session_state.user_state = UserState()
+    return st.session_state.user_state
 
 
-@st.cache_resource(show_spinner="Loading temporal model (if available)...")
-def get_temporal_inference():
-    """Returns GRUTemporalInference - safe even if the model is unavailable
-    or fails self-verification. is_available() returns False in that case
-    and fusion ignores it."""
-    return GRUTemporalInference()
+def get_store():
+    """Storage backend for THIS browser session: the local SQLite module, or
+    (hosted) a SupabaseStore bound to the signed-in user's own login."""
+    if config.STORAGE_BACKEND != 'supabase':
+        return session_history
+    sess = auth.current_session()
+    if sess is None:
+        raise RuntimeError("not signed in")
+    return session_store.SupabaseStore(sess)
 
 
-# =============================================================================
-# VISION HELPERS
-# =============================================================================
-def crop_face(frame_bgr, face_mesh_results):
-    if not face_mesh_results.multi_face_landmarks:
-        return None, None
-    h, w = frame_bgr.shape[:2]
-    lm = face_mesh_results.multi_face_landmarks[0].landmark
-    xs = np.array([p.x for p in lm]) * w
-    ys = np.array([p.y for p in lm]) * h
-    x1, x2 = int(xs.min()), int(xs.max())
-    y1, y2 = int(ys.min()), int(ys.max())
-    pad = int(config.FACE_CROP_PADDING * max(x2 - x1, y2 - y1))
-    x1 = max(0, x1 - pad); y1 = max(0, y1 - pad)
-    x2 = min(w, x2 + pad); y2 = min(h, y2 + pad)
-    if x2 <= x1 or y2 <= y1:
-        return None, None
-    return frame_bgr[y1:y2, x1:x2], (x1, y1, x2, y2)
-
-
-# prep() / ensemble_predict() now live in daisee_ensemble.py, shared with
+# prep() / ensemble_predict() live in daisee_ensemble.py, shared with
 # evaluate_video_file.py - see that module's docstring for why (and for
 # the tf.function speed fix that motivated pulling this out).
-
-
-def annotate_frame(frame_bgr, bbox, level, smoothed_index, calibrating=False):
-    if calibrating:
-        color = (237, 158, 47); label = "CALIBRATING"     # amber, BGR
-    else:
-        color = {'LOW': (34, 197, 34), 'MODERATE': (0, 158, 245),
-                 'HIGH': (68, 68, 239)}[level]              # BGR of green/amber/red
-        label = f"{level} ({smoothed_index*100:.0f}%)"
-    if bbox is not None:
-        x1, y1, x2, y2 = bbox
-        cv2.rectangle(frame_bgr, (x1, y1), (x2, y2), color, 2)
-        corner = 14
-        for (cx, cy, dx, dy) in ((x1, y1, 1, 1), (x2, y2, -1, -1)):
-            cv2.line(frame_bgr, (cx, cy), (cx + dx * corner, cy), color, 3)
-            cv2.line(frame_bgr, (cx, cy), (cx, cy + dy * corner), color, 3)
-    cv2.putText(frame_bgr, label, (15, 30),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+# crop_face() / annotate_frame() live in frame_ops.py (imported above).
 
 
 # =============================================================================
@@ -839,9 +824,66 @@ def init_state():
     if 'pending_self_report' not in st.session_state: st.session_state.pending_self_report = None
     if 'agent_enabled' not in st.session_state: st.session_state.agent_enabled = True
     if 'session_count' not in st.session_state: st.session_state.session_count = 0
+    # Browser-camera run bookkeeping (CAPTURE_MODE == 'browser'). cam_epoch is
+    # bumped on every Calibrate/Start/Stop so the browser restarts its frame
+    # sequence and any late batch from the previous run is ignored.
+    if 'cam_epoch' not in st.session_state: st.session_state.cam_epoch = 0
+    if 'cam_ack' not in st.session_state: st.session_state.cam_ack = 0
+    if 'cam_overlay' not in st.session_state: st.session_state.cam_overlay = {}
+    if 'batch_gate' not in st.session_state: st.session_state.batch_gate = BatchGate()
+    if 'calib_run' not in st.session_state: st.session_state.calib_run = None
+    if 'live_run' not in st.session_state: st.session_state.live_run = None
+    if 'live_timers' not in st.session_state: st.session_state.live_timers = {}
+
+
+def init_storage():
+    """Create/migrate the DB once per browser session. Runs AFTER login in
+    hosted mode (the store needs a signed-in user)."""
     if 'db_initialized' not in st.session_state:
-        session_history.init_db()
+        get_store().init_db()
         st.session_state.db_initialized = True
+
+
+def ensure_login():
+    """True when the app may proceed. Local mode has no login; hosted mode
+    shows the login page until this browser session has signed in."""
+    if config.STORAGE_BACKEND != 'supabase':
+        return True
+    sess = auth.current_session()
+    if sess is None:
+        auth.render_login_page()
+        return False
+    st.session_state.active_user_id = sess.user_id
+    st.session_state.active_user_name = sess.email
+    return True
+
+
+def bump_cam_epoch():
+    """New camera run: the browser resets its frame sequence/clock, and the
+    server forgets the previous run's acknowledgement, overlay and gate."""
+    st.session_state.cam_epoch += 1
+    st.session_state.cam_ack = 0
+    st.session_state.cam_overlay = {}
+
+
+def end_live_run(ustate):
+    """Stop-button handler for the camera side: hand the agent's measured
+    outcomes to save_current_session() (the old blocking loop did this in its
+    `finally`), abandon any half-done calibration, and start a fresh epoch."""
+    run = st.session_state.live_run
+    if run is not None:
+        try:
+            st.session_state.pending_interventions = run.finish()
+        except Exception:
+            pass
+    cal = st.session_state.calib_run
+    if cal is not None:
+        cal.abort()
+    ustate.engine._calibrating = False
+    st.session_state.live_run = None
+    st.session_state.calib_run = None
+    st.session_state.live_timers = {}
+    bump_cam_epoch()
 
 
 def save_current_session():
@@ -858,8 +900,9 @@ def save_current_session():
     """
     if not st.session_state.history or st.session_state.history_saved:
         return
+    store = get_store()
     try:
-        sid = session_history.save_session(
+        sid = store.save_session(
             st.session_state.history, task_mode=st.session_state.task_mode,
             user_id=st.session_state.active_user_id,
         )
@@ -872,50 +915,35 @@ def save_current_session():
         st.session_state.last_saved_self_report = None
         ivlog = st.session_state.pop('pending_interventions', [])
         if ivlog:
-            session_history.log_interventions(sid, ivlog)
+            store.log_interventions(sid, ivlog)
     except Exception as e:
         st.warning(f"Could not save session to history DB: {e}")
 
 
-def apply_user_profile(engine, user_id):
+def apply_user_profile(ustate, user_id):
     """
-    Swap the live (process-wide singleton) engine's baseline for the given
-    user's saved one, or back to generic defaults if they have none yet /
-    user_id is None (anonymous). This is the same mechanism the "Reset
-    baseline" button already used - engine.baseline is just a dataclass,
-    swapping it is cheap and safe between sessions (never call this while
-    running/calibrating, same guard every other baseline-touching control
-    in the sidebar already has).
+    Swap this session's baseline for the given user's saved one, or back to
+    generic defaults if they have none yet / user_id is None (anonymous).
+    The same mechanism the "Reset baseline" button uses - the baseline is
+    just a dataclass, swapping it is cheap and safe between sessions (never
+    call this while running/calibrating, same guard every other
+    baseline-touching control in the sidebar already has).
+    UserState.apply_profile clears the rolling blink/EAR/PERCLOS windows
+    first, so one person's samples never score against another's baseline
+    (BUG_AUDIT_2026-08-23.md finding #5).
     """
-    # engine is a process-wide singleton (get_feature_engine() is
-    # @st.cache_resource) - without this, whoever was being tracked before
-    # this switch's raw blink/EAR/PERCLOS samples stay in engine.state and
-    # get mixed into the next user's first readings, scored against THEIR
-    # baseline (BUG_AUDIT_2026-08-23.md finding #5).
-    engine.reset_state()
-    saved = session_history.load_user_baseline(user_id) if user_id is not None else None
-    if saved is not None:
-        engine.baseline = BehavioralBaseline(**saved['behavioral'])
-        if saved.get('daisee_baseline') is not None:
-            set_daisee_baseline(saved['daisee_baseline'])
-        else:
-            reset_daisee_baseline()
-    else:
-        engine.reset_baseline()
-        reset_daisee_baseline()
+    saved = get_store().load_user_baseline(user_id) if user_id is not None else None
+    ustate.apply_profile(saved)
 
 
-def save_active_user_baseline(engine):
-    """Persist the engine's current baseline to the active user's profile,
-    called right after a completed calibration. No-op for anonymous use
+def save_active_user_baseline(ustate):
+    """Persist this session's baseline to the active user's profile, called
+    right after a completed calibration. No-op for anonymous use
     (active_user_id is None) - unchanged, single-shared-baseline behavior."""
     user_id = st.session_state.active_user_id
     if user_id is None:
         return
-    session_history.save_user_baseline(user_id, {
-        'behavioral': dataclasses.asdict(engine.baseline),
-        'daisee_baseline': get_daisee_baseline(),
-    })
+    get_store().save_user_baseline(user_id, ustate.baseline_payload())
 
 
 # =============================================================================
@@ -923,14 +951,17 @@ def save_active_user_baseline(engine):
 # Read-only, no camera - kept as a separate early-return branch in main()
 # rather than touching the live capture loop at all.
 # =============================================================================
-def session_analytics_dataframe():
+def session_analytics_dataframe(store=None):
     """
     All saved sessions as a pandas DataFrame with derived time columns, or
-    None if there are no sessions yet. Pure function of the DB - no
-    Streamlit dependency, so this is unit-testable on its own.
+    None if there are no sessions yet. Pure function of the store - no
+    Streamlit dependency, so this is unit-testable on its own. `store`
+    defaults to the local SQLite module; hosted mode passes the signed-in
+    user's SupabaseStore (so the frame holds that user's sessions only).
     """
     import pandas as pd
-    rows = session_history.load_recent_sessions(n=100000)
+    store = store if store is not None else session_history
+    rows = store.load_recent_sessions(n=100000)
     if not rows:
         return None
     df = pd.DataFrame(rows)
@@ -945,7 +976,7 @@ _WEEKDAY_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday',
                   'Saturday', 'Sunday']
 
 
-def render_analytics_page():
+def render_analytics_page(store=None):
     with st.sidebar:
         st.markdown('<div class="label">Analytics</div>', unsafe_allow_html=True)
         if st.button("Back to live view", width='stretch'):
@@ -953,10 +984,14 @@ def render_analytics_page():
             st.rerun()
 
     st.markdown("## Session analytics")
-    st.caption("Weekly trends and time-of-day patterns across every saved session - "
-              "on-device only, nothing here leaves this machine.")
+    if config.STORAGE_BACKEND == 'supabase':
+        st.caption("Weekly trends and time-of-day patterns across your saved sessions. "
+                  "Only your account can see this data.")
+    else:
+        st.caption("Weekly trends and time-of-day patterns across every saved session - "
+                  "on-device only, nothing here leaves this machine.")
 
-    df = session_analytics_dataframe()
+    df = session_analytics_dataframe(store)
     if df is None or df.empty:
         st.info("No saved sessions yet. Run a live session (Calibrate -> Start -> "
                "Stop) to start building history here.")
@@ -1009,23 +1044,389 @@ def render_analytics_page():
 
 
 # =============================================================================
+# LIVE SESSION PLUMBING - shared by the local-camera loops and the browser
+# camera fragment, so both paint the UI identically.
+# =============================================================================
+class LivePanels:
+    """The Streamlit placeholders a live session paints into (all created in
+    main()'s layout). sidebar_graph is None in browser mode: a fragment is
+    not allowed to write into st.sidebar, so that mini-graph only refreshes
+    on full reruns there (the main session timeline updates live)."""
+
+    def __init__(self, **elements):
+        self.__dict__.update(elements)
+
+
+NO_FACE_HTML = ('<div class="face-status">No face detected — '
+                'please face the camera</div>')
+
+
+def open_local_camera():
+    """cv2 camera for CAPTURE_MODE == 'local', or None if it won't open."""
+    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.FRAME_WIDTH)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.FRAME_HEIGHT)
+    if not cap.isOpened():
+        cap.release()
+        return None
+    return cap
+
+
+def make_live_run(ustate, models, store, dt0=None):
+    """Start a LiveRun: the agentic core, seeded with what has historically
+    worked for THIS user (hosted) / install (local), and - once a task-mode
+    bucket has enough evidence - what worked in this specific context. See
+    InterventionAgent's own docstring for why both are passed."""
+    try:
+        known = store.intervention_stats()
+        known_by_mode = store.intervention_stats_by_mode()
+    except Exception:
+        known, known_by_mode = {}, {}
+    agent = InterventionAgent(stats=known, mode_stats=known_by_mode,
+                              task_mode=st.session_state.task_mode)
+    return LiveRun(ustate, models, agent, task_mode=st.session_state.task_mode,
+                   agent_enabled=st.session_state.agent_enabled, dt0=dt0)
+
+
+def render_calibration_progress(panels, run):
+    panels.level.markdown(
+        render_calib_ring(run.progress(), run.seconds_left()), unsafe_allow_html=True)
+    panels.calib_hud.markdown(
+        render_calib_hud(run.progress(), run.seconds_left()), unsafe_allow_html=True)
+
+
+def finish_calibration(ustate, run):
+    """Shared calibration epilogue. Returns the (st-method-name, text)
+    message for the user."""
+    face_ok, daisee_ok = run.finish()
+    st.session_state.calibrating = False
+    if face_ok or daisee_ok:
+        save_active_user_baseline(ustate)
+    if face_ok and daisee_ok:
+        return 'success', "Calibration complete. Press Start to begin."
+    if face_ok or daisee_ok:
+        return 'warning', "Partial calibration — try again with a clearer view."
+    return 'error', "Calibration failed."
+
+
+def record_history(out):
+    """Append a processed frame's history row (the run throttles these to one
+    per HISTORY_INTERVAL_S). Called for EVERY frame of a browser batch, not
+    just the last one, so no row is skipped."""
+    if not out.get('no_face') and out.get('record') is not None:
+        st.session_state.history.append(out['record'])
+
+
+def render_live_outputs(panels, out, run, update_sidebar=True):
+    """Everything the old blocking capture loop painted after each frame:
+    status line, intervention card, top bar, level, signals, tiles, guidance,
+    plus the throttled header / agent panel / sidebar graph / timeline."""
+    ss = st.session_state
+    timers = ss.live_timers
+    if out.get('no_face'):
+        panels.status.markdown(NO_FACE_HTML, unsafe_allow_html=True)
+        return
+    panels.status.empty()
+
+    iv = out['intervention']
+    if iv is not None:
+        panels.intervention.markdown(
+            render_intervention_card(iv.title, iv.body), unsafe_allow_html=True)
+    else:
+        panels.intervention.empty()
+
+    bf, result = out['behavioral_features'], out['result']
+    level, smoothed = out['level'], out['smoothed']
+    panels.topbar.markdown(
+        render_video_topbar(out['rppg_status'], bf.get('ear', 0.0)),
+        unsafe_allow_html=True)
+    panels.level.markdown(render_level_block(level, smoothed), unsafe_allow_html=True)
+    panels.signals.markdown(render_signal_rows(result['contributions']),
+                            unsafe_allow_html=True)
+    hr = out['hr_bpm']
+    hr_text = f"{hr:.0f}" if hr else "--"
+    perclos_pct = (bf.get('perclos', 0.0) * 100.0
+                   if ss.task_mode == 'Driving' else None)
+    panels.tiles.markdown(
+        render_tiles(bf.get('blinks_per_minute', 0.0), bf.get('ear', 0.0), hr_text,
+                     perclos_pct=perclos_pct),
+        unsafe_allow_html=True)
+    panels.guidance.markdown(render_guidance(level, result['contributions']),
+                             unsafe_allow_html=True)
+
+    now = time.time()
+    if now - timers.get('header', 0.0) > 1.0:
+        elapsed_s = int(run.elapsed())
+        panels.header(f"SESSION {ss.session_count:02d} &middot; "
+                      f"{elapsed_s // 60:02d}:{elapsed_s % 60:02d}")
+        timers['header'] = now
+
+    if now - timers.get('agent', 0.0) > 1.0:
+        if ss.agent_enabled:
+            st_ = run.agent_status()
+            if st_ is not None:
+                panels.agent_panel.markdown(
+                    render_agent_phases(st_['phase'], st_['detail']),
+                    unsafe_allow_html=True)
+        else:
+            panels.agent_panel.markdown(
+                '<div class="phase-reason" style="color:#5B6772;">'
+                'Agent is off — monitoring only, no interventions, no learning.</div>',
+                unsafe_allow_html=True)
+        timers['agent'] = now
+
+    if (update_sidebar and panels.sidebar_graph is not None and ss.history
+            and now - timers.get('sidebar', 0.0) > 0.5):
+        recent = [h['stress_index'] for h in ss.history[-LIVE_GRAPH_WINDOW:]]
+        panels.sidebar_graph.markdown(render_mini_graph(recent), unsafe_allow_html=True)
+        timers['sidebar'] = now
+
+    if len(ss.history) > 1 and now - timers.get('timeline', 0.0) > 1.0:
+        panels.timeline.markdown(render_full_timeline(ss.history), unsafe_allow_html=True)
+        timers['timeline'] = now
+
+
+# ---- local (cv2) capture ----------------------------------------------------
+def local_calibration(panels, video_placeholder, ustate, models):
+    video_placeholder.markdown('', unsafe_allow_html=True)
+    cap = open_local_camera()
+    if cap is None:
+        st.error("Could not open webcam.")
+        st.session_state.calibrating = False
+        return
+    run = CalibrationRun(ustate, models)
+    try:
+        while st.session_state.calibrating:
+            ok, frame = cap.read()
+            if not ok:
+                # Symmetric with the isOpened() guard above this loop -
+                # without resetting the flag here too, a mid-calibration
+                # camera glitch leaves the app stuck believing it's still
+                # calibrating (Start/Calibrate disabled) after the camera
+                # handle is already gone, until Stop is clicked.
+                st.session_state.calibrating = False
+                break
+            frame = cv2.flip(frame, 1)
+            info = run.process(frame, time.time())
+            annotate_frame(frame, bbox_to_source(info['bbox'], info['geom']),
+                           "LOW", 0.0, calibrating=True, scale=frame.shape[1] / 640.0)
+            video_placeholder.image(
+                cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), channels="RGB", width='stretch')
+            render_calibration_progress(panels, run)
+            if run.done:
+                kind, text = finish_calibration(ustate, run)
+                getattr(st, kind)(text)
+                time.sleep(1.2)
+                st.rerun()
+            time.sleep(0.01)
+    finally:
+        cap.release()
+
+
+def local_live(panels, video_placeholder, ustate, models, store):
+    cap = open_local_camera()
+    if cap is None:
+        st.error("Could not open webcam.")
+        st.session_state.running = False
+        return
+    run = make_live_run(ustate, models, store)
+    st.session_state.live_run = run
+    st.session_state.live_timers = {}
+    try:
+        while st.session_state.running:
+            ok, frame = cap.read()
+            if not ok:
+                panels.status.warning("Frame read failed")
+                # Symmetric with the isOpened() guard above this loop -
+                # without resetting the flag here too, a mid-session camera
+                # glitch leaves the app stuck believing a session is still
+                # running (Start/Calibrate disabled, no loop actually
+                # active) until Stop is clicked. Also save whatever the
+                # session accumulated so far, same as the Stop button -
+                # otherwise resetting the flag here would silently drop that
+                # data instead. end_live_run() first so the agent's measured
+                # outcomes are queued BEFORE save_current_session() pops
+                # them (the old order logged them against the next session).
+                st.session_state.running = False
+                end_live_run(ustate)
+                save_current_session()
+                # Rerun immediately so the sidebar's Stop button (rendered
+                # earlier in this same script run while running was still
+                # True) re-renders disabled - without this it stays live and
+                # stale. history is deliberately NOT cleared (same as the Stop
+                # button) so the CSV/PDF export is still available;
+                # save_current_session() is idempotent per in-memory history
+                # (BUG_AUDIT_2026-08-23.md #2).
+                st.rerun()
+
+            frame = cv2.flip(frame, 1)
+            out = run.process(frame, time.time())
+            if out['no_face']:
+                panels.status.markdown(NO_FACE_HTML, unsafe_allow_html=True)
+                video_placeholder.image(
+                    cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), channels="RGB", width='stretch')
+                continue
+            record_history(out)
+            annotate_frame(frame, bbox_to_source(out['bbox'], out['geom']),
+                           out['level'], out['smoothed'], scale=frame.shape[1] / 640.0)
+            video_placeholder.image(
+                cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), channels="RGB", width='stretch')
+            render_live_outputs(panels, out, run)
+            time.sleep(0.01)
+    finally:
+        cap.release()
+        # Hand the agent's measured outcomes to the Stop handler, which
+        # persists them alongside the session row - unless end_live_run()
+        # already did (the camera-failure path above).
+        if st.session_state.get('live_run') is run:
+            try:
+                st.session_state.pending_interventions = run.finish()
+            except Exception:
+                pass
+            st.session_state.live_run = None
+
+
+# ---- browser capture --------------------------------------------------------
+def _calibration_step(frames, panels, ustate, models):
+    ss = st.session_state
+    run = ss.calib_run
+    if run is None:
+        run = ss.calib_run = CalibrationRun(ustate, models)
+    last = None
+    for t, frame in frames:
+        last = run.process(frame, t)
+        if run.done:
+            break
+    render_calibration_progress(panels, run)
+    overlay = {'label': f"CALIBRATING  {run.seconds_left():.0f}s",
+               'color': '#2F9EED', 'progress': run.progress(),
+               'bbox': list(last['bbox']) if last and last['bbox'] else None}
+    if last and last['no_face']:
+        overlay['note'] = 'No face detected — please face the camera'
+    if run.done:
+        ss.flash = finish_calibration(ustate, run)
+        ss.calib_run = None
+        bump_cam_epoch()
+        st.rerun()      # full rerun: sidebar buttons, CALIBRATED badge, flash
+    return overlay
+
+
+def _live_step(frames, panels, ustate, models, store, gate):
+    ss = st.session_state
+    run = ss.live_run
+    if run is None:
+        run = ss.live_run = make_live_run(ustate, models, store, dt0=gate.user_now())
+    last = None
+    t_models = time.perf_counter()
+    for t, frame in frames:
+        out = run.process(frame, t)
+        record_history(out)
+        last = out
+    t_paint = time.perf_counter()
+    render_live_outputs(panels, last, run, update_sidebar=False)
+    if os.environ.get('STRESS_PROFILE'):
+        print(f"[profile]   models {(t_paint - t_models) * 1000 / len(frames):.0f} ms/frame, "
+              f"painting {(time.perf_counter() - t_paint) * 1000:.0f} ms/batch", flush=True)
+        if run.stage_ms and run.frame_idx and run.frame_idx % 40 < len(frames):
+            calls = max(1, run.stage_ms.get('cnn_calls', 1))
+            print("[profile]   stage averages so far (ms): " + ", ".join(
+                f"{k} {v / (calls if '(per call)' in k else run.frame_idx):.1f}"
+                for k, v in run.stage_ms.items() if k != 'cnn_calls')
+                + f"  [{calls} CNN calls over {run.frame_idx} frames]", flush=True)
+            try:
+                print("[profile]   tf.function tracing counts: "
+                      + str([fn.experimental_get_tracing_count()
+                             for fn, _, _ in models['pairs'] if fn is not None]), flush=True)
+            except Exception:
+                pass
+    if last['no_face']:
+        return {'label': '', 'color': '#F59E0B',
+                'note': 'No face detected — please face the camera'}
+    return {'label': f"{last['level']} ({last['smoothed'] * 100:.0f}%)",
+            'color': LEVEL_COLORS[last['level']],
+            'bbox': list(last['bbox']) if last['bbox'] else None}
+
+
+@st.fragment
+def camera_fragment(panels, ustate, models, store):
+    """The browser camera. A fragment, so every batch of snapshots reruns only
+    this function - not the whole page. Order matters: the component's
+    incoming value is read from session_state BEFORE the component is
+    rendered, so the acknowledgement and overlay computed from that batch go
+    out in the same run (the browser sends its next batch only once it sees
+    the ack). Verified: ~170 ms round trip, no stalls."""
+    ss = st.session_state
+    t_start = time.perf_counter()
+    gate, epoch = ss.batch_gate, ss.cam_epoch
+    incoming = ss.get('browser_cam')
+    frames, ack = gate.accept(incoming, epoch)
+    ss.cam_ack = ack
+    t_decoded = time.perf_counter()
+
+    mode = 'calibrate' if ss.calibrating else ('live' if ss.running else 'idle')
+    overlay = ss.cam_overlay if mode != 'idle' else {}
+    if isinstance(incoming, dict) and incoming.get('err') and mode != 'idle':
+        panels.status.warning(
+            "Camera unavailable — follow the message on the video, then press "
+            "Stop and try again.")
+    elif frames:
+        if mode == 'calibrate':
+            overlay = _calibration_step(frames, panels, ustate, models)
+        elif mode == 'live':
+            overlay = _live_step(frames, panels, ustate, models, store, gate)
+    ss.cam_overlay = overlay
+    t_done = time.perf_counter()
+    browser_camera(mode=mode, epoch=epoch, ack=ack, overlay=overlay,
+                   test_url=os.environ.get('STRESS_TEST_FRAMES_URL', ''),
+                   key='browser_cam')
+    if frames and os.environ.get('STRESS_PROFILE'):
+        # Server-side cost of one batch: decode / (models + painting) per frame.
+        print(f"[profile] {mode} batch of {len(frames)}: decode "
+              f"{(t_decoded - t_start) * 1000:.0f} ms, process+paint "
+              f"{(t_done - t_decoded) * 1000:.0f} ms "
+              f"({(t_done - t_decoded) * 1000 / len(frames):.0f} ms/frame), "
+              f"dropped so far {gate.dropped}", flush=True)
+
+# =============================================================================
 # MAIN
 # =============================================================================
 def main():
     init_state()
     inject_css()
+    # Start loading the CNN weights now, in the background: the login page (and
+    # the person typing their password) doesn't need them, and they will be
+    # ready, already warmed up, by the time the first session starts.
+    daisee_ensemble.start_background_load()
+
+    # Hosted mode: nothing below runs until this browser session has signed in.
+    if not ensure_login():
+        return
+    init_storage()
+    store = get_store()
 
     if st.session_state.view == 'analytics':
         # Read-only history view - skip loading the CNN ensemble/engine
         # entirely, they're not needed here and cost real seconds to load.
-        render_analytics_page()
+        render_analytics_page(store)
         return
 
     models = load_models()
-    engine = get_feature_engine()
-    temporal_inf = get_temporal_inference()
+    ustate = get_user_state()
+    engine = ustate.engine
+    hosted = config.STORAGE_BACKEND == 'supabase'
 
-    is_fully_calibrated = engine.baseline.calibrated and is_daisee_calibrated()
+    # Hosted: load the signed-in account's saved baseline once per login.
+    if hosted and not st.session_state.get('profile_loaded'):
+        apply_user_profile(ustate, st.session_state.active_user_id)
+        st.session_state.profile_loaded = True
+
+    is_fully_calibrated = ustate.fully_calibrated
+
+    # Messages queued by the camera fragment just before it triggered a full
+    # rerun (e.g. the calibration result) - shown once.
+    _flash = st.session_state.pop('flash', None)
+    if _flash:
+        getattr(st, _flash[0])(_flash[1])
 
     # ---------- Sidebar ----------
     with st.sidebar:
@@ -1048,56 +1449,70 @@ def main():
         # the single process-wide one. Switching users loads that person's
         # saved baseline (or generic defaults for a brand-new profile) into
         # the live engine - the same swap "Reset baseline" already did.
-        _users = session_history.list_users()
-        _user_names = [u['name'] for u in _users]
-        _user_options = ['(anonymous)'] + _user_names
-        _current_user_name = st.session_state.active_user_name or '(anonymous)'
-        _current_user_idx = (_user_options.index(_current_user_name)
-                             if _current_user_name in _user_options else 0)
-        _selected_user_name = st.selectbox(
-            "User", options=_user_options, index=_current_user_idx,
-            disabled=st.session_state.running or st.session_state.calibrating,
-            help="Each user gets their own saved calibration baseline. "
-                 "Switching loads that person's baseline (generic defaults "
-                 "for a brand-new profile) - Calibrate afterward to refine "
-                 "or replace it.",
-            key="user_select",
-        )
-        if _selected_user_name != _current_user_name:
-            if _selected_user_name == '(anonymous)':
-                st.session_state.active_user_id = None
-                st.session_state.active_user_name = None
-            else:
-                _match = next(u for u in _users if u['name'] == _selected_user_name)
-                st.session_state.active_user_id = _match['id']
-                st.session_state.active_user_name = _match['name']
-            apply_user_profile(engine, st.session_state.active_user_id)
-            st.rerun()
-
-        # Deliberately NOT an st.expander: expanders reset to their
-        # hardcoded `expanded=` value on every script rerun, and typing in
-        # the text field below triggers one - the field would visually
-        # collapse out from under the user before they could reach the
-        # button. Found live while verifying this feature, not theoretical.
-        _new_user_col, _add_user_col = st.columns([2, 1])
-        with _new_user_col:
-            _new_user_name = st.text_input(
-                "New user", key="new_user_name", placeholder="e.g. Arjun",
-                label_visibility="collapsed",
+        if hosted:
+            # Hosted: the account IS the profile. No user dropdown - nobody
+            # can pick another person's profile; the database only ever
+            # returns the signed-in account's own rows.
+            st.markdown(
+                f'<div style="font-size:12px;color:#8B98A5;margin-bottom:4px;">Signed in as</div>'
+                f'<div style="font-size:13px;color:#E6EDF3;word-break:break-all;">'
+                f'{html.escape(str(st.session_state.active_user_name))}</div>',
+                unsafe_allow_html=True)
+            if st.button("Sign out", width='stretch',
+                         disabled=st.session_state.running or st.session_state.calibrating):
+                auth.sign_out_current()
+                st.rerun()
+        else:
+            _users = store.list_users()
+            _user_names = [u['name'] for u in _users]
+            _user_options = ['(anonymous)'] + _user_names
+            _current_user_name = st.session_state.active_user_name or '(anonymous)'
+            _current_user_idx = (_user_options.index(_current_user_name)
+                                 if _current_user_name in _user_options else 0)
+            _selected_user_name = st.selectbox(
+                "User", options=_user_options, index=_current_user_idx,
                 disabled=st.session_state.running or st.session_state.calibrating,
+                help="Each user gets their own saved calibration baseline. "
+                     "Switching loads that person's baseline (generic defaults "
+                     "for a brand-new profile) - Calibrate afterward to refine "
+                     "or replace it.",
+                key="user_select",
             )
-        with _add_user_col:
-            if st.button("Add user", width='stretch',
-                        disabled=st.session_state.running or st.session_state.calibrating):
-                try:
-                    new_id = session_history.create_user(_new_user_name)
-                    apply_user_profile(engine, new_id)
-                    st.session_state.pending_user_selection = {
-                        'id': new_id, 'name': _new_user_name.strip(),
-                    }
-                    st.rerun()
-                except ValueError as e:
-                    st.error(str(e))
+            if _selected_user_name != _current_user_name:
+                if _selected_user_name == '(anonymous)':
+                    st.session_state.active_user_id = None
+                    st.session_state.active_user_name = None
+                else:
+                    _match = next(u for u in _users if u['name'] == _selected_user_name)
+                    st.session_state.active_user_id = _match['id']
+                    st.session_state.active_user_name = _match['name']
+                apply_user_profile(ustate, st.session_state.active_user_id)
+                st.rerun()
+
+            # Deliberately NOT an st.expander: expanders reset to their
+            # hardcoded `expanded=` value on every script rerun, and typing in
+            # the text field below triggers one - the field would visually
+            # collapse out from under the user before they could reach the
+            # button. Found live while verifying this feature, not theoretical.
+            _new_user_col, _add_user_col = st.columns([2, 1])
+            with _new_user_col:
+                _new_user_name = st.text_input(
+                    "New user", key="new_user_name", placeholder="e.g. Arjun",
+                    label_visibility="collapsed",
+                    disabled=st.session_state.running or st.session_state.calibrating,
+                )
+            with _add_user_col:
+                if st.button("Add user", width='stretch',
+                            disabled=st.session_state.running or st.session_state.calibrating):
+                    try:
+                        new_id = store.create_user(_new_user_name)
+                        apply_user_profile(ustate, new_id)
+                        st.session_state.pending_user_selection = {
+                            'id': new_id, 'name': _new_user_name.strip(),
+                        }
+                        st.rerun()
+                    except ValueError as e:
+                        st.error(str(e))
 
         if is_fully_calibrated:
             st.markdown('<span class="cal-check ok">&#10003; CALIBRATED</span>',
@@ -1153,6 +1568,8 @@ def main():
                 st.session_state.viewing_session_label = None
                 st.session_state.viewing_session_task_mode = None
                 st.session_state.viewing_session_self_report = None
+                st.session_state.calib_run = None
+                bump_cam_epoch()
                 st.rerun()
         with col_b:
             if st.button("Start", type="primary", width='stretch',
@@ -1171,13 +1588,19 @@ def main():
                 st.session_state.viewing_session_task_mode = None
                 st.session_state.viewing_session_self_report = None
                 st.session_state.session_count += 1
+                st.session_state.live_run = None
+                st.session_state.live_timers = {}
+                st.session_state.pop('pending_interventions', None)
+                bump_cam_epoch()
                 st.rerun()
 
         if st.button("Stop", width='stretch',
                      disabled=not (st.session_state.running or st.session_state.calibrating)):
             st.session_state.running = False
             st.session_state.calibrating = False
-            engine._calibrating = False
+            # Hands the agent's outcomes to save_current_session() (the old
+            # blocking loop did this in its `finally`) and ends the camera run.
+            end_live_run(ustate)
             save_current_session()
             st.rerun()
 
@@ -1201,15 +1624,14 @@ def main():
                          help="Wipes the personal baseline back to generic defaults. "
                               "Stop first - resetting mid-session would silently "
                               "degrade the rest of that session's scoring."):
-                engine.reset_baseline()
-                reset_daisee_baseline()
+                ustate.reset_baselines()
                 # Without this, the reset is in-memory only: switching to
                 # another user profile and back reloads the PRE-reset
                 # baseline from the DB, silently undoing the reset for any
                 # named user (no-op for anonymous - see the function's own
                 # early return). Same call calibration success already
                 # makes, kept consistent here (BUG_AUDIT_2026-08-23.md #7).
-                save_active_user_baseline(engine)
+                save_active_user_baseline(ustate)
                 st.rerun()
 
         # ---------- Recording labels ----------
@@ -1243,7 +1665,7 @@ def main():
         st.divider()
         _on = st.session_state.agent_enabled
         try:
-            _mem = InterventionAgent(stats=session_history.intervention_stats()).learned_summary()
+            _mem = InterventionAgent(stats=store.intervention_stats()).learned_summary()
         except Exception:
             _mem = "learning memory unavailable"
         with st.container(border=True):
@@ -1254,7 +1676,9 @@ def main():
                 f'{"ACTIVE" if _on else "STANDBY"}</span></div>'
                 f'<div class="agent-desc">Decides when an interruption is worth it, targets the '
                 f'signal driving the stress, then measures whether it helped and learns what '
-                f'works for you. Runs entirely on this device.</div>'
+                f'works for you. '
+                f'{"What it learns is kept per account - never shared with other users." if hosted else "Runs entirely on this device."}'
+                f'</div>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
@@ -1277,8 +1701,8 @@ def main():
         st.divider()
         st.markdown('<div class="label">Past sessions</div>', unsafe_allow_html=True)
         try:
-            recent = session_history.load_recent_sessions(n=10)
-            total  = session_history.session_count()
+            recent = store.load_recent_sessions(n=10)
+            total  = store.session_count()
         except Exception as e:
             recent, total = [], 0
             st.caption(f"Could not read history DB: {e}")
@@ -1313,7 +1737,7 @@ def main():
                     if st.button("View", key=f"view_{s['id']}",
                                  disabled=st.session_state.running or st.session_state.calibrating,
                                  help="Load this session's timeline into the main view"):
-                        samples = session_history.load_session_samples(s['id'])
+                        samples = store.load_session_samples(s['id'])
                         if samples:
                             st.session_state.history = samples
                             st.session_state.viewing_session_id = s['id']
@@ -1340,10 +1764,13 @@ def main():
                         st.rerun()
 
             st.markdown('<div class="del-btn">', unsafe_allow_html=True)
-            if st.button("Delete all history", width='stretch', key="clear_db",
+            if st.button("Delete my data" if hosted else "Delete all history",
+                         width='stretch', key="clear_db",
                          disabled=st.session_state.running or st.session_state.calibrating,
-                         help="Deletes every saved session from the local DB. Cannot be undone."):
-                session_history.clear_all_sessions()
+                         help=("Deletes every session saved under YOUR account. Other "
+                               "accounts are not affected. Cannot be undone." if hosted else
+                               "Deletes every saved session from the local DB. Cannot be undone.")):
+                store.clear_all_sessions()
                 st.session_state.history = []
                 st.session_state.history_saved = False
                 st.session_state.last_saved_session_id = None
@@ -1438,7 +1865,16 @@ def main():
             # the .hud-frame-marker CSS comment.
             st.markdown('<div class="hud-frame-marker"></div>', unsafe_allow_html=True)
             topbar_placeholder = st.empty()
-            video_placeholder = st.empty()
+            if config.CAPTURE_MODE == 'browser':
+                # The user's own browser shows the camera (browser_camera
+                # component, mounted below); this container just reserves its
+                # spot. Always the same position + key in every state so the
+                # camera is never torn down and re-requested mid-session.
+                cam_container = st.container()
+                video_placeholder = None
+            else:
+                cam_container = None
+                video_placeholder = st.empty()
             level_placeholder = st.empty()
             status_placeholder = st.empty()
 
@@ -1476,321 +1912,37 @@ def main():
         timeline_placeholder = st.empty()
         summary_placeholder = st.empty()
 
-    # ---------- CALIBRATION ----------
-    if st.session_state.calibrating:
-        video_placeholder.markdown('', unsafe_allow_html=True)
-        cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.FRAME_WIDTH)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.FRAME_HEIGHT)
-        if not cap.isOpened():
-            cap.release()
-            st.error("Could not open webcam.")
-            st.session_state.calibrating = False
-            return
-
-        engine.start_calibration()
-        calib_start = time.time()
-        daisee_calib_samples = []
-
-        try:
-            while st.session_state.calibrating:
-                ok, frame = cap.read()
-                if not ok:
-                    # Symmetric with the isOpened() guard above this loop -
-                    # without resetting the flag here too, a mid-calibration
-                    # camera glitch leaves the app stuck believing it's
-                    # still calibrating (Start/Calibrate disabled) after the
-                    # camera handle is already gone, until Stop is clicked.
-                    st.session_state.calibrating = False
-                    break
-                frame = cv2.flip(frame, 1)
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                # One FaceMesh pass per frame, shared between extract() and
-                # crop_face() - these used to each run it separately
-                # (BUG_AUDIT_2026-08-23.md structural note).
-                face_mesh_results = engine.face_mesh.process(rgb)
-                _ = engine.extract(rgb, face_mesh_results=face_mesh_results)
-
-                face_crop, bbox = crop_face(frame, face_mesh_results)
-
-                if face_crop is not None:
-                    if (len(daisee_calib_samples) == 0 or
-                        int((time.time() - calib_start) * 30) % CNN_EVERY_N_FRAMES == 0):
-                        daisee_probs = daisee_ensemble.ensemble_predict(face_crop, models['pairs'])
-                        if daisee_probs is not None:
-                            daisee_calib_samples.append(float(daisee_probs[1]))
-
-                annotate_frame(frame, bbox, "LOW", 0.0, calibrating=True)
-                video_placeholder.image(
-                    cv2.cvtColor(frame, cv2.COLOR_BGR2RGB),
-                    channels="RGB", width='stretch',
-                )
-                elapsed = time.time() - calib_start
-                progress = min(1.0, elapsed / CALIBRATION_SECONDS)
-                seconds_left = max(0.0, CALIBRATION_SECONDS - elapsed)
-                level_placeholder.markdown(
-                    render_calib_ring(progress, seconds_left), unsafe_allow_html=True,
-                )
-                calib_hud_placeholder.markdown(
-                    render_calib_hud(progress, seconds_left), unsafe_allow_html=True,
-                )
-
-                if elapsed >= CALIBRATION_SECONDS:
-                    face_ok = engine.finish_calibration()
-                    daisee_ok = False
-                    if len(daisee_calib_samples) >= config.MIN_DAISEE_CALIB_SAMPLES:
-                        set_daisee_baseline(float(np.median(daisee_calib_samples)))
-                        daisee_ok = True
-                    st.session_state.calibrating = False
-                    if face_ok or daisee_ok:
-                        save_active_user_baseline(engine)
-                    if face_ok and daisee_ok:
-                        st.success("Calibration complete. Press Start to begin.")
-                    elif face_ok or daisee_ok:
-                        st.warning("Partial calibration — try again with a clearer view.")
-                    else:
-                        st.error("Calibration failed.")
-                    time.sleep(1.2)
-                    st.rerun()
-                time.sleep(0.01)
-        finally:
-            cap.release()
+    # ---------- CAPTURE (calibration + live) ----------
+    panels = LivePanels(
+        header=render_header, topbar=topbar_placeholder, level=level_placeholder,
+        status=status_placeholder, signals=signals_placeholder,
+        tiles=tiles_placeholder, guidance=guidance_placeholder,
+        intervention=intervention_placeholder, agent_panel=agent_panel_placeholder,
+        timeline=timeline_placeholder, calib_hud=calib_hud_placeholder,
+        sidebar_graph=(sidebar_graph_placeholder
+                       if config.CAPTURE_MODE != 'browser' else None),
+    )
+    if config.CAPTURE_MODE == 'browser':
+        # Mounted in EVERY state (idle shows a live preview, calibrate/live
+        # also stream snapshots) at the same position with the same key, so
+        # the camera is never torn down and re-requested mid-session.
+        with cam_container:
+            camera_fragment(panels, ustate, models, store)
+    elif st.session_state.calibrating:
+        local_calibration(panels, video_placeholder, ustate, models)
         return
 
-    # ---------- CAPTURE ----------
     if st.session_state.running:
         if not engine.baseline.calibrated:
             st.warning("Personal baseline not set — Stop, then Calibrate.")
-
-        cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.FRAME_WIDTH)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.FRAME_HEIGHT)
-        if not cap.isOpened():
-            cap.release()
-            st.error("Could not open webcam.")
-            st.session_state.running = False
-            return
-
-        smoother = TemporalSmoother(window_size=SMOOTHING_WINDOW)
-        hyst = HysteresisLevel(confirm_frames=config.HYSTERESIS_CONFIRM_FRAMES)
-
-        if temporal_inf.is_available():
-            temporal_inf.reset()
-
-        rppg = get_live_rppg()
-        rppg.reset()
-
-        # The agentic core: decides when to interrupt, targets the driving
-        # signal, then measures whether the intervention worked. Seeded with
-        # what has historically worked on this install, and (once a
-        # task-mode bucket has enough evidence) what's worked in THIS
-        # specific context - see InterventionAgent's own docstring for why
-        # both are passed rather than only the mode-specific one.
-        try:
-            _known = session_history.intervention_stats()
-            _known_by_mode = session_history.intervention_stats_by_mode()
-        except Exception:
-            _known, _known_by_mode = {}, {}
-        agent = InterventionAgent(stats=_known, mode_stats=_known_by_mode,
-                                  task_mode=st.session_state.task_mode)
-        agent.start_session(time.time())
-        last_agent_status_update = 0.0
-
-        last_daisee_probs = None
-        frame_idx = 0
-        last_timeline_update = 0.0
-        last_sidebar_update  = 0.0
-        last_header_update = 0.0
-        session_started_at = time.time()
-
-        try:
-            while st.session_state.running:
-                ok, frame = cap.read()
-                if not ok:
-                    status_placeholder.warning("Frame read failed")
-                    # Symmetric with the isOpened() guard above this loop -
-                    # without resetting the flag here too, a mid-session
-                    # camera glitch leaves the app stuck believing a
-                    # session is still running (Start/Calibrate disabled,
-                    # no loop actually active) until Stop is clicked. Also
-                    # save whatever the session accumulated so far, same as
-                    # the Stop button - otherwise resetting the flag here
-                    # would silently drop that data instead.
-                    st.session_state.running = False
-                    save_current_session()
-                    # Rerun immediately so the sidebar's Stop button
-                    # (rendered earlier in this same script run while
-                    # running was still True) re-renders disabled - without
-                    # this it stays live and stale, and a click on it would
-                    # call save_current_session() again. history is
-                    # deliberately NOT cleared here (same as the Stop
-                    # button) so the CSV/PDF export for what was captured
-                    # is still available - save_current_session() itself is
-                    # now idempotent per in-memory history (see its
-                    # docstring), so even a stale second call is a no-op
-                    # rather than a duplicate DB row (BUG_AUDIT_2026-08-23.md #2).
-                    st.rerun()
-
-                frame = cv2.flip(frame, 1)
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-                face_mesh_results = engine.face_mesh.process(rgb)
-                face_crop, bbox = crop_face(frame, face_mesh_results)
-
-                if face_crop is None:
-                    status_placeholder.markdown(
-                        '<div class="face-status">No face detected — please face the camera</div>',
-                        unsafe_allow_html=True)
-                    video_placeholder.image(rgb, channels="RGB", width='stretch')
-                    frame_idx += 1
-                    continue
-                status_placeholder.empty()
-
-                if frame_idx % CNN_EVERY_N_FRAMES == 0:
-                    last_daisee_probs = daisee_ensemble.ensemble_predict(face_crop, models['pairs'])
-
-                # rPPG: cheap per frame. Heart rate is computed and shown
-                # even at W_RPPG = 0 so it can be sanity-checked against a
-                # wrist pulse before being trusted.
-                rppg.add_frame(time.time(), frame, face_mesh_results)
-                rppg_score = rppg.stress_score()
-
-                behavioral_features = engine.extract(rgb, face_mesh_results=face_mesh_results)
-                if behavioral_features is None:
-                    frame_idx += 1
-                    continue
-
-                # Must come AFTER behavioral_features exists - the temporal
-                # model consumes the features dict, not a pixel crop (the
-                # old LSTM took face_crop directly, which is why this used
-                # to run earlier in the loop, before engine.extract() had
-                # even been called yet).
-                temporal_score = None
-                if temporal_inf.is_available():
-                    temporal_inf.add_frame(behavioral_features, timestamp=time.time())
-                    temporal_score = temporal_inf.predict()
-
-                result = compute_stress_index(
-                    daisee_probs=last_daisee_probs,
-                    behavioral_features=behavioral_features,
-                    temporal_score=temporal_score,
-                    task_mode=st.session_state.task_mode,
-                    rppg_score=rppg_score,
-                )
-                smoothed = smoother.update(result['stress_index'])
-                level = hyst.update(smoothed)
-
-                # ---- intervention agent: decide / act / measure ----
-                _iv = None
-                if st.session_state.agent_enabled:
-                    _iv = agent.update(time.time(), smoothed, result['contributions'])
-                if _iv is not None and (time.time() - _iv.t_shown) <= config.INTERVENTION_SHOW_SECONDS:
-                    intervention_placeholder.markdown(
-                        render_intervention_card(_iv.title, _iv.body), unsafe_allow_html=True)
-                else:
-                    intervention_placeholder.empty()
-
-                annotate_frame(frame, bbox, level, smoothed)
-                video_placeholder.image(
-                    cv2.cvtColor(frame, cv2.COLOR_BGR2RGB),
-                    channels="RGB", width='stretch',
-                )
-
-                _hr, _q = rppg.estimate()
-                _hr_text = f"{_hr:.0f}" if _hr else "--"
-                topbar_placeholder.markdown(
-                    render_video_topbar(rppg.status(), behavioral_features.get('ear', 0.0)),
-                    unsafe_allow_html=True)
-                level_placeholder.markdown(render_level_block(level, smoothed),
-                                          unsafe_allow_html=True)
-                signals_placeholder.markdown(render_signal_rows(result['contributions']),
-                                            unsafe_allow_html=True)
-                _perclos_pct = (behavioral_features.get('perclos', 0.0) * 100.0
-                               if st.session_state.task_mode == 'Driving' else None)
-                tiles_placeholder.markdown(
-                    render_tiles(behavioral_features.get('blinks_per_minute', 0.0),
-                                behavioral_features.get('ear', 0.0), _hr_text,
-                                perclos_pct=_perclos_pct),
-                    unsafe_allow_html=True)
-                guidance_placeholder.markdown(render_guidance(level, result['contributions']),
-                                             unsafe_allow_html=True)
-
-                now = datetime.now()
-                if (not st.session_state.history or
-                    (now - st.session_state.history[-1]['ts']).total_seconds() >= 0.5):
-                    # None (not 0.0) when the CNN branch hasn't scored this
-                    # frame - result['daisee_raw'] is already None in that
-                    # case (stress_fusion.daisee_raw_score's contract); `or
-                    # 0.0` used to collapse that into an indistinguishable
-                    # "CNN says relaxed," which is what session_history.py's
-                    # v7->v8 migration and this None-preserving assignment
-                    # fix (2026-09-17).
-                    daisee_record = result.get('daisee_raw')
-                    _rec = {
-                        'ts': now, 'stress_index': smoothed, 'level': level,
-                        'daisee': daisee_record, 'behavior': result['behavior_stress'],
-                    }
-                    # Per-signal values: without these the self-retraining
-                    # loop has nothing to learn from.
-                    _rec.update(result['contributions'])
-                    # The 3 extra raw values temporal_model.TEMPORAL_FEATURE_
-                    # ORDER needs beyond the 7 contributions above - without
-                    # these no live recording can ever become a GRU training
-                    # sequence, no matter how many get made (session_history
-                    # schema v7).
-                    _rec['ear'] = behavioral_features.get('ear', 0.0)
-                    _rec['ear_asymmetry'] = behavioral_features.get('ear_asymmetry', 0.0)
-                    _rec['blinks_per_minute'] = behavioral_features.get('blinks_per_minute', 0.0)
-                    st.session_state.history.append(_rec)
-
-                now_ts = time.time()
-
-                if now_ts - last_header_update > 1.0:
-                    elapsed_s = int(now_ts - session_started_at)
-                    render_header(
-                        f"SESSION {st.session_state.session_count:02d} &middot; "
-                        f"{elapsed_s // 60:02d}:{elapsed_s % 60:02d}"
-                    )
-                    last_header_update = now_ts
-
-                if now_ts - last_agent_status_update > 1.0:
-                    if st.session_state.agent_enabled:
-                        st_ = agent.status(now_ts)
-                        agent_panel_placeholder.markdown(
-                            render_agent_phases(st_['phase'], st_['detail']),
-                            unsafe_allow_html=True)
-                    else:
-                        agent_panel_placeholder.markdown(
-                            '<div class="phase-reason" style="color:#5B6772;">'
-                            'Agent is off — monitoring only, no interventions, no learning.</div>',
-                            unsafe_allow_html=True)
-                    last_agent_status_update = now_ts
-
-                if now_ts - last_sidebar_update > 0.5 and st.session_state.history:
-                    recent = [h['stress_index'] for h in st.session_state.history[-LIVE_GRAPH_WINDOW:]]
-                    sidebar_graph_placeholder.markdown(render_mini_graph(recent), unsafe_allow_html=True)
-                    last_sidebar_update = now_ts
-
-                if now_ts - last_timeline_update > 1.0 and len(st.session_state.history) > 1:
-                    timeline_placeholder.markdown(render_full_timeline(st.session_state.history),
-                                                  unsafe_allow_html=True)
-                    last_timeline_update = now_ts
-
-                frame_idx += 1
-                time.sleep(0.01)
-        finally:
-            cap.release()
-            # Hand the agent's measured outcomes to the Stop handler, which
-            # persists them alongside the session row.
-            try:
-                _final_idx = (st.session_state.history[-1]['stress_index']
-                              if st.session_state.history else 0.0)
-                st.session_state.pending_interventions = agent.finish_session(
-                    time.time(), _final_idx)
-            except Exception:
-                pass
+        if config.CAPTURE_MODE != 'browser':
+            local_live(panels, video_placeholder, ustate, models, store)
+        # Browser mode: the camera fragment above drives the live session.
+    elif st.session_state.calibrating:
+        pass    # Browser mode: the camera fragment above drives calibration.
     else:
-        video_placeholder.markdown(render_idle_view(), unsafe_allow_html=True)
+        if video_placeholder is not None:
+            video_placeholder.markdown(render_idle_view(), unsafe_allow_html=True)
         signals_placeholder.markdown(
             '<div style="color:#5B6772;font-size:11.5px;padding:6px 0;">'
             'No session running.</div>', unsafe_allow_html=True)

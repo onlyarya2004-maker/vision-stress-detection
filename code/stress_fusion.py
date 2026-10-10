@@ -154,13 +154,30 @@ def is_daisee_calibrated():      return _DAISEE_BASELINE.is_calibrated()
 def get_daisee_baseline():       return _DAISEE_BASELINE.value
 
 
+def new_daisee_baseline():
+    """
+    A fresh, independent DaiSEE baseline - one per concurrent user session.
+    The module-level _DAISEE_BASELINE above is process-wide: on a hosted
+    server, two people calibrating at the same time would overwrite each
+    other's baseline. Pass one of these to compute_stress_index(
+    daisee_baseline=...) to keep users isolated; omitting it keeps the old
+    single-process behavior unchanged.
+    """
+    return _Baseline(
+        default_baseline=config.DAISEE_DEFAULT_BASELINE,
+        deviation_scale=config.DAISEE_DEVIATION_SCALE,
+        name='DaiSEE',
+    )
+
+
 # ---------------- PER-BRANCH SCORING ----------------
-def daisee_stress_score(daisee_probs):
+def daisee_stress_score(daisee_probs, daisee_baseline=None):
     """Re-centered DaiSEE stress score."""
     if daisee_probs is None:
         return None
     raw_p = float(daisee_probs[1])
-    return _DAISEE_BASELINE.deviation(raw_p)
+    baseline = daisee_baseline if daisee_baseline is not None else _DAISEE_BASELINE
+    return baseline.deviation(raw_p)
 
 
 def daisee_raw_score(daisee_probs):
@@ -217,7 +234,7 @@ def behavioral_stress_score(features, task_mode='Default'):
 def compute_stress_index(daisee_probs, behavioral_features,
                          emotion_probs=None, emotion_class_names=None,
                          temporal_score=None, task_mode='Default',
-                         rppg_score=None):
+                         rppg_score=None, daisee_baseline=None):
     """
     daisee_probs:        ndarray (2,) softmax [not_stressed, stressed]; None if absent
     behavioral_features: dict from BehavioralFeatureEngine.extract()
@@ -230,8 +247,10 @@ def compute_stress_index(daisee_probs, behavioral_features,
                          'Driving'). Reweights behavioral signals to emphasize
                          those most diagnostic of stress in the given context.
                          'Default' preserves the un-modal 89.6% baseline.
+    daisee_baseline:     optional per-session baseline from new_daisee_baseline();
+                         None uses the process-wide one (single-user default).
     """
-    daisee_s   = daisee_stress_score(daisee_probs)
+    daisee_s   = daisee_stress_score(daisee_probs, daisee_baseline=daisee_baseline)
     daisee_raw = daisee_raw_score(daisee_probs)
     beh_s, beh_contribs = behavioral_stress_score(behavioral_features, task_mode)
 

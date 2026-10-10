@@ -1,0 +1,45 @@
+# Auto-deploy: every push to `main` rebuilds the image and updates the live app.
+#
+# NOT ACTIVE until copied to .github/workflows/deploy.yml (kept here so that
+# pushing this repo can never trigger a half-configured deployment).
+# Setup and the two required secrets: see deploy/DEPLOY.md, step 4.
+name: deploy-azure
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  RG: stress-rg
+  APP: stress-app
+  ACR: ${{ secrets.ACR_NAME }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true          # the two CNN .h5 files are Git LFS objects
+
+      - name: Models must be real files, not LFS pointer stubs
+        run: |
+          for f in models/daisee_mobilenet_stress.h5 models/daisee_efficientnet_stress.h5; do
+            test "$(stat -c %s "$f")" -gt 1000000 || { echo "$f is an LFS pointer"; exit 1; }
+          done
+
+      - uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Build and push
+        run: |
+          az acr login --name "$ACR"
+          IMAGE="$ACR.azurecr.io/stress-app:${{ github.sha }}"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Roll out
+        run: az containerapp update -n "$APP" -g "$RG" --image "$IMAGE"

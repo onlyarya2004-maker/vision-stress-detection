@@ -1,0 +1,56 @@
+Browser-capture parity experiments (2026-09-27, UBFC-Phys s11, stride 2)
+=========================================================================
+Script: code/experiment_mediapipe_tasks_parity.py (--mode tasks | jpeg | resolution | pose-cadence)
+
+Why these exist: the hosted app has to get camera frames from a user's BROWSER. Two designs were
+evaluated against the validated Python pipeline (legacy mediapipe.solutions FaceMesh + Pose, the models
+every reported number comes from):
+
+(1) Detect landmarks IN THE BROWSER (MediaPipe Tasks API, WASM) and send only landmarks.  -> REJECTED
+    Same BehavioralFeatureEngine, same footage, landmarks from the Tasks models vs the legacy models:
+      detection agreement 5939 / 5974 frames; landmark position difference mean 4.77 px (median 3.80, p95 11.72)
+      per-signal Pearson r: ear 0.967, ear_asymmetry 0.862, eye_strain 0.923, blink_stress 0.982,
+          brow_tension 0.686, jaw_tension 0.182, head_instability 0.984, neck_strain 0.898, slouch 0.922
+      BEHAVIOUR SCORE r = 0.486   (FAIL - brow + jaw carry 55% of the behaviour weight)
+      relaxed-vs-stressed gap: legacy -0.055, Tasks -0.112 (the Tasks models would change the system's behaviour)
+    A different model version is a different system: none of the validated accuracy numbers would transfer.
+
+(2) Send compressed frames to the server and run the validated Python models there.        -> ADOPTED
+    Question: does the JPEG hop alone change anything?  Legacy models on raw frames (A) vs on the same frames
+    after a JPEG q80 encode/decode at 480 px (B):
+      scored frames 5974, both detected 5953, legacy-only 0, B-only 0
+      key-landmark position difference: mean 0.32 px (median 0.23, p95 0.83)
+        signal                   r      MAD   mean A   mean B
+        ear                  0.999   0.0035   0.2002   0.2000
+        ear_asymmetry        0.987   0.0065   0.0376   0.0377
+        eye_strain           0.999   0.0091   0.4906   0.4920
+        blink_stress         0.988   0.0157   0.1475   0.1414
+        brow_tension         0.990   0.0276   0.3214   0.3066
+        jaw_tension          0.905   0.0439   0.1838   0.1888
+        head_instability     0.995   0.0068   0.3281   0.3305
+        neck_strain          0.897   0.0771   0.2343   0.2803
+        slouch               0.932   0.0147   0.0257   0.0375
+        BEHAVIOUR SCORE      0.955   0.0191   0.2442   0.2439
+      relaxed vs stressed gap: raw -0.0534, JPEG -0.0575
+    -> behaviour score r = 0.955 with identical mean: compression alone does not change the system.
+       The browser sends q0.85 (config.BROWSER_JPEG_QUALITY), slightly better than the q0.80 tested here.
+
+End-to-end geometry check (2026-10-10): a frame captured from the running browser component, decoded, vs the
+Python path's prepare_processing_frame(cv2.flip(source, 1)) for the same source image:
+      PSNR 38.4 dB (matches); 9.9 dB if NOT mirrored; 13.5 dB if upside-down  -> crop, mirror and resize are right.
+
+See also models/pose_cadence_parity.txt (the Pose-every-N-frames server-CPU option).
+
+Windows host vs Linux container (2026-10-10, scripts/platform_parity.py, UBFC-Phys s11 T1, first 300 frames at stride 3,
+no calibration, same MediaPipe 0.10.14 built for each OS) - does the hosted image reproduce the validated numbers?
+        signal              Windows mean/std      Linux mean/std
+        ear                 0.2165 / 0.0744       0.2164 / 0.0744
+        eye_strain          0.7053 / 0.2684       0.7056 / 0.2685
+        blink_stress        0.4133 / 0.4924       0.4133 / 0.4924
+        brow_tension        0.0014 / 0.0238       0.0014 / 0.0238
+        jaw_tension         0.9922 / 0.0685       0.9922 / 0.0685
+        head_instability    0.0910 / 0.1443       0.0909 / 0.1443
+        neck_strain         0.4691 / 0.1134       0.4691 / 0.1134
+        slouch              0.7413 / 0.0439       0.7413 / 0.0439
+        BEHAVIOUR SCORE     0.4832 / 0.0874       0.4832 / 0.0873
+   -> identical to 3-4 decimals: the Linux image is the same system.

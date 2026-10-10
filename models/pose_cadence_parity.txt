@@ -1,0 +1,42 @@
+Pose-cadence parity experiment (2026-10-10)
+=============================================
+Command: cd code && python experiment_mediapipe_tasks_parity.py --mode pose-cadence --pose-every 3 --subject s11 --stride 2
+
+Question: the server-CPU saving config.POSE_EVERY_N_FRAMES = 3 runs MediaPipe Pose (~48 ms of the ~88 ms per
+frame) on every 3rd frame and reuses the last result in between. Does that change what the models see?
+A = Pose every frame (the validated behaviour, the default). B = Pose every 3rd frame. Same FaceMesh result,
+same frames, same engine; only the Pose cadence differs.
+
+READING THE RESULT
+  - brow_tension, jaw_tension, head_instability do not use Pose: identical (r = 1.000).
+  - neck_strain (weight 0.05) and slouch (0.10) are Pose-driven: r = 0.876 and 0.938 individually. neck_strain
+    was already the noisiest signal (r = 0.897 between raw and JPEG-compressed frames, no cadence involved).
+  - What the system actually uses is the weighted behaviour score: r = 0.999, mean 0.2528 vs 0.2535, and the
+    relaxed-vs-stressed gap is unchanged (-0.0551 vs -0.0557).
+  - The per-signal bar set before running (>= 0.95) is NOT met for neck_strain, so the default stays at 1
+    (exactly the validated behaviour). Enable 3 only if the capacity test (scripts/load_test.py) says the
+    server cannot give each user >= 8 fps without it; the aggregate evidence says it is safe.
+
+RAW OUTPUT
+==============================================================================
+POSE EVERY FRAME (A) vs EVERY 3rd/th FRAME (B) - UBFC-Phys s11, stride 2
+==============================================================================
+  scored frames: 5974   both detected: 5953   legacy only: 0   tasks only: 0
+  key-landmark position difference (px @1024): mean 0.00  median 0.00  p95 0.00
+
+  signal                   r      MAD   mean A   mean B
+  ----------------------------------------------------
+  ear                  1.000   0.0000   0.2003   0.2003
+  ear_asymmetry        1.000   0.0000   0.0377   0.0377
+  eye_strain           1.000   0.0000   0.4908   0.4908
+  blink_stress         1.000   0.0000   0.1611   0.1611
+  brow_tension         1.000   0.0000   0.3383   0.3383
+  jaw_tension          1.000   0.0000   0.1877   0.1877
+  head_instability     1.000   0.0000   0.3311   0.3311
+  neck_strain          0.876   0.0792   0.2440   0.2467
+  slouch               0.938   0.0108   0.0235   0.0292
+  BEHAVIOR SCORE       0.999   0.0040   0.2528   0.2535
+
+  Relaxed (T1) vs stressed (T2) separation, weighted behavior score:
+    legacy (A)   relaxed 0.2820   stressed 0.2269   gap -0.0551
+    tasks (B)    relaxed 0.2830   stressed 0.2273   gap -0.0557

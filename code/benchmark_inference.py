@@ -71,7 +71,7 @@ def crop_face(frame_bgr, face_mesh_results):
 
 def build_benchmark_frame(data_root=None):
     """
-    A config.FRAME_WIDTH x config.FRAME_HEIGHT BGR frame with a real face
+    A config.PROCESS_WIDTH x config.PROCESS_HEIGHT BGR frame (the 640x480 geometry every model processes; NOT the larger display resolution) with a real face
     roughly centred - built by pasting an actual DaiSEE face crop onto a
     blank canvas at live-capture resolution, rather than a synthetic
     landmark mock (this needs MediaPipe to run its REAL detection graph,
@@ -89,14 +89,14 @@ def build_benchmark_frame(data_root=None):
     if face is None:
         raise RuntimeError(f"Could not read {candidates[0]}")
 
-    canvas = np.full((config.FRAME_HEIGHT, config.FRAME_WIDTH, 3), 30, dtype=np.uint8)
+    canvas = np.full((config.PROCESS_HEIGHT, config.PROCESS_WIDTH, 3), 30, dtype=np.uint8)
     # Paste at roughly 40% of frame height/width, matching where a face
     # typically sits in a real webcam frame - centred, not filling it.
-    face_h = int(config.FRAME_HEIGHT * 0.55)
+    face_h = int(config.PROCESS_HEIGHT * 0.55)
     face_w = int(face.shape[1] * (face_h / face.shape[0]))
     face_resized = cv2.resize(face, (face_w, face_h))
-    y0 = (config.FRAME_HEIGHT - face_h) // 2
-    x0 = (config.FRAME_WIDTH - face_w) // 2
+    y0 = (config.PROCESS_HEIGHT - face_h) // 2
+    x0 = (config.PROCESS_WIDTH - face_w) // 2
     canvas[y0:y0 + face_h, x0:x0 + face_w] = face_resized
     return canvas
 
@@ -170,7 +170,7 @@ def run_benchmark(iterations=DEFAULT_ITERATIONS, cnn_iterations=DEFAULT_CNN_ITER
         return {
             'results': results,
             'n_cnn_loaded': n_cnn_loaded,
-            'frame_size': (config.FRAME_WIDTH, config.FRAME_HEIGHT),
+            'frame_size': (config.PROCESS_WIDTH, config.PROCESS_HEIGHT),
             'cnn_every_n_frames': config.CNN_EVERY_N_FRAMES,
         }
     finally:
@@ -202,7 +202,7 @@ def render_result(bench):
     lines.append("=" * 78)
     lines.append(f"generated : {time.strftime('%Y-%m-%d %H:%M:%S')}")
     lines.append(f"frame size: {bench['frame_size'][0]}x{bench['frame_size'][1]} "
-                 f"(config.FRAME_WIDTH/FRAME_HEIGHT)")
+                 f"(config.PROCESS_WIDTH/PROCESS_HEIGHT)")
     lines.append(f"DaiSEE models loaded: {bench['n_cnn_loaded']}/2")
     lines.append("")
     lines.append("No camera involved - real MediaPipe/TensorFlow inference against a")

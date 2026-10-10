@@ -55,8 +55,17 @@ venv/
 env/
 ENV/
 
-# Streamlit
+# Streamlit (the app's own .streamlit/ lives under code/, so match at any depth)
 .streamlit/secrets.toml
+**/.streamlit/secrets.toml
+
+# Hosted-mode credentials. The Supabase PUBLIC key is not secret, but keep every
+# env file out of git anyway; the service_role key must never be in this repo.
+.env
+.env.*
+!.env.example
+supabase/.temp/
+*.pem
 
 # OS / editor noise
 Thumbs.db

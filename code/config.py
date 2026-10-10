@@ -18,6 +18,8 @@ equivalence test against the archived pre-task-aware implementation) verify
 that.
 """
 
+import os
+
 # ===========================================================================
 # STRESS LEVEL CUTOFFS
 # ===========================================================================
@@ -461,14 +463,69 @@ CALIBRATION_SECONDS = 20   # was 6. Blink-RATE calibration needs >=20s
                            # at 0.79 mean during normal sitting. 20s also
                            # yields a steadier posture/EAR baseline.
 LIVE_GRAPH_WINDOW = 60
-FRAME_WIDTH = 640
-FRAME_HEIGHT = 480
+FRAME_WIDTH = 1920   # DISPLAY/capture resolution of the local (cv2) camera only. Was
+FRAME_HEIGHT = 1080  # 640x480 until 2026-09-27; the camera supports 1920x1080
+                     # (confirmed via cv2.VideoCapture directly) and 640x480 was
+                     # throttling the picture the user SEES for no reason.
+                     # What the models SEE is PROCESS_WIDTH x PROCESS_HEIGHT below.
+
+# What every model/engine actually processes, in BOTH capture modes: a 4:3
+# 640x480 frame - the geometry the whole system was validated on (the live
+# webcam ran at 640x480 through every calibration and evaluation). The
+# behavioural features use normalised landmark coordinates, so a different
+# aspect ratio would silently shift EAR/brow/jaw ratios against every saved
+# baseline and the generic defaults. Anything larger/wider is centre-cropped
+# to 4:3 and downscaled to this (frame_ops.prepare_processing_frame); the
+# browser does the same before it encodes, so the server receives exactly
+# this size. A 16:9 camera therefore loses its left/right edges for scoring
+# (the user still sees the whole picture on screen).
+PROCESS_WIDTH = 640
+PROCESS_HEIGHT = 480
+
+# ===========================================================================
+# HOSTED / BROWSER CAPTURE (added for the 2026-10-16 hosted demo)
+# ===========================================================================
+# 'browser': the user's browser owns the camera, shows it locally at full
+#            quality, and sends compressed 640x480 snapshots to the server
+#            (browser_camera component). Required when the app runs on a
+#            server with no camera. 'local': cv2.VideoCapture on the machine
+#            running Streamlit (development / offline fallback).
+CAPTURE_MODE = os.environ.get('STRESS_CAPTURE_MODE', 'browser')
+# 'sqlite': ../data/sessions.db, single-user dev (session_history.py).
+# 'supabase': hosted Postgres with per-user login + Row Level Security
+#             (session_store.SupabaseStore); requires SUPABASE_URL and
+#             SUPABASE_ANON_KEY in the environment / Streamlit secrets.
+STORAGE_BACKEND = os.environ.get('STRESS_STORAGE_BACKEND', 'sqlite')
+
+# Hosted capacity guard: refuse a new session beyond this many simultaneous
+# ones (each holds two MediaPipe graphs + a GRU and competes for CPU). The
+# demo needs 2; the rest is headroom for the teacher to log in too.
+MAX_USER_SESSIONS = int(os.environ.get('STRESS_MAX_SESSIONS', '6'))
+
+BROWSER_CAPTURE_FPS = 10         # snapshots per second the browser sends
+BROWSER_JPEG_QUALITY = 0.85      # JPEG parity check: r=0.955 at q0.80 (behaviour score)
+BROWSER_BATCH_MS = 500           # how often a batch of snapshots is posted
+MAX_FRAME_BYTES = 200_000        # a 640x480 q0.85 JPEG is ~30-60 KB; refuse anything absurd
+MAX_FRAMES_PER_BATCH = 30        # ... and any batch bigger than ~3 s of video
+MAX_FRAMES_PROCESSED_PER_BATCH = 8   # server-side backpressure: when a batch holds more
+                                     # than this, the OLDEST are dropped (never queue up
+                                     # latency; the signals are slow-moving)
+
+# MediaPipe Pose is ~48 ms of the ~88 ms per frame (benchmark_inference.py)
+# yet drives only the two slow posture signals (neck_strain, slouch). Running
+# it every Nth frame and reusing the last result in between is the biggest
+# single server-CPU saving. 1 = every frame = exactly the validated behaviour;
+# raise only after experiment_mediapipe_tasks_parity.py --mode pose-cadence
+# shows the posture signals still match.
+POSE_EVERY_N_FRAMES = 1
+
 MIN_DAISEE_CALIB_SAMPLES = 5     # fewer and the DaiSEE baseline is rejected
 FACE_CROP_PADDING = 0.15
 
 DAISEE_MOBILENET_PATH = '../models/daisee_mobilenet_stress.h5'
 DAISEE_EFFICIENTNET_PATH = '../models/daisee_efficientnet_stress.h5'
-DB_PATH = '../data/sessions.db'
+DB_PATH = os.environ.get('STRESS_DB_PATH', '../data/sessions.db')   # env override: test runs
+                                                                     # must never touch the real DB
 
 # ===========================================================================
 # TEMPORAL MODEL (Phase 2.1). Feature-sequence GRU, replacing the old

@@ -1,0 +1,21 @@
+# Keeps the free Supabase project from auto-pausing (free projects pause after
+# 7 days without an API request). One harmless read per day.
+#
+# NOT ACTIVE until copied to .github/workflows/supabase-keepalive.yml.
+# Needs repo secrets SUPABASE_URL and SUPABASE_ANON_KEY (the PUBLIC key).
+name: supabase-keepalive
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Query the database (RLS makes it return [] without a login)
+        run: |
+          curl -fsS "${{ secrets.SUPABASE_URL }}/rest/v1/profiles?select=id&limit=1" \
+            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}"

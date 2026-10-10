@@ -99,7 +99,7 @@ def test_render_result_handles_missing_daisee_models():
     assert 'skipped - no DaiSEE model loaded' in report
 
 
-def test_build_benchmark_frame_has_the_configured_live_capture_size(tmp_path):
+def test_build_benchmark_frame_has_the_processing_geometry_not_the_display_size(tmp_path):
     config_size = __import__('config')
     sample_dir = tmp_path / "test" / "not_stressed"
     sample_dir.mkdir(parents=True)
@@ -107,7 +107,10 @@ def test_build_benchmark_frame_has_the_configured_live_capture_size(tmp_path):
     cv2.imwrite(str(sample_dir / "sample.jpg"), img)
 
     frame = build_benchmark_frame(data_root=tmp_path)
-    assert frame.shape == (config_size.FRAME_HEIGHT, config_size.FRAME_WIDTH, 3)
+    # The benchmark measures what the models actually process (640x480), regardless of the
+    # (larger) camera display resolution in config.FRAME_WIDTH/HEIGHT.
+    assert frame.shape == (config_size.PROCESS_HEIGHT, config_size.PROCESS_WIDTH, 3)
+    assert frame.shape[:2] == (480, 640)
 
 
 def test_build_benchmark_frame_raises_clearly_when_no_sample_exists(tmp_path):

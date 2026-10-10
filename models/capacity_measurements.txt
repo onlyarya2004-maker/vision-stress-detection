@@ -1,0 +1,39 @@
+Server capacity measurements (2026-10-10) - what was MEASURED and what was NOT
+================================================================================
+Host: this Windows PC (24 logical CPUs). Docker image stress-app (2d928eb96064, TensorFlow-CPU, Linux).
+Target set for the demo: >= 8 processed frames/s per user (the validated live system ran ~11 fps).
+"CPUs" below = the Docker --cpus quota, i.e. what a rented 2-vCPU container would give (a cloud vCPU is
+typically slower than this desktop's cores, so cloud numbers will be somewhat worse).
+
+1. PIPELINE ONLY (scripts/load_test.py: real FaceMesh+Pose+CNN ensemble+GRU+fusion+agent, no Streamlit, no browser)
+     native Windows, 1 user .......................... 27.2 fps  (37 ms/frame)
+     native Windows, 2 users ......................... 25.8 fps each
+     native Windows, 2 users, Pose every 3rd frame ... 42.2 fps each
+     Docker --cpus=2, 2 users ........................ 27.1 fps each          <- passes (3.4x margin)
+     Docker --cpus=2, 2 users, Pose every 3rd frame .. 43.1 fps each
+   -> The models themselves are fast enough with large headroom.
+
+2. THE REAL LIVE APP through the browser path (fake camera feeding the browser component -> Streamlit fragment
+   -> LiveRun -> UI), one user:
+     Docker --cpus=4 ................................. ~11 fps processed, 85-90 ms/frame, 0.9-1.0 s round trip
+     Docker --cpus=2 ................................. 8.2 fps processed, 83 ms/frame, 1.0 s round trip   <- at the line
+     Docker --cpus=2 + a flat-out 2nd user (21 fps) .. 7.2 fps processed, 98 ms/frame, 1.1 s round trip   <- below target
+   Per-frame stages in the live app (ms): face_mesh 3.3, Pose-in-extract 19-25, CNN ~58-68 (averaged over all
+   frames; the CNN runs every 3rd frame, i.e. ~150-200 ms per CNN call), painting 1-2 per batch, decoding ~5 per batch.
+
+3. UNEXPLAINED, and the main open performance question: the CNN call costs ~150-200 ms per call inside the live
+   app but ~37-40 ms per call everywhere else - in the standalone load test, in a bare Streamlit script thread
+   running the same LiveRun (38 ms/frame), on the app's own dumped input crops timed offline (40 ms), and for an
+   identical call on a constant image made right after the slow one inside the live app (26-37 ms). Ruled out by
+   experiment: data content, JPEG, input shape/dtype, tf.function retracing (tracing count stays 1/1), lock
+   contention (0 ms wait), idle gaps, CPU contention from other processes, TF/OpenMP thread caps, Windows-vs-Linux
+   (same in the Linux container), a fresh thread per batch, and a persistent per-user worker thread (tried in the
+   live app, no change, reverted). Net effect: the live app is ~2.2x slower than the pipeline-only test.
+
+4. NOT MEASURED: two simultaneous REAL browser sessions (the available test browser throttles a background tab,
+   so a faithful second client was not possible; the flat-out neighbour in 2. is a worst-case stand-in).
+
+CONCLUSION (an estimate, not a measurement): one live user needs ~1.0-1.3 CPU cores. Two users therefore need
+~2.0-2.6 cores: marginal at 2 vCPU (expect ~7-8 fps each), comfortable at 4 vCPU (the Azure-for-Students cap) -
+which is the demo-day plan. Cheap extra margin that is already built and verified offline: POSE_EVERY_N_FRAMES=3
+(behaviour-score r=0.999, models/pose_cadence_parity.txt) saves ~13-17 ms of the ~85 ms per frame.
