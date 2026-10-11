@@ -6,22 +6,26 @@
 <style>
   html, body { margin: 0; padding: 0; background: transparent; overflow: hidden;
                font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  #wrap { position: relative; width: 100%; background: #0B0F14; border-radius: 10px; overflow: hidden;
-          min-height: 120px; }
+  /* max-width is set from JS to the stream's own width: displaying a 640px
+     camera across a 1100px panel is an upscale, and upscaling is what makes a
+     webcam look soft. Narrower-but-sharp beats wider-but-blurry. */
+  #wrap { position: relative; width: 100%; margin: 0 auto; background: #0D1424;
+          border: 1px solid #1F2A3C; border-radius: 10px; overflow: hidden; min-height: 120px; }
   /* The picture is mirrored with CSS only: the user sees a mirror image, the
      canvas that feeds the model is mirrored separately in grab(). */
-  #v, #disp { display: block; width: 100%; height: auto; transform: scaleX(-1); background: #0B0F14; }
+  #v, #disp { display: block; width: 100%; height: auto; transform: scaleX(-1); background: #0D1424; }
   #disp { display: none; }
   #ov { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; }
   #msg { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
-         justify-content: center; text-align: center; color: #C9D4E0; font-size: 14px; line-height: 1.5;
-         padding: 24px; background: rgba(11, 15, 20, 0.86); gap: 12px; }
+         justify-content: center; text-align: center; color: #A3B1C6; font-size: 14px; line-height: 1.5;
+         padding: 24px; background: rgba(11, 16, 32, 0.90); gap: 12px; }
   #msg.hidden { display: none; }
-  #msg b { color: #fff; }
-  #msg button { background: #2F6FED; color: #fff; border: 0; border-radius: 8px; padding: 8px 16px;
+  #msg b { color: #FFFFFF; }
+  #msg button { background: #3B82F6; color: #fff; border: 0; border-radius: 8px; padding: 8px 16px;
                 font-size: 13px; cursor: pointer; }
-  #stat { position: absolute; right: 8px; bottom: 6px; font-size: 11px; color: #AEBBCB;
-          background: rgba(11, 15, 20, 0.55); padding: 2px 8px; border-radius: 999px; pointer-events: none; }
+  #stat { position: absolute; right: 8px; bottom: 6px; font-size: 11px; color: #A3B1C6;
+          background: rgba(11, 16, 32, 0.70); border: 1px solid #1F2A3C; padding: 2px 8px;
+          border-radius: 999px; pointer-events: none; }
 </style>
 </head>
 <body>
@@ -99,6 +103,7 @@
         video: { width: { ideal: 1920 }, height: { ideal: 1080 }, facingMode: "user" },
         audio: false,
       });
+      await maximiseResolution(stream);
       vid.srcObject = stream;
       await vid.play();
       source = vid;
@@ -106,6 +111,7 @@
       hideMsg();
       vid.style.display = "block"; disp.style.display = "none";
       initDetector();
+      applyNativeWidthCap();
       resizeFrame();
     } catch (e) {
       camError = (e && e.name) || "error";
@@ -115,6 +121,31 @@
         : "<b>Could not open the camera</b> (" + camError + ").<br>Close other apps using it, then press Try again.", true);
       sendError(camError);
     }
+  }
+
+  // `ideal` constraints are a hint: a camera that can do 1080p often still
+  // hands back its default 640x480 mode, and 480p stretched across the panel is
+  // exactly what "the video looks poor" means. Ask the track what it is capable
+  // of and, if it can do better than what we were given, request that instead.
+  async function maximiseResolution(stream) {
+    const track = stream.getVideoTracks()[0];
+    if (!track || !track.getCapabilities) return;
+    try {
+      const cap = track.getCapabilities(), got = track.getSettings();
+      const bestW = cap.width && cap.width.max, bestH = cap.height && cap.height.max;
+      if (bestW && bestH && got.width && bestW > got.width) {
+        await track.applyConstraints({
+          width: { ideal: Math.min(bestW, 1920) }, height: { ideal: Math.min(bestH, 1080) },
+        });
+      }
+    } catch (e) { /* keep whatever mode we already have */ }
+  }
+
+  // Never display the stream larger than it actually is (see #wrap's comment).
+  function applyNativeWidthCap() {
+    const el = source || vid;                 // metadata can land before `source` is assigned
+    const vw = (el && (el.videoWidth || el.naturalWidth)) || 0;
+    wrap.style.maxWidth = vw ? vw + "px" : "";
   }
 
   // Test source (automated end-to-end tests only; enabled by cfg.test_url): a
@@ -135,6 +166,7 @@
       vid.style.display = "none"; disp.style.display = "block";
       disp.width = source.naturalWidth; disp.height = source.naturalHeight;
       for (let i = 1; i < testN; i++) load(i).then(im => { testImgs[i] = im; });
+      applyNativeWidthCap();
       resizeFrame();
     } catch (e) {
       showMsg("<b>Test source failed:</b> " + e, true);
@@ -243,7 +275,7 @@
     const vh = source ? (source.videoHeight || source.naturalHeight) : 0;
     if (!vw || !vh) return;
     const k = s.w / vw;                                    // video px -> screen px
-    const color = overlay.color || "#2F6FED";
+    const color = overlay.color || "#3B82F6";
 
     // The part of the picture the models analyse (centre 4:3), as faint corners.
     const target = cfg.proc_w / cfg.proc_h;
@@ -251,7 +283,7 @@
     if (vw / vh > target) { sh = vh; sw = vh * target; } else { sw = vw; sh = vw / target; }
     const sx = (vw - sw) / 2, sy = (vh - sh) / 2;
     if (mode !== "idle" || (Math.abs(vw / vh - target) > 0.02)) {
-      corners(sx * k + 4, sy * k + 4, (sx + sw) * k - 4, (sy + sh) * k - 4, 18, "rgba(255,255,255,0.22)", 1.5);
+      corners(sx * k + 4, sy * k + 4, (sx + sw) * k - 4, (sy + sh) * k - 4, 18, "rgba(255,255,255,0.25)", 1.5);
     }
 
     // Face box: local detector if running, else the server's box (smoothed).
@@ -274,7 +306,7 @@
     if (overlay.label) {
       octx.font = "600 15px system-ui, sans-serif";
       const tw = octx.measureText(overlay.label).width;
-      octx.fillStyle = "rgba(11,15,20,0.6)"; octx.fillRect(10, 10, tw + 18, 28);
+      octx.fillStyle = "rgba(11,16,32,0.72)"; octx.fillRect(10, 10, tw + 18, 28);
       octx.fillStyle = color; octx.fillText(overlay.label, 19, 30);
     }
     if (typeof overlay.progress === "number") {
@@ -284,8 +316,8 @@
     if (overlay.note) {
       octx.font = "13px system-ui, sans-serif";
       const tw = octx.measureText(overlay.note).width;
-      octx.fillStyle = "rgba(11,15,20,0.7)"; octx.fillRect((s.w - tw) / 2 - 10, s.h - 44, tw + 20, 26);
-      octx.fillStyle = "#F5C26B"; octx.fillText(overlay.note, (s.w - tw) / 2, s.h - 26);
+      octx.fillStyle = "rgba(11,16,32,0.78)"; octx.fillRect((s.w - tw) / 2 - 10, s.h - 44, tw + 20, 26);
+      octx.fillStyle = "#FBBF24"; octx.fillText(overlay.note, (s.w - tw) / 2, s.h - 26);
     }
   }
 
@@ -295,7 +327,7 @@
     if (h > 0) ST.setHeight(h);
   }
   new ResizeObserver(resizeFrame).observe(wrap);
-  vid.addEventListener("loadedmetadata", resizeFrame);
+  vid.addEventListener("loadedmetadata", () => { applyNativeWidthCap(); resizeFrame(); });
 
   // ---- messages from Streamlit ----
   function onRender(args) {
@@ -328,8 +360,12 @@
   setInterval(() => {
     const now = performance.now(), dt = (now - sentWindowStart) / 1000;
     if (dt >= 2) { fpsSent = sentCount / dt; sentCount = 0; sentWindowStart = now; }
-    stat.textContent = (mode === "idle" || !camReady) ? "" :
-      (fpsSent.toFixed(0) + " fps sent" + (rttMs ? " · " + (rttMs / 1000).toFixed(1) + " s round trip" : ""));
+    const vw = source ? (source.videoWidth || source.naturalWidth) : 0;
+    const vh = source ? (source.videoHeight || source.naturalHeight) : 0;
+    const res = vw ? vw + "×" + vh : "";
+    stat.textContent = !camReady ? "" : (mode === "idle" ? res :
+      (res + " · " + fpsSent.toFixed(0) + " fps sent" +
+       (rttMs ? " · " + (rttMs / 1000).toFixed(1) + " s round trip" : "")));
   }, 500);
 
   ST.ready();

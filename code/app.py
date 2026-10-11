@@ -94,25 +94,46 @@ st.set_page_config(
 def inject_css():
     st.markdown("""
     <style>
+      /* Dark theme, navy-and-black. Every colour below is a token; the few
+         hard-coded hexes left in the render helpers mirror these same values.
+         Shades follow one cool navy ramp (bg -> panel -> panel2 -> border) so
+         surfaces read as deliberate elevation steps rather than arbitrary
+         greys, and accents sit in the 300-400 brightness band, which is what
+         stays legible on a dark ground (the 500-600 shades used for light
+         backgrounds go muddy here). Text: --text 15:1, --sub 8:1, --dim 4.9:1
+         against --bg. */
       :root {
-        --bg:#0B0F14; --panel:#10161D; --panel2:#141B23; --border:#1C2733;
-        --border2:#2E3B4B; --text:#E6EDF3; --sub:#8B98A5; --dim:#5B6772;
-        --blue:#2F6FED; --orange:#F5762B; --green:#22C55E; --amber:#F59E0B;
-        --red:#EF4444; --indigo:#7C8CF8;
+        --bg:#0B1020; --panel:#111827; --panel2:#141D30; --border:#1F2A3C;
+        --border2:#2C3A52; --text:#E8EDF5; --sub:#A3B1C6; --dim:#7486A0;
+        --blue:#3B82F6; --orange:#FB923C; --green:#34D399; --amber:#FBBF24;
+        --red:#F87171; --indigo:#818CF8;
+        --track:#1C2535;                       /* empty part of bars/rings */
+        --tint-blue:#13203A;   --edge-blue:#27406E;
+        --tint-green:#0E2A20;  --edge-green:#1C5844;
+        --tint-amber:#2A2008;  --edge-amber:#5C4718;
+        --tint-orange:#2A1A0C;
         --mono:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;
       }
       html, body, [data-testid="stAppViewContainer"] {
         font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+        color:var(--text);
         background:
-          linear-gradient(rgba(47,111,237,.035) 1px, transparent 1px) 0 0/28px 28px,
-          linear-gradient(90deg, rgba(47,111,237,.035) 1px, transparent 1px) 0 0/28px 28px,
+          linear-gradient(rgba(59,130,246,.05) 1px, transparent 1px) 0 0/28px 28px,
+          linear-gradient(90deg, rgba(59,130,246,.05) 1px, transparent 1px) 0 0/28px 28px,
           var(--bg);
       }
       #MainMenu, footer, [data-testid="stToolbar"], [data-testid="stDecoration"],
       [data-testid="stStatusWidget"], .stAppDeployButton { display:none !important; }
       [data-testid="stHeader"] { background:transparent; height:0; }
-      .block-container { padding-top:0.9rem; padding-bottom:1rem; max-width:1350px; }
-      section[data-testid="stSidebar"] { background:#0A0E13; border-right:1px solid var(--border); }
+      /* Width matters for picture quality: the camera panel gets ~2/3 of this,
+         and the browser downscales the (up to 1080p) stream into exactly that
+         many CSS pixels. The old 1350px cap + Streamlit's default 80px side
+         padding left the video ~780px wide on a 1920 screen - a 2.5x downscale
+         that visibly softened the picture. Processing geometry is unaffected:
+         the models always get config.PROCESS_WIDTH x PROCESS_HEIGHT. */
+      .block-container { padding-top:0.9rem; padding-bottom:1rem; max-width:1800px;
+                         padding-left:2.5rem; padding-right:2.5rem; }
+      section[data-testid="stSidebar"] { background:#070C18; border-right:1px solid var(--border); }
       section[data-testid="stSidebar"] .block-container { padding-top:1rem; }
       h3 { font-size:13px !important; font-weight:700 !important;
            letter-spacing:.08em; text-transform:uppercase; color:var(--sub) !important; }
@@ -124,7 +145,7 @@ def inject_css():
         font-size:12.5px; font-weight:700; letter-spacing:.02em;
         padding:.45rem 1rem; transition:border-color .15s, background .15s;
       }
-      .stButton>button:hover { border-color:var(--blue); color:#fff; background:#182233; }
+      .stButton>button:hover { border-color:var(--blue); color:#fff; background:#16233C; }
       .stButton>button[kind="primary"] { background:var(--blue); border-color:var(--blue); color:#fff; }
       .stButton>button[kind="primary"]:hover { background:#2861D6; border-color:#2861D6; }
       .stButton>button:disabled { opacity:.35; }
@@ -170,7 +191,7 @@ def inject_css():
       .app-header { display:flex; align-items:center; gap:14px; padding:2px 4px 12px 4px;
                     flex-wrap:wrap; }
       .app-icon { width:36px; height:36px; border-radius:9px;
-                  background:linear-gradient(135deg,#2F6FED 0%,#1B49B8 100%);
+                  background:linear-gradient(135deg,#3B82F6 0%,#1D4ED8 100%);
                   display:flex; align-items:center; justify-content:center; flex-shrink:0; }
       .app-title { color:var(--text); font-size:16px; font-weight:700; letter-spacing:-.01em; }
       .app-subtitle { color:var(--dim); font-size:11.5px; margin-top:1px; }
@@ -178,14 +199,14 @@ def inject_css():
               font-weight:700; letter-spacing:.07em; padding:5px 11px; border-radius:20px;
               border:1px solid; white-space:nowrap; }
       .pill.dot::before { content:''; width:7px; height:7px; border-radius:50%;
-                          background:currentColor; box-shadow:0 0 8px currentColor;
+                          background:currentColor; box-shadow:0 0 7px currentColor;
                           animation:pulse 1.8s infinite; }
-      .pill-live { color:var(--blue); border-color:#21335c; background:#132038; }
+      .pill-live { color:var(--blue); border-color:var(--edge-blue); background:var(--tint-blue); }
       .pill-offline { color:var(--dim); border-color:var(--border2); background:var(--panel2); }
       .pill-offline::before { display:none; }
-      .pill-calibrating { color:var(--amber); border-color:#5c4416; background:#241a08; }
+      .pill-calibrating { color:var(--amber); border-color:var(--edge-amber); background:var(--tint-amber); }
       .rec-tag { font-size:10px; font-weight:800; letter-spacing:.08em; color:var(--red);
-                 background:rgba(239,68,68,.12); border:1px solid rgba(239,68,68,.4);
+                 background:rgba(248,113,113,.10); border:1px solid rgba(248,113,113,.38);
                  padding:4px 9px; border-radius:6px; }
       .sess-title { font-size:12.5px; letter-spacing:.03em; color:var(--sub); font-weight:600;
                     font-family:var(--mono); font-variant-numeric:tabular-nums;
@@ -197,30 +218,30 @@ def inject_css():
       .chip { font-size:10.5px; font-weight:700; letter-spacing:.03em; padding:5px 10px;
               border-radius:6px; background:var(--panel2); border:1px solid var(--border);
               color:var(--sub); }
-      .chip.on { color:#fff; border-color:var(--blue); background:#132038; }
+      .chip.on { color:#fff; border-color:var(--blue); background:var(--tint-blue); }
       .cal-pill { font-size:11px; font-weight:700; letter-spacing:.04em; display:inline-flex;
                   align-items:center; gap:5px; padding:5px 10px; border-radius:20px; border:1px solid; }
-      .cal-pill.ok { color:var(--green); border-color:#1e4430; background:#0f2417; }
-      .cal-pill.warn { color:var(--amber); border-color:#5c4416; background:#241a08; }
+      .cal-pill.ok { color:var(--green); border-color:var(--edge-green); background:var(--tint-green); }
+      .cal-pill.warn { color:var(--amber); border-color:var(--edge-amber); background:var(--tint-amber); }
 
       /* ---- calibration HUD ----
          The primary, always-visible progress readout. Rendered above the
          video columns so it can never end up below the fold - the ring
          inside the video panel is a secondary flourish, not the only way
          to see progress. */
-      .calib-hud { background:rgba(47,111,237,.06); border:1px solid rgba(47,111,237,.35);
+      .calib-hud { background:rgba(59,130,246,.07); border:1px solid rgba(59,130,246,.32);
                    border-radius:10px; padding:12px 16px; margin-bottom:10px; }
       .chud-row { display:flex; align-items:center; justify-content:space-between;
                   gap:12px; margin-bottom:9px; }
       .chud-label { font-size:11px; font-weight:800; letter-spacing:.09em; color:var(--blue);
                     display:flex; align-items:center; gap:8px; white-space:nowrap; }
       .chud-dot { width:7px; height:7px; border-radius:50%; background:var(--blue);
-                  flex-shrink:0; box-shadow:0 0 8px var(--blue); animation:pulse 1.2s infinite; }
+                  flex-shrink:0; box-shadow:0 0 7px var(--blue); animation:pulse 1.2s infinite; }
       .chud-time { font-family:var(--mono); font-size:22px; font-weight:700; color:var(--text);
                    letter-spacing:.02em; font-variant-numeric:tabular-nums; }
       .chud-bar { display:flex; gap:3px; margin-bottom:9px; }
-      .chud-bar i { flex:1; height:6px; border-radius:1px; background:#1C2733; display:block; }
-      .chud-bar i.on { background:var(--blue); box-shadow:0 0 6px rgba(47,111,237,.55); }
+      .chud-bar i { flex:1; height:6px; border-radius:1px; background:var(--track); display:block; }
+      .chud-bar i.on { background:var(--blue); box-shadow:none; }
       .chud-note { color:var(--sub); font-size:11.5px; line-height:1.5; }
       .chud-note .warn { color:var(--amber); font-weight:600; }
 
@@ -276,7 +297,7 @@ def inject_css():
       .index-row { display:flex; align-items:baseline; gap:12px; margin-bottom:8px; }
       .index-num { font-family:var(--mono); font-size:32px; font-weight:700; letter-spacing:-.02em; }
       .level-tag { font-size:12.5px; font-weight:800; letter-spacing:.09em; }
-      .lvl-bar { height:7px; border-radius:5px; background:#0d1117; overflow:hidden;
+      .lvl-bar { height:7px; border-radius:5px; background:var(--track); overflow:hidden;
                  border:1px solid var(--border); }
       .lvl-bar>i { display:block; height:100%; }
 
@@ -288,7 +309,7 @@ def inject_css():
       .calib-ring { width:104px; height:104px; border-radius:50%; position:relative;
                     display:flex; align-items:center; justify-content:center; }
       .calib-ring::before { content:''; position:absolute; inset:6px; border-radius:50%;
-                            background:#0d1117; }
+                            background:var(--bg); }
       .calib-ring span { position:relative; font-family:var(--mono); font-size:19px;
                          font-weight:700; color:var(--text); }
       .calib-instr-mini { color:var(--sub); font-size:11.5px; margin-top:2px;
@@ -335,11 +356,11 @@ def inject_css():
       .tag { font-family:var(--mono); font-size:9px; font-weight:800; letter-spacing:.05em;
              background:var(--panel2); border:1px solid var(--border2); padding:2px 5px;
              border-radius:4px; color:var(--sub); vertical-align:1px; }
-      .tag.on { color:var(--blue); border-color:#21335c; }
+      .tag.on { color:var(--blue); border-color:var(--edge-blue); }
       .cal-check { display:inline-flex; align-items:center; gap:6px; font-size:11px;
                    font-weight:700; padding:5px 10px; border-radius:20px; margin-bottom:10px; }
-      .cal-check.ok { color:var(--green); background:#0f2417; border:1px solid #1e4430; }
-      .cal-check.warn { color:var(--amber); background:#241a08; border:1px solid #5c4416; }
+      .cal-check.ok { color:var(--green); background:var(--tint-green); border:1px solid var(--edge-green); }
+      .cal-check.warn { color:var(--amber); background:var(--tint-amber); border:1px solid var(--edge-amber); }
 
       /* ---- agent panel ---- */
       .agent-wrap { padding:2px; }
@@ -347,7 +368,7 @@ def inject_css():
       .agent-name { font-weight:800; font-size:11.5px; letter-spacing:.04em; color:var(--text); }
       .state-pill { margin-left:auto; font-size:9.5px; font-weight:800; letter-spacing:.06em;
                     padding:3px 9px; border-radius:12px; border:1px solid; }
-      .state-pill.active { color:var(--green); border-color:#1e4430; background:#0f2417; }
+      .state-pill.active { color:var(--green); border-color:var(--edge-green); background:var(--tint-green); }
       .state-pill.standby { color:var(--dim); border-color:var(--border2); background:var(--panel2); }
       .agent-desc { font-size:10.5px; color:var(--sub); line-height:1.45; margin-bottom:10px; }
 
@@ -361,7 +382,7 @@ def inject_css():
                                                     margin:8px 0 4px 0; }
       div:has(.agent-core-marker) + div .stButton button {
         position:relative; width:108px !important; height:108px !important;
-        border-radius:50% !important; background:#0d1117 !important; border:none !important;
+        border-radius:50% !important; background:#0D1424 !important; border:1px solid var(--border) !important;
         color:#fff !important; font-weight:800 !important; font-size:12.5px !important;
         letter-spacing:.09em !important; padding:0 !important; z-index:1;
         transition:none !important;
@@ -370,11 +391,11 @@ def inject_css():
         content:''; position:absolute; inset:-5px; border-radius:50%; z-index:-1;
       }
       div:has(.agent-core-marker.on) + div .stButton button::before {
-        background:conic-gradient(from 0deg,var(--blue),#0d1117 40%,var(--blue) 80%,#0d1117);
+        background:conic-gradient(from 0deg,var(--blue),var(--track) 40%,var(--blue) 80%,var(--track));
         animation:spin 3s linear infinite;
       }
       div:has(.agent-core-marker.off) + div .stButton button::before {
-        background:#1C2733; animation:none;
+        background:var(--track); animation:none;
       }
       div:has(.agent-core-marker.off) + div .stButton button { color:var(--dim) !important; }
       div:has(.agent-core-marker) + div .stButton button:hover { border-color:transparent !important; }
@@ -391,17 +412,17 @@ def inject_css():
       .phase { font-size:8.5px; letter-spacing:.04em; font-weight:700; padding:4px 6px;
                border-radius:5px; background:var(--panel2); border:1px solid var(--border);
                color:var(--dim); text-transform:uppercase; }
-      .phase.cur { background:#3a2312; border-color:var(--orange); color:var(--orange); }
+      .phase.cur { background:var(--tint-orange); border-color:var(--orange); color:var(--orange); }
       .phase-reason { font-size:10px; color:var(--sub); }
 
-      .intervention-card { background:rgba(245,118,43,.08); border:1px solid rgba(245,118,43,.45);
+      .intervention-card { background:rgba(251,146,60,.08); border:1px solid rgba(251,146,60,.38);
                            border-radius:10px; padding:12px 16px; margin:0 0 10px 0; }
       .intervention-card .tag-lbl { color:var(--orange); font-size:10px; font-weight:800;
                                     letter-spacing:.09em; margin-bottom:3px; }
       .intervention-card .ttl { color:var(--text); font-weight:700; font-size:14px; }
       .intervention-card .body { color:var(--sub); font-size:12px; margin-top:4px; }
 
-      .del-btn button { color:#F87171 !important; }
+      .del-btn button { color:var(--red) !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -459,15 +480,15 @@ def get_store():
 # =============================================================================
 # RENDER HELPERS
 # =============================================================================
-LEVEL_COLORS = {'LOW': '#22C55E', 'MODERATE': '#F59E0B', 'HIGH': '#EF4444'}
+LEVEL_COLORS = {'LOW': '#34D399', 'MODERATE': '#FBBF24', 'HIGH': '#F87171'}
 
 
 def render_mini_graph(values, height=110, width=250):
     if len(values) < 2:
         return (
             f'<svg viewBox="0 0 {width} {height}" '
-            f'style="width:100%;height:{height}px;background:#141B23;border-radius:8px;">'
-            f'<text x="{width/2}" y="{height/2}" font-size="11" fill="#5B6772" '
+            f'style="width:100%;height:{height}px;background:#121A2A;border-radius:8px;">'
+            f'<text x="{width/2}" y="{height/2}" font-size="11" fill="#7486A0" '
             f'text-anchor="middle">waiting for data...</text></svg>'
         )
     pad = 8
@@ -478,9 +499,9 @@ def render_mini_graph(values, height=110, width=250):
     area_pts = (f"{pad},{height-pad} " + pts + f" {x_of(n-1):.1f},{height-pad}")
     return (
         f'<svg viewBox="0 0 {width} {height}" '
-        f'style="width:100%;height:{height}px;background:#141B23;border-radius:8px;">'
+        f'style="width:100%;height:{height}px;background:#121A2A;border-radius:8px;">'
         f'<polygon points="{area_pts}" fill="rgba(245,118,43,0.15)"/>'
-        f'<polyline points="{pts}" fill="none" stroke="#F5762B" stroke-width="2"/>'
+        f'<polyline points="{pts}" fill="none" stroke="#FB923C" stroke-width="2"/>'
         f'</svg>'
     )
 
@@ -495,9 +516,9 @@ def render_full_timeline(history, height=150):
     def x_of(i): return pad + (i / max(n - 1, 1)) * (width - 2 * pad)
     def y_of(v): return height - pad - v * (height - 2 * pad)
     series = {
-        'Stress index': '#F5762B',
-        'CNN branch':   '#2F6FED',
-        'Behavioral branch': '#7C8B99',
+        'Stress index': '#FB923C',
+        'CNN branch':   '#3B82F6',
+        'Behavioral branch': '#7486A0',
     }
     keymap = {'Stress index': 'stress_index', 'CNN branch': 'daisee',
               'Behavioral branch': 'behavior'}
@@ -525,18 +546,18 @@ def render_full_timeline(history, height=150):
                      f'stroke-width="{width_px}"/>')
     gridlines = "".join(
         f'<line x1="0" y1="{height*f:.0f}" x2="{width}" y2="{height*f:.0f}" '
-        f'stroke="#1C2733"/>' for f in (0.25, 0.5, 0.75))
+        f'stroke="#1E293B"/>' for f in (0.25, 0.5, 0.75))
     return f'<svg viewBox="0 0 {width} {height}" preserveAspectRatio="none" ' \
            f'style="width:100%;height:{height}px;display:block;">{gridlines}{"".join(paths)}</svg>'
 
 
 TIMELINE_LEGEND = (
-    '<div style="display:flex;gap:16px;font-size:10.5px;color:#8B98A5;margin-bottom:6px;">'
-    '<span><i style="display:inline-block;width:10px;height:2px;background:#F5762B;'
+    '<div style="display:flex;gap:16px;font-size:10.5px;color:#A3B1C6;margin-bottom:6px;">'
+    '<span><i style="display:inline-block;width:10px;height:2px;background:#FB923C;'
     'margin-right:5px;vertical-align:middle;"></i>Stress index</span>'
-    '<span><i style="display:inline-block;width:10px;height:2px;background:#2F6FED;'
+    '<span><i style="display:inline-block;width:10px;height:2px;background:#3B82F6;'
     'margin-right:5px;vertical-align:middle;"></i>CNN branch</span>'
-    '<span><i style="display:inline-block;width:10px;height:2px;background:#7C8B99;'
+    '<span><i style="display:inline-block;width:10px;height:2px;background:#7486A0;'
     'margin-right:5px;vertical-align:middle;"></i>Behavioral branch</span>'
     '</div>'
 )
@@ -554,10 +575,10 @@ SIGNAL_DISPLAY = {
 
 
 def _severity_color(value):
-    if value >= 0.6:  return '#EF4444'
-    if value >= 0.4:  return '#F5762B'
-    if value >= 0.2:  return '#2F6FED'
-    return '#3a4552'
+    if value >= 0.6:  return '#F87171'
+    if value >= 0.4:  return '#FB923C'
+    if value >= 0.2:  return '#3B82F6'
+    return '#3A4A61'
 
 
 def render_signal_rows(contributions):
@@ -610,9 +631,9 @@ def render_guidance(level, contributions=None):
     something useful.
     """
     level_labels = {
-        'LOW':      ('Stay relaxed', '#22C55E'),
-        'MODERATE': ('Reduce stress', '#F59E0B'),
-        'HIGH':     ('Act now', '#EF4444'),
+        'LOW':      ('Stay relaxed', '#34D399'),
+        'MODERATE': ('Reduce stress', '#FBBF24'),
+        'HIGH':     ('Act now', '#F87171'),
     }
     sub_label, sub_color = level_labels[level]
 
@@ -624,10 +645,10 @@ def render_guidance(level, contributions=None):
             lead_html = (
                 f'<div style="background:rgba(245,118,43,.06);border:1px solid '
                 f'rgba(245,118,43,.3);border-radius:8px;padding:8px 10px;margin-bottom:8px;">'
-                f'<div style="color:#F5762B;font-size:9.5px;font-weight:800;'
+                f'<div style="color:#FB923C;font-size:9.5px;font-weight:800;'
                 f'letter-spacing:.07em;margin-bottom:2px;">DRIVEN BY {top_signal.replace("_"," ").upper()}</div>'
-                f'<div style="color:#E6EDF3;font-weight:700;font-size:12.5px;">{entry["title"]}</div>'
-                f'<div style="color:#8B98A5;font-size:11px;margin-top:2px;">{entry["body"]}</div>'
+                f'<div style="color:#E8EDF5;font-weight:700;font-size:12.5px;">{entry["title"]}</div>'
+                f'<div style="color:#A3B1C6;font-size:11px;margin-top:2px;">{entry["body"]}</div>'
                 f'</div>'
             )
 
@@ -672,7 +693,7 @@ def render_level_block(level, smoothed):
         f'<div class="index-row"><span class="index-num mono">{smoothed:.2f}</span>'
         f'<span class="level-tag" style="color:{color};">{level}</span></div>'
         f'<div class="lvl-bar"><i style="width:{pct:.0f}%;'
-        f'background:linear-gradient(90deg,#22C55E,{color});"></i></div>'
+        f'background:linear-gradient(90deg,#34D399,{color});"></i></div>'
         f'</div>'
     )
 
@@ -681,7 +702,7 @@ def render_calib_ring(progress, seconds_left):
     deg = max(0, min(100, progress * 100))
     return (
         f'<div class="calib-view">'
-        f'<div class="calib-ring" style="background:conic-gradient(#2F6FED {deg:.0f}%, #1C2733 0);">'
+        f'<div class="calib-ring" style="background:conic-gradient(#3B82F6 {deg:.0f}%, #1E293B 0);">'
         f'<span>{deg:.0f}%</span></div>'
         f'<div class="calib-instr-mini">Hold steady &mdash; {seconds_left:.0f}s remaining</div>'
         f'</div>'
@@ -715,7 +736,7 @@ def render_calib_hud(progress, seconds_left):
 
 
 IDLE_SVG = (
-    '<svg viewBox="0 0 24 24" width="42" height="42" fill="none" stroke="#5B6772" '
+    '<svg viewBox="0 0 24 24" width="42" height="42" fill="none" stroke="#7486A0" '
     'stroke-width="1.6"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" '
     'height="14" rx="2"/></svg>'
 )
@@ -1170,7 +1191,7 @@ def render_live_outputs(panels, out, run, update_sidebar=True):
                     unsafe_allow_html=True)
         else:
             panels.agent_panel.markdown(
-                '<div class="phase-reason" style="color:#5B6772;">'
+                '<div class="phase-reason" style="color:#7486A0;">'
                 'Agent is off — monitoring only, no interventions, no learning.</div>',
                 unsafe_allow_html=True)
         timers['agent'] = now
@@ -1299,7 +1320,7 @@ def _calibration_step(frames, panels, ustate, models):
             break
     render_calibration_progress(panels, run)
     overlay = {'label': f"CALIBRATING  {run.seconds_left():.0f}s",
-               'color': '#2F9EED', 'progress': run.progress(),
+               'color': '#3B82F6', 'progress': run.progress(),
                'bbox': list(last['bbox']) if last and last['bbox'] else None}
     if last and last['no_face']:
         overlay['note'] = 'No face detected — please face the camera'
@@ -1340,7 +1361,7 @@ def _live_step(frames, panels, ustate, models, store, gate):
             except Exception:
                 pass
     if last['no_face']:
-        return {'label': '', 'color': '#F59E0B',
+        return {'label': '', 'color': '#FBBF24',
                 'note': 'No face detected — please face the camera'}
     return {'label': f"{last['level']} ({last['smoothed'] * 100:.0f}%)",
             'color': LEVEL_COLORS[last['level']],
@@ -1454,8 +1475,8 @@ def main():
             # can pick another person's profile; the database only ever
             # returns the signed-in account's own rows.
             st.markdown(
-                f'<div style="font-size:12px;color:#8B98A5;margin-bottom:4px;">Signed in as</div>'
-                f'<div style="font-size:13px;color:#E6EDF3;word-break:break-all;">'
+                f'<div style="font-size:12px;color:#A3B1C6;margin-bottom:4px;">Signed in as</div>'
+                f'<div style="font-size:13px;color:#E8EDF5;word-break:break-all;">'
                 f'{html.escape(str(st.session_state.active_user_name))}</div>',
                 unsafe_allow_html=True)
             if st.button("Sign out", width='stretch',
@@ -1714,9 +1735,9 @@ def main():
             for s in recent:
                 start_label = s['started_at'][:16].replace('T', '  ')
                 pct_h, pct_m, pct_l = s['pct_high'], s['pct_moderate'], s['pct_low']
-                if pct_h >= 30:   dot_color = '#EF4444'
-                elif pct_m >= 40: dot_color = '#F59E0B'
-                else:             dot_color = '#22C55E'
+                if pct_h >= 30:   dot_color = '#F87171'
+                elif pct_m >= 40: dot_color = '#FBBF24'
+                else:             dot_color = '#34D399'
                 _task = s.get('task_mode', 'Default') or 'Default'
                 _tag = TASK_LABELS.get(_task, (_task, 'GEN'))[1]
 
@@ -1883,7 +1904,7 @@ def main():
             st.markdown('<div class="label">Behavioral signals</div>', unsafe_allow_html=True)
             signals_placeholder = st.empty()
             signals_placeholder.markdown(
-                '<div style="color:#5B6772;font-size:11.5px;padding:6px 0;">'
+                '<div style="color:#7486A0;font-size:11.5px;padding:6px 0;">'
                 'No session running.</div>', unsafe_allow_html=True)
         with st.container(border=True):
             st.markdown('<div class="label">Metrics</div>', unsafe_allow_html=True)
@@ -1944,10 +1965,10 @@ def main():
         if video_placeholder is not None:
             video_placeholder.markdown(render_idle_view(), unsafe_allow_html=True)
         signals_placeholder.markdown(
-            '<div style="color:#5B6772;font-size:11.5px;padding:6px 0;">'
+            '<div style="color:#7486A0;font-size:11.5px;padding:6px 0;">'
             'No session running.</div>', unsafe_allow_html=True)
         guidance_placeholder.markdown(
-            '<div style="color:#5B6772;font-size:11.5px;padding:6px 0;">'
+            '<div style="color:#7486A0;font-size:11.5px;padding:6px 0;">'
             'Guidance appears once a session starts.</div>', unsafe_allow_html=True)
         agent_panel_placeholder.empty()
 
@@ -2011,9 +2032,9 @@ def main():
             for r in history:
                 counts[r['level']] = counts.get(r['level'], 0) + 1
             with summary_placeholder.container():
-                st.markdown(f'<span style="color:#8B98A5;font-size:12px;">Session length '
-                           f'<b style="color:#E6EDF3;">{duration:.0f}s</b> &middot; samples '
-                           f'<b style="color:#E6EDF3;">{len(history)}</b></span>',
+                st.markdown(f'<span style="color:#A3B1C6;font-size:12px;">Session length '
+                           f'<b style="color:#E8EDF5;">{duration:.0f}s</b> &middot; samples '
+                           f'<b style="color:#E8EDF5;">{len(history)}</b></span>',
                            unsafe_allow_html=True)
                 cols = st.columns(3)
                 for i, lvl in enumerate(['LOW', 'MODERATE', 'HIGH']):
@@ -2057,7 +2078,7 @@ def main():
             level_placeholder.markdown('', unsafe_allow_html=True)
             tiles_placeholder.markdown(render_tiles(0, 0), unsafe_allow_html=True)
             guidance_placeholder.markdown(
-                '<div style="color:#5B6772;font-size:11.5px;">'
+                '<div style="color:#7486A0;font-size:11.5px;">'
                 'Guidance appears once a session starts.</div>', unsafe_allow_html=True)
 
 
