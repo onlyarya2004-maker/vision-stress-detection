@@ -164,12 +164,17 @@ class FakeCapture:
     """Stands in for cv2.VideoCapture: n blank 1080p frames, then a read
     failure (which is how a yanked/blocked camera shows up)."""
 
-    def __init__(self, n, opened=True):
+    def __init__(self, n, opened=True, clock=None):
         import numpy as np
         self.left = n
         self.opened = opened
         self.frame = np.full((1080, 1920, 3), 90, dtype=np.uint8)
         self.released = False
+        # Optional virtual clock: {'offset': 0.0, 'step': seconds}. The
+        # capture loop calls read() exactly once per frame, so advancing the
+        # offset here makes "time" progress per FRAME instead of per second
+        # of real time - see test_local_camera_calibration_runs_to_completion.
+        self.clock = clock
 
     def isOpened(self):
         return self.opened
@@ -181,6 +186,8 @@ class FakeCapture:
         if self.left <= 0:
             return False, None
         self.left -= 1
+        if self.clock is not None:
+            self.clock['offset'] += self.clock['step']
         return True, self.frame.copy()
 
     def release(self):
@@ -205,8 +212,22 @@ def fake_face(monkeypatch):
 
 
 def test_local_camera_calibration_runs_to_completion(monkeypatch, temp_db, no_cnn, fake_face):
-    import cv2
-    cap = FakeCapture(10_000)
+    import cv2, time as _time
+    # The capture loop ends calibration on WALL-CLOCK elapsed time, but
+    # finish_calibration() needs >= config.MIN_CALIBRATION_SAMPLES frames. On a
+    # busy machine fewer than that fit into the window and the run legitimately
+    # fails - which made this test flaky rather than wrong. Give the loop a
+    # virtual clock that advances one step per captured frame, so the window
+    # always spans a fixed NUMBER OF FRAMES regardless of how fast the machine
+    # is. Every assertion below is unchanged: the engine still has to gather
+    # and accept real samples.
+    # The base is FROZEN: if real time still contributed, a slow machine would
+    # reach the 2.0s window in fewer frames and we would be back to a
+    # speed-dependent test. Only captured frames move this clock.
+    clock = {'offset': 0.0, 'step': 0.05}          # 2.0s / 0.05 -> 41 frames
+    frozen_base = _time.time()
+    monkeypatch.setattr(_time, 'time', lambda: frozen_base + clock['offset'])
+    cap = FakeCapture(10_000, clock=clock)
     monkeypatch.setattr(config, 'STORAGE_BACKEND', 'sqlite')
     monkeypatch.setattr(config, 'CAPTURE_MODE', 'local')
     monkeypatch.setattr(config, 'CALIBRATION_SECONDS', 2.0)
@@ -217,6 +238,7 @@ def test_local_camera_calibration_runs_to_completion(monkeypatch, temp_db, no_cn
     assert not at.exception
     assert at.session_state['calibrating'] is False         # finished and returned to idle
     assert cap.released                                       # camera handle freed
+    assert 40 <= 10_000 - cap.left <= 42, "window should span a fixed frame count"
     ustate = at.session_state['user_state']
     assert ustate.engine.baseline.calibrated                  # face baseline learned
     assert not ustate.daisee_baseline.is_calibrated()         # CNN is stubbed out in this test
@@ -258,12 +280,23 @@ def test_new_sessions_are_refused_at_capacity(monkeypatch, temp_db, no_cnn):
     from session_pipeline import UserState
     monkeypatch.setattr(config, 'STORAGE_BACKEND', 'sqlite')
     monkeypatch.setattr(config, 'CAPTURE_MODE', 'browser')
-    monkeypatch.setattr(config, 'MAX_USER_SESSIONS', UserState.active_count())   # full
-    at = _run()
-    assert not at.exception
-    assert any('at capacity' in w.value for w in at.warning)
-    assert 'user_state' not in at.session_state           # no engine was built
-    assert not at.sidebar.button or all(b.label != 'Calibrate' for b in at.sidebar.button)
+    # Hold two sessions open ourselves and set the cap to that. The cap used to
+    # be active_count() sampled at this moment, which counted states earlier
+    # tests had dropped but that were not yet collected - a GC pass during the
+    # run could then take the count back BELOW the cap and the app would admit
+    # the session. Strong references fix the direction of the error: leftovers
+    # can only push the count further above the cap, never under it.
+    keepers = [UserState(), UserState()]
+    monkeypatch.setattr(config, 'MAX_USER_SESSIONS', len(keepers))
+    try:
+        at = _run()
+        assert not at.exception
+        assert any('at capacity' in w.value for w in at.warning)
+        assert 'user_state' not in at.session_state           # no engine was built
+        assert not at.sidebar.button or all(b.label != 'Calibrate' for b in at.sidebar.button)
+    finally:
+        for k in keepers:
+            k.close()
 
 
 def test_reset_baseline_only_touches_this_sessions_state(monkeypatch, temp_db, no_cnn):
