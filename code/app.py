@@ -1411,7 +1411,34 @@ def camera_fragment(panels, ustate, models, store):
 # =============================================================================
 # MAIN
 # =============================================================================
+def apply_secret_overrides():
+    """Let .streamlit/secrets.toml supply the hosted-mode switches, not just
+    the Supabase credentials.
+
+    config.py reads these from os.environ only - deliberately, because CLI
+    tools (rls_check.py, load_test.py, the evaluation scripts) import it and
+    must not drag Streamlit in. The gap that leaves: a secrets.toml holding
+    only SUPABASE_* would start the app on local SQLite and never touch
+    Supabase, with no error - it would simply look like nothing was saved.
+    Environment variables still win, so Azure's container env is unaffected."""
+    try:
+        secrets = st.secrets
+    except Exception:
+        return
+    for env_name, cfg_name in (('STRESS_STORAGE_BACKEND', 'STORAGE_BACKEND'),
+                               ('STRESS_CAPTURE_MODE', 'CAPTURE_MODE')):
+        if os.environ.get(env_name):
+            continue
+        try:
+            value = secrets.get(env_name)
+        except Exception:
+            value = None
+        if value:
+            setattr(config, cfg_name, value)
+
+
 def main():
+    apply_secret_overrides()
     init_state()
     inject_css()
     # Start loading the CNN weights now, in the background: the login page (and

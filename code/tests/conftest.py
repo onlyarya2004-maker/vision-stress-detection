@@ -151,3 +151,23 @@ def temp_db(tmp_path, monkeypatch):
     db = tmp_path / "test_sessions.db"
     monkeypatch.setattr(session_history, "DB_PATH", db)
     return db
+
+@pytest.fixture(autouse=True)
+def hermetic_config(monkeypatch):
+    """Keep the suite independent of any real local Supabase configuration.
+
+    Streamlit copies every top-level value in .streamlit/secrets.toml into
+    os.environ the first time st.secrets is touched. Once a developer has a
+    real secrets.toml (as they must, to run hosted mode locally), that file
+    would otherwise leak live credentials into every later test - silently
+    turning "no credentials configured" assertions into passes-by-accident,
+    and pointing tests at the real project. Both the env vars and st.secrets
+    are neutralised here; tests that exercise configuration pass their own
+    values explicitly.
+    """
+    for var in ('SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_PUBLISHABLE_KEY',
+                'STRESS_STORAGE_BACKEND', 'STRESS_CAPTURE_MODE',
+                'STRESS_SIGNUP_CODE', 'STRESS_MAX_SESSIONS'):
+        monkeypatch.delenv(var, raising=False)
+    import streamlit as st
+    monkeypatch.setattr(st, 'secrets', {}, raising=False)

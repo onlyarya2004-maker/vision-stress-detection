@@ -46,23 +46,35 @@ in `code/config.py` (see "Tuning" below). Details: `models/capacity_measurements
 2. **SQL Editor -> New query**, paste all of `supabase/schema.sql`, **Run**.
    You should see "Success" and 4 tables under *Table Editor*, each marked
    with the RLS shield.
-3. **Authentication -> Sign In / Providers -> Email**: for the demo turn
-   **Confirm email OFF** (Supabase's built-in mailer allows only a couple of
-   emails per hour, so confirmation mails would block sign-ups).
-4. **Project Settings -> API**: copy the **Project URL** and the **anon / publishable
-   key**.
+3. **Authentication -> Sign In / Providers -> Email**: set **"Allow new users
+   to sign up" = ON** and **"Confirm email" = OFF**. This is not optional for the
+   demo: with confirmation on, every sign-up sends mail through Supabase's built-in
+   mailer, which allows only ~2-3 messages per hour on the free plan - you will hit
+   HTTP 429 ("Too many attempts") and neither laptop will be able to register.
+4. **Project Settings -> API Keys**: copy the **Project URL** and the **publishable**
+   key (older projects call it **anon**). The app accepts either name:
+   `SUPABASE_PUBLISHABLE_KEY` (preferred) or `SUPABASE_ANON_KEY` (legacy).
+   The newer `sb_publishable_...` format is confirmed working with the pinned
+   supabase-py.
    > NEVER copy the `service_role` / secret key into the app, Azure, GitHub or
    > this chat. It bypasses all privacy rules. The app refuses to start with it.
 5. Run the app locally against it (still on your laptop):
    ```powershell
    docker run --rm -p 8501:8501 --cpus=2 -m 4g `
-       -e SUPABASE_URL=https://xxxx.supabase.co -e SUPABASE_ANON_KEY=<anon key> stress-app
+       -e STRESS_STORAGE_BACKEND=supabase `
+       -e SUPABASE_URL=https://xxxx.supabase.co `
+       -e SUPABASE_PUBLISHABLE_KEY=<publishable key> stress-app
    ```
+   To run it from source instead of the image, put the same three names in
+   `code/.streamlit/secrets.toml` (git-ignored) and just `streamlit run app.py` -
+   see `.env.example`. Note `STRESS_STORAGE_BACKEND`: without it the app silently
+   stays on local SQLite and never contacts Supabase.
    Create an account on the login page, calibrate, record, Stop. Reload the
    page and sign in again: your past session should be listed.
-6. **Prove isolation** with two accounts (create a second one the same way):
+6. **Prove isolation** with two THROWAWAY accounts (not your demo accounts - the
+   script temporarily rewrites account A's calibration baseline and restores it):
    ```powershell
-   python scripts\rls_check.py --url https://xxxx.supabase.co --key <anon key> `
+   python scripts\rls_check.py --url https://xxxx.supabase.co --key <publishable key> `
        --email-a a@x.com --password-a ... --email-b b@x.com --password-b ...
    ```
    It must end with `ALL CHECKS PASSED`. Show this to the teacher.
@@ -119,8 +131,8 @@ az containerapp create -n $APP -g $RG --environment $ENV `
     --registry-server "$ACR.azurecr.io" --registry-username $USER --registry-password $PASS `
     --target-port 8501 --ingress external `
     --cpu 2 --memory 4Gi --min-replicas 1 --max-replicas 1 `
-    --secrets "supabase-url=https://xxxx.supabase.co" "supabase-key=<anon key>" "signup-code=<an invite code you choose>" `
-    --env-vars "SUPABASE_URL=secretref:supabase-url" "SUPABASE_ANON_KEY=secretref:supabase-key" "STRESS_SIGNUP_CODE=secretref:signup-code"
+    --secrets "supabase-url=https://xxxx.supabase.co" "supabase-key=<publishable key>" "signup-code=<an invite code you choose>" `
+    --env-vars "STRESS_STORAGE_BACKEND=supabase" "SUPABASE_URL=secretref:supabase-url" "SUPABASE_PUBLISHABLE_KEY=secretref:supabase-key" "STRESS_SIGNUP_CODE=secretref:signup-code"
 
 az containerapp show -n $APP -g $RG --query properties.configuration.ingress.fqdn -o tsv
 ```
@@ -173,7 +185,7 @@ the three `docker`/`az` update commands from step 3 by hand instead
 (`docker build` -> `docker push` -> `az containerapp update --image ...`).
 
 Supabase keep-alive: copy `deploy/github-workflow-keepalive.yml` to
-`.github/workflows/` and add secrets `SUPABASE_URL`, `SUPABASE_ANON_KEY`.
+`.github/workflows/` and add secrets `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`.
 
 ---------------------------------------------------------------------------
 ## 5. Demo-day checklist
@@ -212,3 +224,22 @@ Supabase keep-alive: copy `deploy/github-workflow-keepalive.yml` to
 - **Everyone is logged out after a deploy**: expected - sessions live in the container's memory.
 - **"HR BPM" shows `--`**: the heart-rate estimate needs >= 12 processed frames/second;
   it carries zero weight in the stress score either way (`W_RPPG = 0`).
+
+---------------------------------------------------------------------------
+## Verified against a real Supabase project (2026-10-11)
+
+Done on project `dctm****.supabase.co`, before any Azure deployment:
+
+| Check | Result |
+|---|---|
+| `sb_publishable_...` key accepted by the pinned supabase-py | yes |
+| Anonymous caller blocked on all 4 tables | yes - `permission denied` (the `revoke ... from anon` bites before RLS) |
+| `scripts/rls_check.py` - A vs B isolation, 18 checks | ALL PASSED |
+| Login / logout / session create / read / update | passed |
+| Data still present after logout + fresh login | passed |
+| Delete cascades session -> samples | passed |
+| App renders hosted mode, Past sessions read from the live DB | passed |
+| SQLite fallback still works, local DBs byte-identical | passed |
+
+Not yet done: Azure deployment, the two-laptop rehearsal, and a real-webcam run
+against the hosted URL.

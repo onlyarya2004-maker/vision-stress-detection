@@ -67,9 +67,14 @@ def load_credentials(secrets=None):
                 return None
         return None
 
-    url, key = get('SUPABASE_URL'), get('SUPABASE_ANON_KEY')
+    url = get('SUPABASE_URL')
+    # Supabase renamed the public key from "anon" to "publishable"; accept both
+    # names so a dashboard copy-paste works either way. The newer name wins.
+    key = get('SUPABASE_PUBLISHABLE_KEY') or get('SUPABASE_ANON_KEY')
     if not url:
         raise AuthFailure("SUPABASE_URL is not set.")
+    if not key:
+        raise AuthFailure("Neither SUPABASE_PUBLISHABLE_KEY nor SUPABASE_ANON_KEY is set.")
     return url.rstrip('/'), validate_public_key(key)
 
 
