@@ -6,17 +6,29 @@
 .claude
 .vscode
 .venv*
+# Each of these needs BOTH forms. Docker's "**/" matches zero or more leading
+# segments, but az acr build compiles "**/x" to ^.*/x$, which requires at least
+# one - so the repo-root copy would otherwise be packed.
 **/__pycache__
+__pycache__
 **/.pytest_cache
+.pytest_cache
 **/*.pyc
+*.pyc
 
-datasets/
-evaluation_data/
-data/
-BACKUP_DEMO_FINAL/
-supabase/
-deploy/
-scripts/
+# NO TRAILING SLASHES on these directory rules. Docker treats "datasets" and
+# "datasets/" alike, but `az acr build` compiles "datasets/" to the regex
+# ^datasets/$ - which matches neither "datasets" nor "datasets/anything", so the
+# rule becomes silently inert and the whole directory gets packed and uploaded.
+# Without the slash it compiles to ^datasets$, matches the directory entry, and
+# the subtree is pruned. (Verified against azure-cli 2.88.0's own packer.)
+datasets
+evaluation_data
+data
+BACKUP_DEMO_FINAL
+supabase
+deploy
+scripts
 *.md
 *.txt
 !requirements.txt
@@ -25,8 +37,8 @@ scripts/
 *.db-*
 
 # code/ is copied, but not the things the running app never imports
-code/tests/
-code/_archive/
+code/tests
+code/_archive
 code/README.md
 
 # Credentials. code/.streamlit/ must stay (config.toml carries the theme), but
