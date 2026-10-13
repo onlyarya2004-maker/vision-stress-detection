@@ -28,3 +28,13 @@ scripts/
 code/tests/
 code/_archive/
 code/README.md
+
+# Credentials. code/.streamlit/ must stay (config.toml carries the theme), but
+# secrets.toml holds the live Supabase key and must NEVER enter an image layer -
+# anyone who can pull the image could read it. On Azure the same names arrive as
+# Container Apps secrets at runtime instead.
+**/.streamlit/secrets.toml
+.env
+.env.*
+!.env.example
+*.pem
