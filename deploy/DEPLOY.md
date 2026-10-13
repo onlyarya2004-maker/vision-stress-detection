@@ -91,16 +91,31 @@ student credit. Then, once:
 
 ```powershell
 winget install -e --id Microsoft.AzureCLI      # restart the terminal afterwards
-az login
-az account show                                 # should say "Azure for Students"
+
+# This machine's Azure CLI may already be signed in as a DIFFERENT account.
+az account show --query "{sub:name, user:user.name}" -o json
+az logout                                       # only if the above is not your student account
+az login                                        # sign in with the college email
+
+az account show --query name -o tsv             # must say "Azure for Students"
+az account list -o table                         # if several, pick the student one:
+# az account set --subscription "Azure for Students"
+
 az extension add --name containerapp --upgrade
 az provider register --namespace Microsoft.App --wait
 az provider register --namespace Microsoft.OperationalInsights --wait
 az provider register --namespace Microsoft.ContainerRegistry --wait
 ```
-Student subscriptions only allow some regions. Find yours: portal ->
-*Resource groups -> Create* shows the allowed regions in the dropdown. Use one
-of those for `$LOC` below (and a Supabase region near it).
+Student subscriptions only allow some regions, and the list has been narrowed
+over time. Find yours: portal -> *Resource groups -> Create* shows the allowed
+regions in the dropdown. Use one of those for `$LOC` below (and a Supabase
+region near it). Prefer `centralindia` if it is offered - it is the closest to
+Bangalore, and the Container Apps Consumption rates are identical to the US
+regions, so there is nothing to gain by going further away.
+
+The same subscription type caps total vCPU quota (commonly 4). That is exactly
+the demo configuration below, so there is no headroom for a second running app
+- delete or scale down anything else first.
 
 ---------------------------------------------------------------------------
 ## 3. Put the image on Azure
@@ -117,22 +132,39 @@ $ENV = "stress-env"
 $APP = "stress-app"
 
 az group create -n $RG -l $LOC
-az acr create -n $ACR -g $RG --sku Basic --admin-enabled true
+
+# No --admin-enabled: the admin user is a password that would then have to live
+# in the app's config. The app pulls with a managed identity instead (below).
+az acr create -n $ACR -g $RG --sku Basic
 az acr login -n $ACR
 docker build -t "$ACR.azurecr.io/stress-app:v1" .
 docker push  "$ACR.azurecr.io/stress-app:v1"
 
-az containerapp env create -n $ENV -g $RG -l $LOC
-$USER = az acr credential show -n $ACR --query username -o tsv
-$PASS = az acr credential show -n $ACR --query "passwords[0].value" -o tsv
+# -w/--enable-workload-profiles defaults to true on current CLI versions, but
+# pass it explicitly: a "Consumption only" environment is CAPPED AT 2 cores /
+# 4 GiB, and the demo needs 4 / 8. (In the portal wizard this is the
+# "Workload profiles" environment type - do not pick "Consumption only".)
+az containerapp env create -n $ENV -g $RG -l $LOC --enable-workload-profiles
 
 az containerapp create -n $APP -g $RG --environment $ENV `
     --image "$ACR.azurecr.io/stress-app:v1" `
-    --registry-server "$ACR.azurecr.io" --registry-username $USER --registry-password $PASS `
     --target-port 8501 --ingress external `
     --cpu 2 --memory 4Gi --min-replicas 1 --max-replicas 1 `
+    --system-assigned `
     --secrets "supabase-url=https://xxxx.supabase.co" "supabase-key=<publishable key>" "signup-code=<an invite code you choose>" `
     --env-vars "STRESS_STORAGE_BACKEND=supabase" "SUPABASE_URL=secretref:supabase-url" "SUPABASE_PUBLISHABLE_KEY=secretref:supabase-key" "STRESS_SIGNUP_CODE=secretref:signup-code"
+
+# Let the app pull from the registry as itself (AcrPull), so no registry
+# password is stored anywhere. Run these three after the app exists.
+$PRINCIPAL = az containerapp show -n $APP -g $RG --query identity.principalId -o tsv
+$ACRID     = az acr show -n $ACR -g $RG --query id -o tsv
+az role assignment create --assignee $PRINCIPAL --role AcrPull --scope $ACRID
+az containerapp registry set -n $APP -g $RG --server "$ACR.azurecr.io" --identity system
+
+# Streamlit keeps each signed-in user's state in the memory of one replica, so
+# pin requests from one browser to one replica. (Harmless while max-replicas=1,
+# and it is the thing that would break first if that ever changed.)
+az containerapp ingress sticky-sessions set -n $APP -g $RG --affinity sticky
 
 az containerapp show -n $APP -g $RG --query properties.configuration.ingress.fqdn -o tsv
 ```
@@ -157,9 +189,33 @@ az containerapp update -n $APP -g $RG --cpu 4 --memory 8Gi        # demo day: mo
 az containerapp update -n $APP -g $RG --min-replicas 0            # idle between sessions: costs ~$0 (cold start ~1 min)
 az containerapp update -n $APP -g $RG --min-replicas 1            # warm it up again
 ```
-Student credit is $100; 2 vCPU / 4 GiB running 24/7 is only a few dollars a
-day, and scaling to zero costs nothing - so scale to zero when not testing and
-set `--min-replicas 1` + 4 vCPU the day before the demo.
+### What it costs
+
+Rates below are from Azure's public retail price API (13 Oct 2026, Consumption
+plan - identical in `centralindia` and `eastus`): vCPU active
+$0.000024/vCPU-second, memory $0.000003/GiB-second, requests $0.40/million.
+Free every calendar month, per subscription: **180,000 vCPU-seconds, 360,000
+GiB-seconds, 2 million requests** (health-probe requests are not billable).
+
+| Config | Running cost | Free grant covers |
+|---|---|---|
+| scaled to zero | **$0.00** | - |
+| 2 vCPU / 4 GiB | $0.216 / hour | first **25 h** each month |
+| 4 vCPU / 8 GiB | $0.432 / hour | first **12.5 h** each month |
+
+So a realistic demo week - say 30 hours of 4 vCPU uptime across testing,
+rehearsal and the demo itself - costs about **$7.60** after the free grant,
+plus ACR Basic at $0.1666/day (~$5/month) and $0 for Log Analytics (the first
+5 GB/month of ingestion is free and this app logs a few MB). Call it **under
+$15 for the whole exercise** against the $100 credit.
+
+What would blow the budget is leaving 4 vCPU running all month: 730 h is about
+$310. **Scale to zero whenever you are not actively testing**, and only set
+`--min-replicas 1` from the evening before the demo.
+
+```powershell
+az containerapp update -n $APP -g $RG --min-replicas 0     # done for today -> $0
+```
 
 If a step is refused with a policy/quota/region error, tell me the exact error
 text - the fallbacks are an Azure VM (same credit), Hugging Face Spaces, or
@@ -168,21 +224,67 @@ Railway.
 ---------------------------------------------------------------------------
 ## 4. Auto-redeploy from Git
 
-Template: `deploy/github-workflow-azure.yml`. Copy it to
-`.github/workflows/deploy.yml`, then in GitHub -> repo -> *Settings -> Secrets
-and variables -> Actions* add:
+Template: `deploy/github-workflow-azure.yml`. It deploys **only when you click
+"Run workflow"**, pauses for an approval, and authenticates with **OIDC** -
+there is no Azure password or client secret stored in GitHub at all. (The older
+`az ad sp create-for-rbac --sdk-auth` recipe puts a long-lived client secret in
+a repo secret; anyone with write access to the repo can then deploy, and the
+secret stays valid until manually rotated. OIDC tokens are minted per run,
+expire in minutes, and are only issued to the repo/branch/environment named in
+the federated credential.)
 
-| Secret | Value |
+**a. Create the identity Azure will trust** (portal: *Microsoft Entra ID -> App
+registrations -> New registration*, name `stress-deploy`, single tenant, no
+redirect URI). Note its **Application (client) ID** and **Directory (tenant)
+ID**.
+
+**b. Add the federated credential** (*the new app -> Certificates & secrets ->
+Federated credentials -> Add credential*):
+
+| Field | Value |
 |---|---|
-| `AZURE_CREDENTIALS` | output of `az ad sp create-for-rbac --name stress-deploy --role contributor --scopes /subscriptions/<id>/resourceGroups/stress-rg --sdk-auth` |
-| `ACR_NAME` | the `$ACR` name from step 3 |
+| Scenario | GitHub Actions deploying Azure resources |
+| Organization | `onlyarya2004-maker` |
+| Repository | `vision-stress-detection` |
+| Entity type | **Environment** |
+| Environment name | `azure-prod` |
 
-After that, every push to `main` rebuilds the image and updates the live app.
-(The models are Git-LFS files: each build downloads ~51 MB of LFS, and GitHub's
-free LFS bandwidth is 1 GB/month - about 20 deploys. Don't push to `main` in a
-loop.) If creating the service principal is blocked on a student account, run
-the three `docker`/`az` update commands from step 3 by hand instead
-(`docker build` -> `docker push` -> `az containerapp update --image ...`).
+That produces subject `repo:onlyarya2004-maker/vision-stress-detection:environment:azure-prod`,
+issuer `https://token.actions.githubusercontent.com`, audience
+`api://AzureADTokenExchange`. Because the subject names the *environment*, a
+run that has not passed the approval gate cannot get a token.
+
+**c. Give it the two narrow roles it needs** (not Contributor on the
+subscription):
+
+```powershell
+$APPID = "<Application (client) ID from step a>"
+$SP    = az ad sp list --filter "appId eq '$APPID'" --query "[0].id" -o tsv
+az role assignment create --assignee $SP --role AcrPush `
+    --scope $(az acr show -n $ACR -g $RG --query id -o tsv)
+az role assignment create --assignee $SP --role Contributor `
+    --scope $(az containerapp show -n $APP -g $RG --query id -o tsv)
+```
+`AcrPush` lets it push images but not delete the registry; `Contributor` scoped
+to the single container app lets it change that app's image and nothing else -
+it cannot create, delete or read anything elsewhere in the subscription.
+
+**d. In GitHub** -> repo -> *Settings*:
+- *Environments -> New environment* named `azure-prod`; tick **Required
+  reviewers** and add yourself. (Optionally limit deployment branches to `dev`.)
+- In that environment, add secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
+  `AZURE_SUBSCRIPTION_ID` and a variable `ACR_NAME`. Putting them on the
+  *environment* rather than the repo means an unapproved job cannot read them.
+- Copy the template to `.github/workflows/deploy.yml` and push.
+
+Then: *Actions -> deploy-azure -> Run workflow -> ref `dev`* -> approve ->
+it builds, pushes, rolls out and waits for `/_stcore/health` to answer.
+
+Nothing triggers on `main`. The models are Git-LFS files, so each run downloads
+~51 MB of LFS against GitHub's free 1 GB/month - roughly 20 deploys a month.
+If app registration is blocked on the student tenant, skip all of this and run
+the three commands from step 3 by hand (`docker build` -> `docker push` ->
+`az containerapp update --image ...`); CI is a convenience, not a requirement.
 
 Supabase keep-alive: copy `deploy/github-workflow-keepalive.yml` to
 `.github/workflows/` and add secrets `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`.
@@ -192,6 +294,23 @@ Supabase keep-alive: copy `deploy/github-workflow-keepalive.yml` to
 
 - [ ] Day before: `--min-replicas 1`, `--cpu 4 --memory 8Gi`; Supabase project awake
       (open the dashboard once); run `scripts/rls_check.py` one last time.
+- [ ] **Two-user performance test - the one thing never measured locally.** A
+      background browser tab gets throttled, so two real simultaneous clients
+      could only ever be tested on two machines. On the hosted URL, with both
+      laptops side by side:
+      1. Both sign in. Confirm each sees only its own past sessions.
+      2. Both press Start within a few seconds of each other and run 3 minutes.
+      3. On each laptop watch the processed-frames-per-second readout. **Pass bar:
+         >= 8 fps each, round trip <= ~1.5 s, no "falling behind" warnings.**
+      4. During the run: `az containerapp logs show -n $APP -g $RG --follow` in one
+         window, and in the portal *Metrics* -> CPU usage / memory working set.
+         Expect roughly 2.0-2.6 cores and ~1.3 GB total (measured: 632 MB per live
+         session, 51 MB idle).
+      5. Both press Stop. Both sessions must appear in their own Past sessions and
+         in Supabase, with the row counts matching.
+      If fps comes in below 8: set `POSE_EVERY_N_FRAMES = 3` in `code/config.py`
+      and redeploy. That is pre-validated offline (behaviour-score r = 0.999,
+      `models/pose_cadence_parity.txt`) and buys ~13-17 ms of the ~85 ms per frame.
 - [ ] Both accounts created, each calibrated **once** beforehand (their baselines
       are saved to their account, so on the day you go straight to Start).
 - [ ] On each laptop: Chrome, **Ethernet** or phone hotspot as backup, camera

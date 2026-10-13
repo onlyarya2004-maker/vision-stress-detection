@@ -1,26 +1,51 @@
-# Auto-deploy: every push to `main` rebuilds the image and updates the live app.
+# Manual, approval-gated deploy to Azure Container Apps.
 #
 # NOT ACTIVE until copied to .github/workflows/deploy.yml (kept here so that
 # pushing this repo can never trigger a half-configured deployment).
-# Setup and the two required secrets: see deploy/DEPLOY.md, step 4.
+# Setup: deploy/DEPLOY.md, step 4.
+#
+# THREE DELIBERATE SAFETY CHOICES - do not "simplify" them away:
+#
+#  1. No push trigger at all, and in particular none on `main`. A deploy happens
+#     only when a human clicks "Run workflow". `main` is the frozen pre-hosting
+#     history; nothing about it should move the live app.
+#  2. The job runs in the GitHub environment `azure-prod`, which is configured
+#     with a required reviewer. The job pauses until that reviewer approves, and
+#     the Azure credentials are *environment* secrets, so an unapproved job
+#     cannot read them at all.
+#  3. OIDC, not a stored client secret. azure/login exchanges a short-lived
+#     GitHub-signed token for an Azure token; nothing long-lived is ever stored
+#     in GitHub. There is no AZURE_CREDENTIALS / --sdk-auth JSON blob to leak
+#     or rotate.
 name: deploy-azure
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch or commit to deploy"
+        required: true
+        default: dev
+
+permissions:
+  contents: read        # checkout only
+  id-token: write       # REQUIRED: lets the job request the OIDC token
 
 env:
   RG: stress-rg
   APP: stress-app
-  ACR: ${{ secrets.ACR_NAME }}
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # The approval gate. Also where AZURE_CLIENT_ID / _TENANT_ID /
+    # _SUBSCRIPTION_ID and ACR_NAME live, as environment secrets/variables.
+    environment: azure-prod
+
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.ref }}
           lfs: true          # the two CNN .h5 files are Git LFS objects
 
       - name: Models must be real files, not LFS pointer stubs
@@ -29,17 +54,41 @@ jobs:
             test "$(stat -c %s "$f")" -gt 1000000 || { echo "$f is an LFS pointer"; exit 1; }
           done
 
-      - uses: azure/login@v2
+      - name: Azure login (OIDC - no stored secret)
+        uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Build and push
+        env:
+          ACR: ${{ vars.ACR_NAME }}
         run: |
-          az acr login --name "$ACR"
+          set -euo pipefail
+          az acr login --name "$ACR"          # uses the OIDC token, not an admin password
           IMAGE="$ACR.azurecr.io/stress-app:${{ github.sha }}"
           docker build -t "$IMAGE" .
           docker push "$IMAGE"
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
 
+      # The app pulls this image with its own managed identity (AcrPull), so no
+      # registry password is stored on the app either.
       - name: Roll out
         run: az containerapp update -n "$APP" -g "$RG" --image "$IMAGE"
+
+      - name: Wait for the new revision to go healthy
+        run: |
+          set -euo pipefail
+          FQDN=$(az containerapp show -n "$APP" -g "$RG" \
+                   --query properties.configuration.ingress.fqdn -o tsv)
+          for i in $(seq 1 40); do
+            if curl -fsS --max-time 10 "https://$FQDN/_stcore/health" >/dev/null; then
+              echo "healthy: https://$FQDN"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "did not become healthy in 10 minutes"
+          az containerapp logs show -n "$APP" -g "$RG" --tail 100 || true
+          exit 1
