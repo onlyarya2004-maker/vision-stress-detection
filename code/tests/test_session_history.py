@@ -222,6 +222,53 @@ def test_self_report_roundtrip(temp_db):
         session_history.set_self_report(sid, 9)
 
 
+def test_self_report_with_an_owner_only_updates_that_profiles_session(temp_db):
+    """The app passes the active profile: a session saved under another
+    profile (or anonymously) is not updated, and the caller is told."""
+    session_history.init_db()
+    alice = session_history.create_user("Alice")
+    bob = session_history.create_user("Bob")
+    sid = session_history.save_session(_history(20), user_id=alice)
+    anon = session_history.save_session(_history(20))
+
+    with pytest.raises(LookupError):
+        session_history.set_self_report(sid, 4, user_id=bob)
+    with pytest.raises(LookupError):
+        session_history.set_self_report(sid, 4, user_id=None)      # anonymous != Alice
+    assert session_history.labeled_sessions() == []
+
+    session_history.set_self_report(sid, 4, user_id=alice)
+    session_history.set_self_report(anon, 2, user_id=None)
+    got = {r['id']: r['self_report'] for r in session_history.labeled_sessions()}
+    assert got == {sid: 4, anon: 2}
+
+
+def test_self_report_on_a_missing_session_is_not_a_silent_no_op(temp_db):
+    session_history.init_db()
+    with pytest.raises(LookupError):
+        session_history.set_self_report(12345, 3)
+
+
+@pytest.mark.parametrize('bad', [0, 6, 4.5, True, '4'])
+def test_self_report_rejects_values_off_the_scale(temp_db, bad):
+    session_history.init_db()
+    sid = session_history.save_session(_history(20))
+    with pytest.raises(ValueError):
+        session_history.set_self_report(sid, bad)
+    assert session_history.labeled_sessions() == []
+
+
+def test_session_index_stats_averages_the_saved_stress_index(temp_db):
+    session_history.init_db()
+    hist = _history(20)
+    for i, r in enumerate(hist):
+        r['stress_index'] = 0.1 if i < 10 else 0.3
+    sid = session_history.save_session(hist)
+    n, mean = session_history.session_index_stats(sid)
+    assert n == 20 and mean == pytest.approx(0.2)
+    assert session_history.session_index_stats(sid + 99) == (0, None)
+
+
 def test_labeled_sessions_excludes_tiny_sessions(temp_db):
     """A 3-frame accidental session must not become training data."""
     session_history.init_db()

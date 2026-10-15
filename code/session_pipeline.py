@@ -54,6 +54,7 @@ import config
 import daisee_ensemble
 from behavioral_features import BehavioralBaseline, BehavioralFeatureEngine
 from frame_ops import crop_face, decode_jpeg, prepare_processing_frame
+from personalization import parse_local_time
 from rppg_live import LiveRPPG
 from stress_fusion import (
     compute_stress_index, TemporalSmoother, HysteresisLevel, new_daisee_baseline,
@@ -67,6 +68,7 @@ def _close_solutions(*solutions):
             s.close()
         except Exception:
             pass
+
 
 
 class UserState:
@@ -84,6 +86,11 @@ class UserState:
                                     # session would keep counting as live
         self.engine = BehavioralFeatureEngine(time_source=lambda: clock['t'])
         self.daisee_baseline = new_daisee_baseline()
+        # When the CURRENT baseline came into effect, on the same user-local
+        # clock as saved sessions' started_at (None = unknown). Sessions from
+        # before it were scored against a different baseline, so
+        # personalization.py does not pool them with later ones.
+        self.baseline_set_at = None
         self.temporal_inf = GRUTemporalInference()
         self.rppg = LiveRPPG(roi=config.RPPG_ROI)
         self._last_pose = None
@@ -113,12 +120,14 @@ class UserState:
         windows first so one user's samples never score against another's
         baseline (BUG_AUDIT_2026-08-23.md finding #5)."""
         self.engine.reset_state()
+        self.baseline_set_at = None
         if saved is not None:
             self.engine.baseline = BehavioralBaseline(**saved['behavioral'])
             if saved.get('daisee_baseline') is not None:
                 self.daisee_baseline.set(saved['daisee_baseline'])
             else:
                 self.daisee_baseline.reset()
+            self.baseline_set_at = parse_local_time(saved.get('baseline_set_at'))
         else:
             self.engine.reset_baseline()
             self.daisee_baseline.reset()
@@ -126,11 +135,16 @@ class UserState:
     def reset_baselines(self):
         self.engine.reset_baseline()
         self.daisee_baseline.reset()
+        self.baseline_set_at = None          # the caller stamps the new one
 
     def baseline_payload(self):
-        """What the store's save_user_baseline() persists."""
+        """What the store's save_user_baseline() persists. baseline_set_at
+        rides inside the existing baseline_json - no schema change; profiles
+        saved before it existed simply have none (= unknown)."""
         return {'behavioral': dataclasses.asdict(self.engine.baseline),
-                'daisee_baseline': self.daisee_baseline.value}
+                'daisee_baseline': self.daisee_baseline.value,
+                'baseline_set_at': (self.baseline_set_at.isoformat()
+                                    if self.baseline_set_at is not None else None)}
 
     # -- shared per-frame helpers ------------------------------------------
     def reset_pose_cache(self):
@@ -242,11 +256,27 @@ class LiveRun(_Run):
 
     HISTORY_INTERVAL_S = 0.5
 
-    def __init__(self, state, models, agent, *, task_mode, agent_enabled, dt0=None):
+    def __init__(self, state, models, agent, *, task_mode, agent_enabled, dt0=None,
+                 personalization=None):
         super().__init__(state, models)
         self.agent = agent
         self.task_mode = task_mode
         self.agent_enabled = agent_enabled
+        # This user's personalization.Personalization, fixed for the whole run
+        # (fitted from sessions saved BEFORE it started). None/inactive = the
+        # general model. Its shift is added to the GENERAL smoothed index - the
+        # space the 0.24/0.55 cutoffs live in - after the general pipeline has
+        # run unchanged; the shared models and the fusion never see it.
+        self.personalization = personalization
+        shift = (float(personalization.shift)
+                 if personalization is not None and personalization.active else 0.0)
+        if not math.isfinite(shift):
+            shift = 0.0
+        self.personal_shift = max(-config.PERSONAL_MAX_SHIFT,
+                                  min(config.PERSONAL_MAX_SHIFT, shift))
+        # The personal reading needs its own hysteresis state; the general
+        # one (self.hyst) keeps producing the stored level untouched.
+        self.hyst_personal = HysteresisLevel(confirm_frames=config.HYSTERESIS_CONFIRM_FRAMES)
         # Wall-clock datetime that run-time zero maps onto, for history 'ts'.
         # Local mode: the machine's clock. Browser mode: the app passes the
         # USER's local time (server clocks are UTC), so time-of-day analytics
@@ -258,7 +288,8 @@ class LiveRun(_Run):
         self.frame_idx = 0
         self.last_record_t = None
         self.latest = None          # last successful frame's result, for rendering
-        self.last_smoothed = 0.0
+        self.last_smoothed = 0.0            # last reading shown (personal)
+        self.last_general_smoothed = 0.0    # last general reading (what is saved)
         # STRESS_PROFILE=1: accumulate per-stage wall time (ms) so a slow
         # deployment can be diagnosed stage by stage. Off = no overhead.
         self.stage_ms = {} if os.environ.get('STRESS_PROFILE') else None
@@ -349,13 +380,26 @@ class LiveRun(_Run):
             rppg_score=rppg_score,
             daisee_baseline=s.daisee_baseline,
         )
+        # General model: exactly as before. This is what gets stored.
         smoothed = self.smoother.update(result['stress_index'])
         level = self.hyst.update(smoothed)
-        self.last_smoothed = smoothed
+        # Personal reading (what the user sees and the coach acts on): the
+        # general smoothed index + this user's validated shift. With no shift
+        # it IS the general reading, level included.
+        if self.personal_shift:
+            shown = float(np.clip(smoothed + self.personal_shift, 0.0, 1.0))
+            shown_level = self.hyst_personal.update(shown)
+        else:
+            shown, shown_level = smoothed, level
+        self.last_smoothed = shown
+        self.last_general_smoothed = smoothed
 
         intervention = None
         if self.agent_enabled:
-            _iv = self.agent.update(t, smoothed, result['contributions'])
+            # The coach decides on what the user sees (shown) but measures and
+            # logs outcomes on the general reading, like the saved samples.
+            _iv = self.agent.update(t, shown, result['contributions'],
+                                    general_index=smoothed)
             if _iv is not None and (t - _iv.t_shown) <= config.INTERVENTION_SHOW_SECONDS:
                 intervention = _iv
 
@@ -366,6 +410,9 @@ class LiveRun(_Run):
         if self.last_record_t is None or (t - self.last_record_t) >= self.HISTORY_INTERVAL_S:
             # daisee stays None (not 0.0) on frames the CNN didn't score -
             # see the session_history v7->v8 migration (2026-09-17).
+            # Saved history always holds the GENERAL reading: it is what the
+            # validated model says, what personalization.py learns from (so it
+            # never learns from its own output) and what exports/evaluation use.
             record = {
                 'ts': self.dt0 + timedelta(seconds=t - self.t0),
                 'stress_index': smoothed, 'level': level,
@@ -383,8 +430,10 @@ class LiveRun(_Run):
 
         self.frame_idx += 1
         out = {
-            'no_face': False, 'bbox': bbox, 'geom': geom, 'level': level,
-            'smoothed': smoothed, 'result': result,
+            'no_face': False, 'bbox': bbox, 'geom': geom,
+            'level': shown_level, 'smoothed': shown,             # what the user sees
+            'general_level': level, 'general_smoothed': smoothed,
+            'personal_shift': self.personal_shift, 'result': result,
             'behavioral_features': behavioral_features,
             'intervention': intervention, 'hr_bpm': hr_bpm,
             'rppg_status': s.rppg.status(), 'record': record,
@@ -399,8 +448,10 @@ class LiveRun(_Run):
         """The agent's measured outcomes, for the store's log_interventions."""
         if not self.started:
             return []
-        idx = self.last_smoothed if final_index is None else final_index
-        return self.agent.finish_session(self.t, idx)
+        if final_index is None:
+            return self.agent.finish_session(self.t, self.last_smoothed,
+                                             general_index=self.last_general_smoothed)
+        return self.agent.finish_session(self.t, final_index)
 
 
 # ---------------------------------------------------------------------------
@@ -423,6 +474,7 @@ class BatchGate:
         self.last_t = -math.inf
         self.dropped = 0
         self.tz_offset_min = 0
+        self.tz_known = False       # True once a batch has reported the browser's offset
 
     def reset(self, epoch):
         self.epoch = epoch
@@ -453,6 +505,7 @@ class BatchGate:
         tz = value.get('tz')
         if isinstance(tz, (int, float)) and math.isfinite(tz) and -14 * 60 <= tz <= 14 * 60:
             self.tz_offset_min = int(tz)
+            self.tz_known = True
 
         raw = value.get('frames')
         if not isinstance(raw, list):

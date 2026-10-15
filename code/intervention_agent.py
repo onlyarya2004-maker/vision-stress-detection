@@ -117,6 +117,11 @@ class ActiveIntervention:
     # later against whatever the stats happen to be by then.
     trigger_value: Optional[float] = None
     success_rate_at_fire: float = 0.5
+    # The GENERAL model's reading at fire time, when the caller shows the
+    # user a personalized one (session_pipeline.LiveRun): outcomes are then
+    # measured and logged on the general reading - the same space as the
+    # saved samples - while the decision to fire used what the user saw.
+    index_before_general: Optional[float] = None
 
 
 @dataclass
@@ -218,7 +223,14 @@ class InterventionAgent:
 
     # -- the loop -----------------------------------------------------------
     def update(self, t: float, smoothed_index: float,
-               contributions: Dict[str, float]) -> Optional[ActiveIntervention]:
+               contributions: Dict[str, float],
+               general_index: Optional[float] = None) -> Optional[ActiveIntervention]:
+        """smoothed_index: the reading the user sees - every decision (fire,
+        warm-up, trend, retire) is made on it. general_index: the general
+        model's reading when that differs (per-user personalization); if
+        given, outcomes are measured and logged on it instead, so the
+        interventions table holds the same score space as samples. None
+        (default) = they are the same reading."""
         # Trend tracking - kept current on every call, resolving or not,
         # so _is_declining() always reflects real recent history rather
         # than only whatever happened to be seen while nothing was active.
@@ -230,7 +242,7 @@ class InterventionAgent:
         # 1. Resolve an outstanding intervention once its window elapses.
         if self._active and not self._active.resolved:
             if t - self._active.t_shown >= config.INTERVENTION_EVAL_SECONDS:
-                self._resolve(t, smoothed_index)
+                self._resolve(t, smoothed_index, general_index)
             elif t - self._active.t_shown >= config.INTERVENTION_SHOW_SECONDS:
                 # Card may be hidden by UI, but the eval window hasn't
                 # closed yet - do not fall through to the targeting/firing
@@ -321,14 +333,26 @@ class InterventionAgent:
             trigger_signal=signal, t_shown=t, index_before=smoothed_index,
             trigger_value=trigger_value,
             success_rate_at_fire=self.success_rate(entry['kind']),
+            index_before_general=general_index,
         )
         self._last_fired_at = t
         return self._active
 
-    def _resolve(self, t: float, smoothed_index: float):
+    def _measured(self, a: ActiveIntervention, smoothed_index, general_index):
+        """(before, after) on the general reading when both ends have one,
+        else on the reading the user saw. A personal shift is constant within
+        a run, so the drop is the same either way - except where the shown
+        reading is clipped at 0 or 1, which would hide a real drop."""
+        if a.index_before_general is not None and general_index is not None:
+            return a.index_before_general, general_index
+        return a.index_before, smoothed_index
+
+    def _resolve(self, t: float, smoothed_index: float,
+                 general_index: Optional[float] = None):
         """Measure: did the index actually drop after the intervention?"""
         a = self._active
-        drop = a.index_before - smoothed_index
+        before, after = self._measured(a, smoothed_index, general_index)
+        drop = before - after
         outcome = ('helped' if drop >= config.INTERVENTION_HELPED_DROP
                    else 'no_effect')
         self.stats.setdefault(a.kind, {'helped': 0, 'no_effect': 0})
@@ -336,7 +360,7 @@ class InterventionAgent:
         self._log.append({
             'ts': datetime.now(), 'kind': a.kind,
             'trigger_signal': a.trigger_signal,
-            'index_before': a.index_before, 'index_after': smoothed_index,
+            'index_before': before, 'index_after': after,
             'outcome': outcome,
         })
         a.resolved = True
@@ -405,20 +429,22 @@ class InterventionAgent:
                 f"{k.replace('_', ' ')} ({h}/{h + f} helped)")
 
     # -- session end --------------------------------------------------------
-    def finish_session(self, t: float, smoothed_index: float) -> List[Dict]:
+    def finish_session(self, t: float, smoothed_index: float,
+                       general_index: Optional[float] = None) -> List[Dict]:
         """
         Resolve anything still pending with the data available, then hand the
         log over for persistence (session_history.log_interventions).
         """
         if self._active and not self._active.resolved:
             if t - self._active.t_shown >= config.INTERVENTION_MIN_EVAL_SECONDS:
-                self._resolve(t, smoothed_index)
+                self._resolve(t, smoothed_index, general_index)
             else:
                 a = self._active
+                before, _ = self._measured(a, smoothed_index, general_index)
                 self._log.append({
                     'ts': datetime.now(), 'kind': a.kind,
                     'trigger_signal': a.trigger_signal,
-                    'index_before': a.index_before, 'index_after': None,
+                    'index_before': before, 'index_after': None,
                     'outcome': 'unknown',
                 })
                 self._active = None

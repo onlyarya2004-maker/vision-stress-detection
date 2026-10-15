@@ -138,12 +138,69 @@ def test_save_user_baseline_always_writes_the_authenticated_users_row(env):
 
 
 def test_set_self_report_is_validated_and_scoped_to_the_owner(env):
+    env.server.on('GET', 'sessions', lambda r: [{'id': 5}])      # it is this user's session
+    env.server.on('PATCH', 'sessions', lambda r: [{'id': 5, 'self_report': 3}])
     with pytest.raises(ValueError):
         env.store.set_self_report(5, 6)
     env.store.set_self_report(5, 3)
     (req,) = env.server.of('PATCH', 'sessions')
     assert _params(req)['id'] == 'eq.5' and _params(req)['user_id'] == f'eq.{UID}'
     assert json.loads(req.content) == {'self_report': 3}
+    (check,) = env.server.of('GET', 'sessions')                  # ownership looked up first
+    assert _params(check)['id'] == 'eq.5' and _params(check)['user_id'] == f'eq.{UID}'
+
+
+@pytest.mark.parametrize('bad', [0, 6, -1, 4.5, 3.0, True, '4', [4]])
+def test_set_self_report_rejects_anything_off_the_1_to_5_scale(env, bad):
+    with pytest.raises(ValueError):
+        env.store.set_self_report(5, bad)
+    assert env.server.requests == [], "an invalid rating must not reach the database"
+
+
+def test_set_self_report_refuses_someone_elses_session(env):
+    """RLS hides other users' rows, so the ownership lookup comes back empty:
+    nothing may be written, and the caller must be told."""
+    env.server.on('GET', 'sessions', lambda r: [])
+    with pytest.raises(LookupError):
+        env.store.set_self_report(999, 4, user_id='someone-else')     # caller id ignored
+    assert env.server.of('PATCH', 'sessions') == []
+    (check,) = env.server.of('GET', 'sessions')
+    assert _params(check)['user_id'] == f'eq.{UID}'
+
+
+def test_set_self_report_reports_a_zero_row_update_as_a_failure(env):
+    env.server.on('GET', 'sessions', lambda r: [{'id': 5}])
+    env.server.on('PATCH', 'sessions', lambda r: [])               # matched nothing
+    with pytest.raises(RuntimeError):
+        env.store.set_self_report(5, 4)
+
+
+def test_set_self_report_surfaces_server_errors(env):
+    env.server.on('GET', 'sessions', lambda r: [{'id': 5}])
+    env.server.on('PATCH', 'sessions', lambda r: httpx.Response(500, json={'message': 'boom'}))
+    with pytest.raises(Exception):
+        env.store.set_self_report(5, 4)
+
+
+def test_session_index_stats_pages_one_column_of_this_users_session(env):
+    page = [{'stress_index': 0.2}] * 1000
+
+    def samples(r):
+        return page if _params(r).get('offset', '0') == '0' else (
+            [{'stress_index': 0.5}, {'stress_index': None}, {'stress_index': 0.5}])
+    env.server.on('GET', 'samples', samples)
+    n, mean = env.store.session_index_stats(42)
+    assert n == 1002 and mean == pytest.approx((1000 * 0.2 + 2 * 0.5) / 1002)
+    reqs = env.server.of('GET', 'samples')
+    assert len(reqs) == 2                                    # paged past the 1000-row cap
+    for req in reqs:
+        p = _params(req)
+        assert p['select'] == 'stress_index' and p['order'] == 'id.asc'
+        assert p['session_id'] == 'eq.42' and p['user_id'] == f'eq.{UID}'
+
+
+def test_session_index_stats_of_an_empty_session(env):
+    assert env.store.session_index_stats(42) == (0, None)
 
 
 def test_delete_my_data_only_deletes_the_callers_rows(env):

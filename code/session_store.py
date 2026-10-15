@@ -26,7 +26,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 from session_history import (
-    SIGNAL_COLUMNS, TEMPORAL_EXTRA_COLUMNS, summarize_history,
+    SIGNAL_COLUMNS, TEMPORAL_EXTRA_COLUMNS, summarize_history, validate_self_report,
 )
 
 _PAGE = 1000          # PostgREST's default max rows per response
@@ -138,13 +138,26 @@ class SupabaseStore:
             raise
         return session_id
 
-    def set_self_report(self, session_id: int, rating: Optional[int]):
-        if rating is not None:
-            rating = int(rating)
-            if not 1 <= rating <= 5:
-                raise ValueError(f"self_report must be 1-5 or None, got {rating}")
-        (self._t('sessions').update({'self_report': rating})
-         .eq('id', session_id).eq('user_id', self.user_id).execute())
+    def set_self_report(self, session_id: int, rating: Optional[int], user_id=None):
+        """Store the signed-in user's rating on one of THEIR sessions.
+
+        `user_id` is ignored on purpose (owner = the authenticated user). The
+        session is looked up as this user first, and the update must come
+        back with exactly that row - RLS silently matches zero rows for
+        someone else's id, and a zero-row update must never be reported as
+        saved. Raises LookupError (not theirs / not found) or RuntimeError
+        (the write did not take)."""
+        rating = validate_self_report(rating)
+        owned = (self._t('sessions').select('id')
+                 .eq('id', session_id).eq('user_id', self.user_id)
+                 .limit(1).execute().data or [])
+        if not owned:
+            raise LookupError("that session was not found for this account")
+        updated = (self._t('sessions').update({'self_report': rating})
+                   .eq('id', session_id).eq('user_id', self.user_id)
+                   .execute().data or [])
+        if len(updated) != 1:
+            raise RuntimeError("the rating was not saved")
 
     def labeled_sessions(self, min_samples: int = 10) -> List[Dict]:
         return self._all(lambda a, b: (
@@ -179,6 +192,19 @@ class SupabaseStore:
             'daisee': None if r['daisee'] is None else float(r['daisee']),
             'behavior': float(r['behavior']),
         } for r in rows]
+
+    def session_index_stats(self, session_id: int):
+        """(count, mean) of one of this user's sessions' stored stress_index
+        (the general model's smoothed final index) - only that one column is
+        fetched (PostgREST aggregates are off by default, so the mean is
+        taken here)."""
+        rows = self._all(lambda a, b: (
+            self._t('samples').select('stress_index')
+            .eq('session_id', session_id).eq('user_id', self.user_id)
+            .order('id').range(a, b)))
+        vals = [float(r['stress_index']) for r in rows
+                if r.get('stress_index') is not None and math.isfinite(float(r['stress_index']))]
+        return len(vals), (sum(vals) / len(vals) if vals else None)
 
     def load_session_signal_rows(self, session_id: int) -> List[Dict]:
         return self._all(lambda a, b: (

@@ -56,6 +56,7 @@ Schema:
 """
 
 import json
+import numbers
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -451,21 +452,51 @@ def save_session(history: List[Dict], task_mode: str = 'Default',
         conn.close()
 
 
-def set_self_report(session_id: int, rating: Optional[int]):
+SELF_REPORT_MIN, SELF_REPORT_MAX = 1, 5     # the UI scale = the DB CHECK constraint
+
+
+def validate_self_report(rating) -> Optional[int]:
+    """The rating as an int in 1-5, or None (= clear it). Shared by both
+    storage backends so local and hosted accept exactly the same values.
+    Strict on purpose: 4.7 or True used to be silently coerced by int()."""
+    if rating is None:
+        return None
+    if isinstance(rating, bool) or not isinstance(rating, numbers.Integral):
+        raise ValueError(f"self_report must be a whole number 1-5 or None, got {rating!r}")
+    rating = int(rating)
+    if not SELF_REPORT_MIN <= rating <= SELF_REPORT_MAX:
+        raise ValueError(f"self_report must be 1-5 or None, got {rating}")
+    return rating
+
+
+_ANY_USER = object()   # sentinel: no ownership check (offline scripts, old callers)
+
+
+def set_self_report(session_id: int, rating: Optional[int], user_id=_ANY_USER):
     """
     Record the user's own end-of-session stress rating (1-5), or clear it
     with None. This is Phase 3's label source: the system's prediction is
     not ground truth - the user's report is what the continual-adaptation
     loop trains against.
+
+    user_id: when given (the app always passes the active profile, None =
+    anonymous), the session must belong to that profile or nothing is
+    written. Raises LookupError when no matching session was updated, so a
+    caller can never mistake a no-op for a saved rating.
     """
-    if rating is not None:
-        rating = int(rating)
-        if not 1 <= rating <= 5:
-            raise ValueError(f"self_report must be 1-5 or None, got {rating}")
+    rating = validate_self_report(rating)
     conn = _get_conn()
     try:
-        conn.execute("UPDATE sessions SET self_report = ? WHERE id = ?",
-                     (rating, session_id))
+        if user_id is _ANY_USER:
+            cur = conn.execute("UPDATE sessions SET self_report = ? WHERE id = ?",
+                               (rating, session_id))
+        else:
+            cur = conn.execute(
+                "UPDATE sessions SET self_report = ? WHERE id = ? AND user_id IS ?",
+                (rating, session_id, user_id))
+        if cur.rowcount != 1:
+            conn.rollback()
+            raise LookupError("that session was not found for this profile")
         conn.commit()
     finally:
         conn.close()
@@ -481,6 +512,21 @@ def labeled_sessions(min_samples: int = 10) -> List[Dict]:
             ORDER BY id ASC
         """, (min_samples,)).fetchall()
         return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def session_index_stats(session_id: int):
+    """(count, mean) of one saved session's stress_index - the general
+    model's smoothed final index (the space the LOW/MODERATE cutoff was
+    derived in), which is the per-session feature personalization.py learns
+    from. NULL rows are ignored; (0, None) for a session without any."""
+    conn = _get_conn()
+    try:
+        n, mean = conn.execute(
+            "SELECT COUNT(stress_index), AVG(stress_index) FROM samples WHERE session_id = ?",
+            (session_id,)).fetchone()
+        return int(n or 0), (None if mean is None else float(mean))
     finally:
         conn.close()
 

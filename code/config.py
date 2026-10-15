@@ -321,6 +321,34 @@ USE_LEARNED_FUSION = False
 LEARNED_FUSION_MODEL_PATH = '../models/meta_learner.joblib'
 
 # ===========================================================================
+# PER-USER PERSONALIZATION (personalization.py, 2026-10-15)
+# ===========================================================================
+# NOT retraining: the shared CNN/GRU weights and the fusion are never touched.
+# Each user gets one bounded number - a shift added to the general model's
+# SMOOTHED FINAL INDEX, the space LOW_TO_MODERATE_CUTOFF was derived in (ROC /
+# Youden's J, evaluation_data/THRESHOLD_RESULTS_2026-09-22.txt) - fitted at the
+# start of every live run from THEIR rated sessions only, recomputed from the
+# database each time (nothing model-like is stored), and switched on only if a
+# leave-one-session-out check on those sessions beats the general model.
+#
+# Label convention and minimums are the project's existing ones
+# (retrain_from_sessions.py): rating <= 2 relaxed, >= 4 stressed, 3 excluded
+# as ambiguous; >= 6 such sessions with >= 2 of each class before anything
+# changes. Below that, or if validation fails, the general model runs unchanged.
+PERSONALIZATION_ENABLED = True
+# The local SQLite file holds the volunteers' historical sessions; do not
+# start personalizing from them just because the app was launched locally.
+PERSONALIZE_LOCAL_SQLITE = False
+PERSONAL_RELAXED_AT = 2
+PERSONAL_STRESSED_AT = 4
+PERSONAL_MIN_LABELED_SESSIONS = 6
+PERSONAL_MIN_PER_CLASS = 2
+PERSONAL_MIN_SAMPLES_PER_SESSION = 60   # 30 s of saved rows (one per 0.5 s)
+PERSONAL_MAX_SESSIONS = 30              # newest eligible sessions used
+PERSONAL_PRIOR_SESSIONS = 6             # shrinkage: n/(n+6) of the full shift
+PERSONAL_MAX_SHIFT = 0.10               # hard bound on the final-index shift
+
+# ===========================================================================
 # FUSION TUNING
 # ===========================================================================
 # Aggregate behaviour multiplier. PP1 testing: 1.0x -> 1.2x moved stressed

@@ -159,6 +159,30 @@ def test_stop_saves_the_session_and_queues_the_self_report(monkeypatch, temp_db,
     assert session_history.session_count() == 1
 
 
+def test_local_mode_rating_is_saved_to_sqlite_through_the_store(monkeypatch, temp_db, no_cnn):
+    """The hosted self-report fix routes ratings through get_store(): locally
+    that is still the SQLite module, so local mode keeps working."""
+    monkeypatch.setattr(config, 'STORAGE_BACKEND', 'sqlite')
+    monkeypatch.setattr(config, 'CAPTURE_MODE', 'browser')
+    session_history.init_db()
+    at = AppTest.from_file(APP, default_timeout=90)
+    at.session_state['history'] = _history()
+    at.session_state['history_saved'] = False
+    at.session_state['running'] = True
+    at.run()
+    _button(at, 'Stop').click().run()
+    sid = at.session_state['pending_self_report']
+    next(b for b in at.button if b.label.startswith("2 ·")).click().run()
+    assert not at.exception
+    (row,) = session_history.labeled_sessions(min_samples=1)
+    assert row['id'] == sid and row['self_report'] == 2
+    assert at.session_state['pending_self_report'] is None
+    assert any('rating was saved' in s.value for s in at.success)
+    # Personalization is off for the local SQLite store by default.
+    assert not any('Personal calibration' in c.value or 'General model' in c.value
+                   for c in at.sidebar.caption)
+
+
 # ---- local (cv2) camera mode: the demo-day fallback, driven by a fake camera ----
 class FakeCapture:
     """Stands in for cv2.VideoCapture: n blank 1080p frames, then a read
@@ -308,3 +332,20 @@ def test_reset_baseline_only_touches_this_sessions_state(monkeypatch, temp_db, n
     _button(a, 'Reset baseline').click().run()
     assert not a.exception
     assert not a.session_state['user_state'].daisee_baseline.is_calibrated()
+
+
+@pytest.mark.parametrize('button', ['Start', 'Calibrate'])
+def test_a_new_run_clears_the_previous_sessions_rating_notice(monkeypatch, temp_db, no_cnn, button):
+    """A "rating saved / NOT saved" notice belongs to the session it was about:
+    starting a calibration or a new session drops it, so it can never appear
+    after the next Stop attached to the wrong session."""
+    monkeypatch.setattr(config, 'STORAGE_BACKEND', 'sqlite')
+    monkeypatch.setattr(config, 'CAPTURE_MODE', 'browser')
+    session_history.init_db()
+    at = AppTest.from_file(APP, default_timeout=90)
+    at.run()
+    at.session_state['selfrep_notice'] = ('warning', "Your rating was NOT saved: test.")
+    _button(at, button).click().run()
+    assert not at.exception
+    assert 'selfrep_notice' not in at.session_state
+    assert not any('rating was NOT saved' in w.value for w in at.warning)

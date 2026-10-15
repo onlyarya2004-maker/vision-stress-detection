@@ -9,6 +9,7 @@ scoped to that user, and the app must expose no way to pick another profile.
 (The database's own Row Level Security is the second wall; scripts/rls_check.py
 proves that one against a real project.)
 """
+import json
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
@@ -231,3 +232,179 @@ def test_after_expiry_the_next_user_inherits_and_saves_nothing_of_the_previous_o
         p = _params(req)
         table = req.url.path.rsplit('/', 1)[-1]
         assert (p.get('id') if table == 'profiles' else p.get('user_id')) == 'eq.uid-bob'
+
+
+# ---- end-of-session self-report (hosted) -----------------------------------
+RATE_4 = "4 · noticeably stressed, tense but OK"
+
+
+def _sessions_route(owned_ids=(42,)):
+    """GET sessions: the ownership lookup answers only for ids this user owns
+    (what RLS + the user filter return); every other read gets the one
+    saved session."""
+    def handler(r):
+        p = _params(r)
+        if p.get('select') == 'id' and p.get('id', '').startswith('eq.'):
+            sid = int(p['id'][3:])
+            return [{'id': sid}] if sid in owned_ids else []
+        return httpx.Response(200, json=[SESSION_ROW], headers={'content-range': '0-0/1'})
+    return handler
+
+
+def _stopped_with_prompt(at, server, patch=lambda r: [{'id': 42, 'self_report': 4}]):
+    server.on('GET', 'sessions', _sessions_route())
+    server.on('POST', 'sessions', lambda r: [{'id': 42}])
+    server.on('PATCH', 'sessions', patch)
+    at.session_state['history'] = _history()
+    at.session_state['history_saved'] = False
+    at.session_state['running'] = True
+    at.run()
+    _button(at, 'Stop').click().run()
+    assert not at.exception
+    assert at.session_state['pending_self_report'] == 42
+    return next(b for b in at.button if b.label == RATE_4)
+
+
+def test_hosted_rating_is_saved_to_supabase_not_sqlite(signed_in):
+    at, server = signed_in
+    _stopped_with_prompt(at, server).click().run()
+    assert not at.exception
+    (patch,) = server.of('PATCH', 'sessions')
+    p = _params(patch)
+    assert p['id'] == 'eq.42' and p['user_id'] == f'eq.{UID}'
+    assert json.loads(patch.content) == {'self_report': 4}
+    assert at.session_state['pending_self_report'] is None
+    assert at.session_state['last_saved_self_report'] == 4
+    assert any('rating was saved' in s.value for s in at.success)
+    import session_history
+    assert not session_history.DB_PATH.exists()          # the old bug wrote here
+
+
+def test_hosted_failed_rating_write_is_not_reported_as_saved(signed_in):
+    at, server = signed_in
+    _stopped_with_prompt(at, server, patch=lambda r: []).click().run()   # 0 rows updated
+    assert not at.exception
+    assert not at.success
+    assert any('NOT saved' in w.value for w in at.warning)
+    assert at.session_state['pending_self_report'] == 42   # prompt stays: retry or Skip
+    assert at.session_state['last_saved_self_report'] is None
+
+
+def test_hosted_server_error_on_rating_is_reported_without_server_details(signed_in):
+    at, server = signed_in
+    boom = lambda r: httpx.Response(500, json={'message': 'internal detail XYZ'})
+    _stopped_with_prompt(at, server, patch=boom).click().run()
+    assert not at.exception and not at.success
+    shown = ' '.join(w.value for w in at.warning)
+    assert 'NOT saved' in shown and 'XYZ' not in shown
+
+
+def test_hosted_rating_cannot_target_another_users_session(signed_in):
+    """A session id that is not this user's (e.g. a tampered state value)
+    gets nothing written - the lookup as this user finds no such session."""
+    at, server = signed_in
+    server.on('GET', 'sessions', _sessions_route(owned_ids=(42,)))
+    at.run()
+    at.session_state['pending_self_report'] = 999
+    at.run()
+    next(b for b in at.button if b.label == RATE_4).click().run()
+    assert not at.exception
+    assert server.of('PATCH', 'sessions') == []
+    assert any('NOT saved' in w.value for w in at.warning) and not at.success
+
+
+# ---- personalization status (hosted) ---------------------------------------
+def _with_rated_history(server, user, relaxed=0.10, stressed=0.22,
+                        baseline_at='2026-09-30T09:00:00'):
+    """Six rated sessions whose GENERAL index reads this user too low (every
+    stressed session under the 0.24 cutoff) - a case the leave-one-out check
+    accepts, so personalization switches on."""
+    labeled = [{'id': i, 'user_id': user, 'self_report': 1 if i <= 3 else 5,
+                'sample_count': 120, 'task_mode': 'Default',
+                'started_at': '2026-10-0%dT10:00:00' % i, 'ended_at': '2026-10-0%dT10:01:00' % i,
+                'duration_sec': 60.0, 'mean_stress': 0.3, 'max_stress': 0.4,
+                'pct_low': 50.0, 'pct_moderate': 50.0, 'pct_high': 0.0}
+               for i in range(1, 7)]
+
+    def sessions(r):
+        p = _params(r)
+        if p.get('user_id') != f'eq.{user}':
+            return []                                   # RLS: nothing of anyone else's
+        if p.get('self_report') == 'not.is.null':
+            return labeled
+        return httpx.Response(200, json=labeled[:1], headers={'content-range': '0-0/6'})
+
+    def samples(r):
+        p = _params(r)
+        if p.get('user_id') != f'eq.{user}' or p.get('offset', '0') != '0':
+            return []
+        sid = int(p['session_id'][3:])
+        return [{'stress_index': relaxed if sid <= 3 else stressed}] * 120
+    server.on('GET', 'sessions', sessions)
+    server.on('GET', 'samples', samples)
+    # The account's saved baseline, stamped when it took effect (before the
+    # six sessions above) - written by stamp_baseline_change() on calibration.
+    server.on('GET', 'profiles', lambda r: [{'baseline_json': {
+        'behavioral': {'ear_baseline': 0.30, 'calibrated': True}, 'daisee_baseline': 0.5,
+        'baseline_set_at': baseline_at}}] if _params(r).get('id') == f'eq.{user}' else [])
+
+
+def test_a_returning_user_with_enough_rated_sessions_sees_personal_calibration(signed_in):
+    at, server = signed_in
+    _with_rated_history(server, UID)
+    at.run()
+    assert not at.exception
+    p = at.session_state['personalization']
+    assert p.active and p.n_sessions == 6 and p.shift > 0
+    assert any('Personal calibration on' in c.value for c in at.sidebar.caption)
+    for req in server.requests:                               # still all Alice's
+        table = req.url.path.rsplit('/', 1)[-1]
+        if req.method == 'GET' and table in ('sessions', 'samples'):
+            assert _params(req).get('user_id') == f'eq.{UID}'
+
+
+def test_a_new_user_gets_the_general_model_and_is_told_why(signed_in):
+    at, server = signed_in
+    _with_one_saved_session(server)                            # unrated
+    at.run()
+    assert not at.exception
+    p = at.session_state['personalization']
+    assert not p.active and p.shift == 0.0
+    # No calibration on record yet, so no session can be matched to a baseline.
+    assert any('General model' in c.value and 'calibrate once' in c.value
+               for c in at.sidebar.caption)
+
+
+def test_another_users_rated_history_does_not_personalize_this_account(signed_in):
+    """The database holds six rated sessions - all Bob's. Alice's account must
+    stay on the general model."""
+    at, server = signed_in
+    _with_rated_history(server, 'uid-bob')
+    at.run()
+    assert not at.exception
+    assert not at.session_state['personalization'].active
+
+
+def test_switching_the_context_mode_refits_on_that_modes_sessions_only(signed_in):
+    """All six rated sessions are Default-mode: personal calibration is on in
+    Default and off after switching the Context selector to Studying."""
+    at, server = signed_in
+    _with_rated_history(server, UID)
+    at.run()
+    assert at.session_state['personalization'].active
+    at.selectbox(key='task_select').select('Studying').run()
+    assert not at.exception
+    p = at.session_state['personalization']
+    assert not p.active and p.shift == 0.0
+    assert any('counting Studying sessions' in c.value for c in at.sidebar.caption)
+
+
+def test_sessions_older_than_the_accounts_current_baseline_do_not_personalize(signed_in):
+    """The account recalibrated after all six rated sessions: they were scored
+    against the previous baseline, so none of them is pooled."""
+    at, server = signed_in
+    _with_rated_history(server, UID, baseline_at='2026-10-09T12:00:00')
+    at.run()
+    assert not at.exception
+    p = at.session_state['personalization']
+    assert not p.active and 'since your last calibration' in p.reason

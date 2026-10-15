@@ -19,7 +19,7 @@ import io
 import csv
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import cv2
 import numpy as np
@@ -32,6 +32,7 @@ from stress_fusion import (
 from app_naming import export_filename
 from intervention_agent import InterventionAgent, CATALOGUE
 import daisee_ensemble
+import personalization
 import session_history
 import session_report
 import session_store
@@ -976,6 +977,29 @@ def save_active_user_baseline(ustate):
     get_store().save_user_baseline(user_id, ustate.baseline_payload())
 
 
+def user_local_now():
+    """'Now' on the clock saved sessions' started_at uses: the browser's local
+    time in browser mode (BatchGate - the same source LiveRun's dt0 comes
+    from), the machine's own in local-camera mode. If the browser has not yet
+    reported its offset, the LATEST possible local time (UTC+14): a session
+    recorded before this moment can then never look newer than it."""
+    if config.CAPTURE_MODE == 'browser':
+        gate = st.session_state.get('batch_gate')
+        if gate is not None and gate.tz_known:
+            return gate.user_now()
+        return datetime.utcnow() + timedelta(hours=14)
+    return datetime.now()
+
+
+def stamp_baseline_change(ustate):
+    """The baseline just changed (calibration or reset): record when, so
+    personalization only pools sessions scored against THIS baseline, then
+    persist it like before."""
+    ustate.baseline_set_at = user_local_now()
+    st.session_state.pop('personalization', None)
+    save_active_user_baseline(ustate)
+
+
 # =============================================================================
 # ANALYTICS (Phase 5.1) - longitudinal view over saved session history.
 # Read-only, no camera - kept as a separate early-return branch in main()
@@ -1114,8 +1138,32 @@ def make_live_run(ustate, models, store, dt0=None):
         known, known_by_mode = {}, {}
     agent = InterventionAgent(stats=known, mode_stats=known_by_mode,
                               task_mode=st.session_state.task_mode)
+    # Refit from the database at every Start: picks up ratings given since
+    # (on this or another device) and can never include this new session.
+    personal = current_personalization(store, ustate, refresh=True)
     return LiveRun(ustate, models, agent, task_mode=st.session_state.task_mode,
-                   agent_enabled=st.session_state.agent_enabled, dt0=dt0)
+                   agent_enabled=st.session_state.agent_enabled, dt0=dt0,
+                   personalization=personal)
+
+
+def current_personalization(store, ustate, refresh=False):
+    """The signed-in user's personalization.Personalization for the CURRENT
+    task mode and baseline (general model when disabled, not yet earned,
+    incompatible history, or unreadable history). Kept in st.session_state,
+    which sign-out/expiry wipe entirely, and refit whenever the user, mode or
+    baseline changes; the per-session feature cache is keyed by user id."""
+    if not personalization.enabled_for(config.STORAGE_BACKEND):
+        return personalization.general("personalization is off for this storage mode.")
+    uid = st.session_state.active_user_id
+    key = (uid, st.session_state.task_mode, ustate.baseline_set_at)
+    if (refresh or 'personalization' not in st.session_state
+            or st.session_state.get('personalization_key') != key):
+        caches = st.session_state.setdefault('personal_cache', {})
+        st.session_state.personalization = personalization.load(
+            store, uid, cache=caches.setdefault(uid, {}),
+            task_mode=st.session_state.task_mode, baseline_set_at=ustate.baseline_set_at)
+        st.session_state.personalization_key = key
+    return st.session_state.personalization
 
 
 def render_calibration_progress(panels, run):
@@ -1131,7 +1179,7 @@ def finish_calibration(ustate, run):
     face_ok, daisee_ok = run.finish()
     st.session_state.calibrating = False
     if face_ok or daisee_ok:
-        save_active_user_baseline(ustate)
+        stamp_baseline_change(ustate)
     if face_ok and daisee_ok:
         return 'success', "Calibration complete. Press Start to begin."
     if face_ok or daisee_ok:
@@ -1617,6 +1665,9 @@ def main():
                               f"Sit naturally for {CALIBRATION_SECONDS} seconds. "
                               f"System learns your personal baseline.")):
                 st.session_state.calibrating = True
+                # The previous session's "rating saved / NOT saved" notice
+                # belongs to that session - never show it after this one.
+                st.session_state.pop('selfrep_notice', None)
                 st.session_state.history = []
                 st.session_state.history_saved = False
                 st.session_state.last_saved_session_id = None
@@ -1636,6 +1687,7 @@ def main():
                               "question below first.") if _report_pending else None):
                 st.session_state.running = True
                 st.session_state.session_start = datetime.now()
+                st.session_state.pop('selfrep_notice', None)    # see Calibrate
                 st.session_state.history = []
                 st.session_state.history_saved = False
                 st.session_state.last_saved_session_id = None
@@ -1688,8 +1740,18 @@ def main():
                 # named user (no-op for anonymous - see the function's own
                 # early return). Same call calibration success already
                 # makes, kept consistent here (BUG_AUDIT_2026-08-23.md #7).
-                save_active_user_baseline(ustate)
+                stamp_baseline_change(ustate)
                 st.rerun()
+
+        # ---------- Personal calibration status ----------
+        # Read-only status of personalization.py for THIS account. It changes
+        # the score only from the next Start, never the session on screen.
+        if personalization.enabled_for(config.STORAGE_BACKEND):
+            try:
+                _p = current_personalization(store, ustate)
+            except Exception:
+                _p = personalization.general("your history could not be loaded right now.")
+            st.caption(_p.describe() + " The shared vision models are the same for everyone.")
 
         # ---------- Recording labels ----------
         # Set BEFORE recording; these are baked into the export filename so
@@ -1828,6 +1890,8 @@ def main():
                                "accounts are not affected. Cannot be undone." if hosted else
                                "Deletes every saved session from the local DB. Cannot be undone.")):
                 store.clear_all_sessions()
+                st.session_state.pop('personalization', None)    # learned from deleted data
+                st.session_state.pop('personal_cache', None)
                 st.session_state.history = []
                 st.session_state.history_saved = False
                 st.session_state.last_saved_session_id = None
@@ -2009,6 +2073,12 @@ def main():
         agent_panel_placeholder.empty()
 
         # ---------- SELF-REPORT PROMPT (Phase 3 labeling loop) ----------
+        # Outcome of the last rating click, shown once. Kept across the
+        # st.rerun() the click handler makes - a plain st.warning() there
+        # vanished immediately, and a failure looked like nothing happened.
+        _notice = st.session_state.pop('selfrep_notice', None)
+        if _notice is not None:
+            (st.success if _notice[0] == 'success' else st.warning)(_notice[1])
         if st.session_state.pending_self_report is not None:
             _sid = st.session_state.pending_self_report
             with st.container(border=True):
@@ -2038,8 +2108,23 @@ def main():
                 ]
                 for _i, _lab in enumerate(_labels, start=1):
                     if _cols[_i - 1].button(_lab, key=f"selfrep_{_i}"):
+                        # Through the storage backend (Supabase when hosted,
+                        # SQLite locally) - it used to call the SQLite module
+                        # directly, which has no tables on the hosted server.
+                        # The store checks the session belongs to this user.
                         try:
-                            session_history.set_self_report(_sid, _i)
+                            get_store().set_self_report(
+                                _sid, _i, user_id=st.session_state.active_user_id)
+                        except (LookupError, ValueError) as e:
+                            st.session_state.selfrep_notice = (
+                                'warning', f"Your rating was NOT saved: {e}.")
+                        except Exception:
+                            # Server error text can carry request details;
+                            # the user only needs to know it failed.
+                            st.session_state.selfrep_notice = (
+                                'warning', "Your rating was NOT saved: the database "
+                                           "did not confirm it. Try again, or Skip.")
+                        else:
                             # So the CSV/PDF export for THIS same session
                             # (still on screen, since Stop/failure don't
                             # clear history) reflects the answer right
@@ -2048,9 +2133,10 @@ def main():
                             # (BUG_AUDIT_2026-08-23.md #8).
                             if _sid == st.session_state.last_saved_session_id:
                                 st.session_state.last_saved_self_report = _i
-                        except Exception as e:
-                            st.warning(f"Could not save rating: {e}")
-                        st.session_state.pending_self_report = None
+                            st.session_state.pending_self_report = None
+                            st.session_state.selfrep_notice = (
+                                'success', "Thanks - your rating was saved with that session.")
+                            st.session_state.pop('personalization', None)   # refit on next view
                         st.rerun()
                 if _cols[5].button("Skip", key="selfrep_skip"):
                     st.session_state.pending_self_report = None

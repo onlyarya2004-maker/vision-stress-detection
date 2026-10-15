@@ -525,3 +525,65 @@ def test_general_break_never_competes_when_only_one_signal_is_elevated():
         stressed = dict(CALM, jaw_tension=0.9)
         iv = a.update(warmed(), 0.80, stressed)
         assert iv.trigger_signal == 'jaw_tension'
+
+
+# ---------------------------------------------------------------------------
+# Personalized reading vs. general reading (session_pipeline.LiveRun passes
+# both when a per-user shift is active): DECIDE on what the user sees,
+# MEASURE and LOG on the general reading - the space saved samples are in.
+# ---------------------------------------------------------------------------
+TENSE_JAW = dict(CALM, jaw_tension=0.9)
+
+
+def test_the_decision_to_fire_uses_the_reading_the_user_sees():
+    a = _agent()
+    # shown 0.50 is above INTERVENTION_MIN_INDEX (0.45); the general 0.40 is not
+    assert a.update(warmed(), 0.50, TENSE_JAW, general_index=0.40) is not None
+    b = _agent()
+    assert b.update(warmed(), 0.40, TENSE_JAW, general_index=0.50) is None
+
+
+def test_outcomes_are_logged_in_the_general_score_space():
+    a = _agent()
+    t = warmed()
+    a.update(t, 0.60, TENSE_JAW, general_index=0.52)
+    a.update(t + config.INTERVENTION_EVAL_SECONDS, 0.50, CALM, general_index=0.42)
+    (row,) = a.finish_session(t + config.INTERVENTION_EVAL_SECONDS + 1, 0.5, general_index=0.42)
+    assert row['index_before'] == pytest.approx(0.52) and row['index_after'] == pytest.approx(0.42)
+    assert row['outcome'] == 'helped'                   # drop 0.10 either way
+
+
+def test_a_clipped_personal_reading_does_not_hide_a_real_drop():
+    """Shift +0.10 on a general 0.95 -> 0.88 drop: the shown reading sits at
+    1.0 the whole time (drop 0). Measured on the general reading it helped -
+    and the logged numbers agree with the logged outcome."""
+    a = _agent()
+    t = warmed()
+    a.update(t, 1.0, TENSE_JAW, general_index=0.95)
+    a.update(t + config.INTERVENTION_EVAL_SECONDS, 1.0, CALM, general_index=0.88)
+    (row,) = a.finish_session(t + config.INTERVENTION_EVAL_SECONDS + 1, 1.0, general_index=0.88)
+    assert row['outcome'] == 'helped'
+    assert row['index_before'] - row['index_after'] >= config.INTERVENTION_HELPED_DROP
+    assert a.stats[row['kind']]['helped'] == 1          # in-session learning agrees
+
+
+def test_an_unmeasured_intervention_logs_its_general_starting_point():
+    a = _agent()
+    t = warmed()
+    a.update(t, 0.60, TENSE_JAW, general_index=0.52)
+    (row,) = a.finish_session(t + 5, 0.58, general_index=0.50)   # too early to measure
+    assert row['outcome'] == 'unknown' and row['index_after'] is None
+    assert row['index_before'] == pytest.approx(0.52)
+
+
+def test_without_a_general_reading_the_agent_behaves_exactly_as_before():
+    rows = []
+    for kw in ({}, {'general_index': None}):
+        a = _agent(seed=7)
+        t = warmed()
+        a.update(t, 0.60, TENSE_JAW, **kw)
+        a.update(t + config.INTERVENTION_EVAL_SECONDS, 0.50, CALM, **kw)
+        (row,) = a.finish_session(t + config.INTERVENTION_EVAL_SECONDS + 1, 0.5, **kw)
+        rows.append({k: v for k, v in row.items() if k != 'ts'})
+    assert rows[0] == rows[1]
+    assert rows[0]['index_before'] == pytest.approx(0.60) and rows[0]['outcome'] == 'helped'
