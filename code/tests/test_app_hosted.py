@@ -154,3 +154,80 @@ def test_sign_out_wipes_the_browser_sessions_state(signed_in):
     assert not at.exception
     assert not at.sidebar.button                          # back at the login gate: no app UI
     assert 'user_state' not in at.session_state
+
+
+# ---- the login gate (no session / expired session) ------------------------
+def test_nothing_of_the_dashboard_renders_without_a_session(monkeypatch, temp_db):
+    monkeypatch.setenv('SUPABASE_URL', 'https://abcdefghijklmnopqrst.supabase.co')
+    monkeypatch.setenv('SUPABASE_PUBLISHABLE_KEY', 'sb_publishable_dummyDummyDummy0123')
+    at = AppTest.from_file(APP, default_timeout=90)
+    at.run()
+    assert not at.exception
+    assert not at.sidebar.button and not at.sidebar.markdown        # no app chrome at all
+    labels = [b.label for b in at.button]
+    assert 'Sign in' in labels and 'Create account' in labels
+    for app_only in ('Start', 'Stop', 'Calibrate', 'Delete my data', 'Sign out'):
+        assert app_only not in labels
+    assert 'user_state' not in at.session_state                     # no camera/model state built
+    import session_history
+    assert not session_history.DB_PATH.exists()                     # and no local DB fallback
+
+
+def test_an_expired_session_goes_back_to_the_login_page(signed_in, monkeypatch):
+    at, server = signed_in
+    monkeypatch.setenv('SUPABASE_URL', 'https://abcdefghijklmnopqrst.supabase.co')
+    monkeypatch.setenv('SUPABASE_PUBLISHABLE_KEY', 'sb_publishable_dummyDummyDummy0123')
+    at.session_state['auth_session'].client.auth.get_session = lambda: None   # refresh failed
+    at.run()
+    assert not at.exception
+    assert 'auth_session' not in at.session_state
+    assert any('expired' in w.value for w in at.warning)
+    assert not at.sidebar.button
+    assert server.requests == []                                    # no query with a dead token
+
+
+def test_after_expiry_the_next_user_inherits_and_saves_nothing_of_the_previous_one(
+        signed_in, monkeypatch):
+    """Alice's session expires mid-use with an unsaved recording; Bob then signs
+    in on the SAME tab. Bob must start from a blank slate, and nothing of
+    Alice's may be written anywhere - not to her account, not to his."""
+    at, server = signed_in
+    monkeypatch.setenv('SUPABASE_URL', 'https://abcdefghijklmnopqrst.supabase.co')
+    monkeypatch.setenv('SUPABASE_PUBLISHABLE_KEY', 'sb_publishable_dummyDummyDummy0123')
+
+    at.run()                                                   # Alice's dashboard
+    alice_state = at.session_state['user_state']
+    at.session_state['history'] = _history()                   # unsaved recording
+    at.session_state['history_saved'] = False
+
+    # Her refresh token is revoked / the refresh fails.
+    at.session_state['auth_session'].client.auth.get_session = lambda: None
+    at.run()
+    assert not at.exception
+    assert any('expired' in w.value for w in at.warning)
+    for key in ('auth_session', 'auth_client_session', 'user_state', 'history',
+                'history_saved', 'active_user_id', 'active_user_name'):
+        assert key not in at.session_state, f"{key} survived the expiry"
+
+    # Bob signs in on the same tab.
+    server.requests.clear()
+    pg = SyncPostgrestClient('http://sb.test/rest/v1',
+                             http_client=httpx.Client(transport=httpx.MockTransport(server.handler)))
+    gotrue = SimpleNamespace(get_session=lambda: SimpleNamespace(access_token='tok-bob'),
+                             sign_out=lambda *a, **k: None)
+    bob = AuthSession(SimpleNamespace(table=pg.from_, auth=gotrue))
+    bob._user = SimpleNamespace(id='uid-bob', email='bob@example.com')
+    at.session_state['auth_session'] = bob
+    at.run()
+    assert not at.exception
+    assert at.session_state['active_user_id'] == 'uid-bob'
+    assert at.session_state['history'] == []                   # nothing inherited
+    assert at.session_state['user_state'] is not alice_state   # fresh calibration state
+    assert any('bob@example.com' in m.value for m in at.sidebar.markdown)
+
+    # Nothing was saved for anyone, and every request was Bob's own.
+    assert not any(r.method == 'POST' for r in server.requests), "a recording was saved"
+    for req in server.requests:
+        p = _params(req)
+        table = req.url.path.rsplit('/', 1)[-1]
+        assert (p.get('id') if table == 'profiles' else p.get('user_id')) == 'eq.uid-bob'

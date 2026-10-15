@@ -120,79 +120,180 @@ the demo configuration below, so there is no headroom for a second running app
 ---------------------------------------------------------------------------
 ## 3. Put the image on Azure
 
-The image is ~3 GB (TensorFlow + MediaPipe + two CNNs). `docker push` uploads all
-of it the first time (later pushes only send the changed layers), so do this step on a
-fast home connection, not the college network.
+### 3a. What already exists (verified read-only, 2026-10-15)
+
+Everything in this table is already created and working - normally you only
+need 3b. Section 3c is only for rebuilding from nothing.
+
+| Resource | Name | Notes |
+|---|---|---|
+| Subscription | Azure for Students (`39643323-d40d-4cee-8be3-5f1d0d00a8b1`) | |
+| Resource group | `stress-detection-demo-rg` | its own location is `southindia`; allowed because the subscription's region policy ("Allowed resource deployment regions", mode *Indexed*) does not apply to resource groups |
+| Region of every resource | `eastasia` | the policy allows only `polandcentral`, `koreacentral`, `eastasia`, `indiasouthcentral`, `austriaeast`, and Container Apps is not offered in `indiasouthcentral` |
+| Container registry | `stressstresstracker2026` (Basic) | admin user **off**, anonymous pull **off** |
+| Log Analytics | `stress-logs` | 30-day retention; receives the app's console logs |
+| Container Apps environment | `stress-env` | an **Express** environment, Consumption profile only - see the notes below |
+| Pull identity | `stress-app-pull-id` (user-assigned managed identity) | its only role: `AcrPull` on the registry |
+| Container app | `stress-app` | 4 vCPU / 8 GiB; min 0 / max 1 replicas; external HTTPS ingress on port 8501, transport HTTP/1.1, HTTP redirected to HTTPS, no IP restrictions; image pulled by digest through `stress-app-pull-id` |
+| Public address | `https://stress-app.ambitiousplant-4f39aef6.eastasia.azurecontainerapps.io` | |
+
+App settings (secret **names** only - the values exist only in Azure):
+
+| Setting | Value |
+|---|---|
+| `STRESS_STORAGE_BACKEND` | `supabase` |
+| `SUPABASE_URL` | secret reference `supabase-url` |
+| `SUPABASE_PUBLISHABLE_KEY` | secret reference `supabase-key` - the publishable key only, never a secret / service-role key |
+| `STREAMLIT_CLIENT_SHOW_ERROR_DETAILS` | `none` - visitors never see Python tracebacks |
+| `STREAMLIT_CLIENT_TOOLBAR_MODE` | `viewer` - hides Streamlit's developer menu |
+| `STRESS_SIGNUP_CODE` | secret reference `signup-code` - **obsolete**: the current code ignores it. Remove both at the next deployment (3b). |
+
+As of 2026-10-15 the app runs image `stress-app@sha256:03582187…` (tag `v1`).
+That image predates the email/password rework - it still shows the invite-code
+form - so deploying the current code needs a new image (3b).
+
+Express environment notes (each one was hit during the first deployment):
+
+* **No system-assigned identity**: Express rejects it, so image pulls use the
+  user-assigned `stress-app-pull-id`.
+* **No session affinity** (sticky sessions): not needed, because max replicas is 1.
+* `az containerapp stop` / `start` are not in Azure CLI 2.88, and
+  `az containerapp revision deactivate` fails: use the ARM start/stop actions (3b).
+* `az containerapp logs show` fails on Express apps (`KeyError:
+  'eventStreamEndpoint'`): read the logs in Log Analytics instead (3b).
+* Turn ingress on while the app is **running** (or at create time). Ingress
+  enabled while the app was stopped returned 404 `{"error":"Not found"}` until it
+  was toggled off and on with the app running.
+* With ingress **off**, min replicas 0 did not scale the app to zero; the stop
+  action does.
+* `az acr build` (ACR Tasks) is blocked on this subscription
+  (`TasksOperationsNotAllowed`): build the image locally and push it.
+
+### 3b. Deploying new code to the existing app
+
+The image is ~3 GB uncompressed (~0.9 GB to push, compressed), so push from a
+fast connection, not the college network.
 
 ```powershell
-$RG  = "stress-rg"
-$LOC = "<an allowed region, e.g. uaenorth>"
-$ACR = "stressacr$(Get-Random -Maximum 99999)"       # must be globally unique, lowercase
-$ENV = "stress-env"
-$APP = "stress-app"
+$SUB   = "39643323-d40d-4cee-8be3-5f1d0d00a8b1"
+$RG    = "stress-detection-demo-rg"
+$ACR   = "stressstresstracker2026"
+$APP   = "stress-app"
+$APPID = "/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.App/containerApps/$APP"
+$TAG   = "v2"                                        # a new tag for every build
 
-az group create -n $RG -l $LOC
+az account set --subscription $SUB
+docker build --platform linux/amd64 -t "$ACR.azurecr.io/stress-app:$TAG" .
+az acr login -n $ACR                                # your Entra sign-in - no registry password
+docker push "$ACR.azurecr.io/stress-app:$TAG"
 
-# No --admin-enabled: the admin user is a password that would then have to live
-# in the app's config. The app pulls with a managed identity instead (below).
-az acr create -n $ACR -g $RG --sku Basic
-az acr login -n $ACR
-docker build -t "$ACR.azurecr.io/stress-app:v1" .
-docker push  "$ACR.azurecr.io/stress-app:v1"
+# Deploy by immutable digest, never by tag.
+$DIGEST = az acr repository show -n $ACR --image "stress-app:$TAG" --query digest -o tsv
+az containerapp update -n $APP -g $RG --image "$ACR.azurecr.io/stress-app@$DIGEST"
 
-# -w/--enable-workload-profiles defaults to true on current CLI versions, but
-# pass it explicitly: a "Consumption only" environment is CAPPED AT 2 cores /
-# 4 GiB, and the demo needs 4 / 8. (In the portal wizard this is the
-# "Workload profiles" environment type - do not pick "Consumption only".)
-az containerapp env create -n $ENV -g $RG -l $LOC --enable-workload-profiles
-
-az containerapp create -n $APP -g $RG --environment $ENV `
-    --image "$ACR.azurecr.io/stress-app:v1" `
-    --target-port 8501 --ingress external `
-    --cpu 2 --memory 4Gi --min-replicas 1 --max-replicas 1 `
-    --system-assigned `
-    --secrets "supabase-url=https://xxxx.supabase.co" "supabase-key=<publishable key>" "signup-code=<an invite code you choose>" `
-    --env-vars "STRESS_STORAGE_BACKEND=supabase" "SUPABASE_URL=secretref:supabase-url" "SUPABASE_PUBLISHABLE_KEY=secretref:supabase-key" "STRESS_SIGNUP_CODE=secretref:signup-code"
-
-# Let the app pull from the registry as itself (AcrPull), so no registry
-# password is stored anywhere. Run these three after the app exists.
-$PRINCIPAL = az containerapp show -n $APP -g $RG --query identity.principalId -o tsv
-$ACRID     = az acr show -n $ACR -g $RG --query id -o tsv
-az role assignment create --assignee $PRINCIPAL --role AcrPull --scope $ACRID
-az containerapp registry set -n $APP -g $RG --server "$ACR.azurecr.io" --identity system
-
-# Streamlit keeps each signed-in user's state in the memory of one replica, so
-# pin requests from one browser to one replica. (Harmless while max-replicas=1,
-# and it is the thing that would break first if that ever changed.)
-az containerapp ingress sticky-sessions set -n $APP -g $RG --affinity sticky
-
-az containerapp show -n $APP -g $RG --query properties.configuration.ingress.fqdn -o tsv
+# Once: remove the obsolete invite code (the setting first, then the secret it uses).
+az containerapp update -n $APP -g $RG --remove-env-vars STRESS_SIGNUP_CODE
+az containerapp secret remove -n $APP -g $RG --secret-names signup-code
 ```
-The last command prints your public address (`https://<that value>`), e.g.
-`stress-app.<random>.<region>.azurecontainerapps.io`. No domain needs buying.
 
-Keep **min = max = 1 replica**: each person's live session lives in the memory
-of the one running copy, so a second copy would drop sessions.
+Start / stop - a stopped app runs no replicas and so uses no compute:
 
-`STRESS_SIGNUP_CODE` makes the "Create account" form ask for that invite code, so
-strangers who find the public address cannot sign up (give it to your friend and the
-teacher). The app also refuses more than 6 simultaneous sessions
-(`STRESS_MAX_SESSIONS`) so the demo server can't be swamped.
+```powershell
+az rest --method post --url "https://management.azure.com$APPID/start?api-version=2024-03-01"
+az rest --method post --url "https://management.azure.com$APPID/stop?api-version=2024-03-01"
+az containerapp show -n $APP -g $RG --query properties.runningStatus -o tsv     # Running / Stopped
+az containerapp replica list -n $APP -g $RG --query "length(@)" -o tsv         # running replicas
+```
+
+Logs: portal -> `stress-logs` -> *Logs*, query
+`ContainerAppConsoleLogs_CL | where ContainerAppName_s == "stress-app" | order by TimeGenerated desc`.
+
+Replicas: keep **max 1** - each person's live session lives in the memory of the
+one running copy, so a second copy would drop sessions. **Min 0** is the normal
+setting. For the demo window set min 1, so Azure cannot scale the app down under a
+live session (a Streamlit session runs over one long-lived WebSocket, while Azure's
+HTTP scaler counts new requests):
+
+```powershell
+az containerapp update -n $APP -g $RG --min-replicas 1     # demo window
+az containerapp update -n $APP -g $RG --min-replicas 0     # afterwards (and/or stop the app)
+```
+
+Sign-in is email + password only, and registration is open - there is no invite
+code any more. Two Supabase dashboard settings decide how new accounts behave
+(Authentication -> Sign In / Providers -> Email, and -> URL Configuration):
+**Confirm email** (ON = people must click a link before they can sign in; OFF =
+they are signed in immediately) and **Site URL** (where that link lands - set it to
+the app's https address). The app handles both. The app also refuses more than 6
+simultaneous sessions (`STRESS_MAX_SESSIONS`) so the demo server can't be swamped.
 
 Check: open the address -> login page appears -> sign in -> Calibrate asks for
 camera permission (it works because the address is https).
 
-Useful commands
+### 3c. Rebuilding from scratch (only if the resources in 3a are gone)
+
+Not needed today - 3a already exists. Read 3a's Express notes first. Never paste
+the Supabase values or the workspace key into a shared terminal history; load
+them into variables from local, git-ignored files.
+
 ```powershell
-az containerapp logs show -n $APP -g $RG --follow                 # live logs
-az containerapp update -n $APP -g $RG --cpu 4 --memory 8Gi        # demo day: more CPU
-az containerapp update -n $APP -g $RG --min-replicas 0            # idle between sessions: costs ~$0 (cold start ~1 min)
-az containerapp update -n $APP -g $RG --min-replicas 1            # warm it up again
+$SUB  = "39643323-d40d-4cee-8be3-5f1d0d00a8b1"
+$RG   = "stress-detection-demo-rg"
+$LOC  = "eastasia"                                   # an allowed region that offers Container Apps
+$ACR  = "<globally unique, lowercase>"
+$ENV  = "stress-env"
+$APP  = "stress-app"
+$LOGS = "stress-logs"
+$ID   = "stress-app-pull-id"
+
+az account set --subscription $SUB
+az group create -n $RG -l $LOC
+az acr create -n $ACR -g $RG -l $LOC --sku Basic     # no --admin-enabled: no registry password
+# build, log in and push the image as in 3b, then set $DIGEST
+
+az monitor log-analytics workspace create -g $RG -n $LOGS -l $LOC
+$WSID  = az monitor log-analytics workspace show -g $RG -n $LOGS --query customerId -o tsv
+$WSKEY = az monitor log-analytics workspace get-shared-keys -g $RG -n $LOGS --query primarySharedKey -o tsv
+az containerapp env create -n $ENV -g $RG -l $LOC `
+    --logs-destination log-analytics --logs-workspace-id $WSID --logs-workspace-key $WSKEY
+Remove-Variable WSKEY
+# On this subscription (Azure CLI 2.88) that produced an *Express* environment.
+
+az identity create -g $RG -n $ID -l $LOC
+$UAMI      = az identity show -g $RG -n $ID --query id -o tsv
+$PRINCIPAL = az identity show -g $RG -n $ID --query principalId -o tsv
+$ACRID     = az acr show -n $ACR -g $RG --query id -o tsv
+az role assignment create --assignee-object-id $PRINCIPAL --assignee-principal-type ServicePrincipal `
+    --role AcrPull --scope $ACRID
+# wait 1-2 minutes for the role assignment to take effect
+
+az containerapp create -n $APP -g $RG --environment $ENV --workload-profile-name Consumption `
+    --image "$ACR.azurecr.io/stress-app@$DIGEST" `
+    --user-assigned $UAMI --registry-server "$ACR.azurecr.io" --registry-identity $UAMI `
+    --cpu 4 --memory 8Gi --min-replicas 0 --max-replicas 1 `
+    --ingress external --target-port 8501 --transport http `
+    --secrets "supabase-url=$SUPABASE_URL" "supabase-key=$SUPABASE_PUBLISHABLE_KEY" `
+    --env-vars "STRESS_STORAGE_BACKEND=supabase" "SUPABASE_URL=secretref:supabase-url" `
+               "SUPABASE_PUBLISHABLE_KEY=secretref:supabase-key" `
+               "STREAMLIT_CLIENT_SHOW_ERROR_DETAILS=none" "STREAMLIT_CLIENT_TOOLBAR_MODE=viewer"
+
+az containerapp show -n $APP -g $RG --query properties.configuration.ingress.fqdn -o tsv
 ```
+Ingress at create time follows Microsoft's Express documentation; on this
+subscription the app was created without ingress and it was added later. If the
+address answers 404 `{"error":"Not found"}`, run `az containerapp ingress disable`
+and then `az containerapp ingress enable --type external --target-port 8501
+--transport http` while the app is running. The last command prints the public
+address; no domain needs buying.
+
+If a step is refused with a policy/quota/region error, tell me the exact error
+text - the fallbacks are an Azure VM (same credit), Hugging Face Spaces, or
+Railway.
+
 ### What it costs
 
 Rates below are from Azure's public retail price API (13 Oct 2026, Consumption
-plan - identical in `centralindia` and `eastus`): vCPU active
+plan - identical in `centralindia`, `eastus` and `eastasia`): vCPU active
 $0.000024/vCPU-second, memory $0.000003/GiB-second, requests $0.40/million.
 Free every calendar month, per subscription: **180,000 vCPU-seconds, 360,000
 GiB-seconds, 2 million requests** (health-probe requests are not billable).
@@ -202,6 +303,11 @@ GiB-seconds, 2 million requests** (health-probe requests are not billable).
 | scaled to zero | **$0.00** | - |
 | 2 vCPU / 4 GiB | $0.216 / hour | first **25 h** each month |
 | 4 vCPU / 8 GiB | $0.432 / hour | first **12.5 h** each month |
+
+Caveat: Azure Cost Management for October 2026 showed the app's vCPU and memory
+usage billed (about INR 22 for a few hours of running) although the free grant
+should have covered it - check the invoice / credit balance before relying on the
+free hours.
 
 So a realistic demo week - say 30 hours of 4 vCPU uptime across testing,
 rehearsal and the demo itself - costs about **$7.60** after the free grant,
@@ -214,12 +320,8 @@ $310. **Scale to zero whenever you are not actively testing**, and only set
 `--min-replicas 1` from the evening before the demo.
 
 ```powershell
-az containerapp update -n $APP -g $RG --min-replicas 0     # done for today -> $0
+az rest --method post --url "https://management.azure.com$APPID/stop?api-version=2024-03-01"   # done for today
 ```
-
-If a step is refused with a policy/quota/region error, tell me the exact error
-text - the fallbacks are an Azure VM (same credit), Hugging Face Spaces, or
-Railway.
 
 ---------------------------------------------------------------------------
 ## 4. Auto-redeploy from Git
@@ -283,8 +385,8 @@ it builds, pushes, rolls out and waits for `/_stcore/health` to answer.
 Nothing triggers on `main`. The models are Git-LFS files, so each run downloads
 ~51 MB of LFS against GitHub's free 1 GB/month - roughly 20 deploys a month.
 If app registration is blocked on the student tenant, skip all of this and run
-the three commands from step 3 by hand (`docker build` -> `docker push` ->
-`az containerapp update --image ...`); CI is a convenience, not a requirement.
+the commands in 3b by hand (`docker build` -> `docker push` ->
+`az containerapp update --image ...@<digest>`); CI is a convenience, not a requirement.
 
 Supabase keep-alive: copy `deploy/github-workflow-keepalive.yml` to
 `.github/workflows/` and add secrets `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`.
@@ -292,8 +394,9 @@ Supabase keep-alive: copy `deploy/github-workflow-keepalive.yml` to
 ---------------------------------------------------------------------------
 ## 5. Demo-day checklist
 
-- [ ] Day before: `--min-replicas 1`, `--cpu 4 --memory 8Gi`; Supabase project awake
-      (open the dashboard once); run `scripts/rls_check.py` one last time.
+- [ ] Day before: start the app and set `--min-replicas 1` (3b; the size is already
+      4 vCPU / 8 GiB); Supabase project awake (open the dashboard once); run
+      `scripts/rls_check.py` one last time. Stop the app again afterwards.
 - [ ] **Two-user performance test - the one thing never measured locally.** A
       background browser tab gets throttled, so two real simultaneous clients
       could only ever be tested on two machines. On the hosted URL, with both
@@ -302,8 +405,9 @@ Supabase keep-alive: copy `deploy/github-workflow-keepalive.yml` to
       2. Both press Start within a few seconds of each other and run 3 minutes.
       3. On each laptop watch the processed-frames-per-second readout. **Pass bar:
          >= 8 fps each, round trip <= ~1.5 s, no "falling behind" warnings.**
-      4. During the run: `az containerapp logs show -n $APP -g $RG --follow` in one
-         window, and in the portal *Metrics* -> CPU usage / memory working set.
+      4. During the run: the console logs in Log Analytics (3b - `az containerapp
+         logs show` does not work on Express), and in the portal *Metrics* -> CPU
+         usage / memory working set.
          Expect roughly 2.0-2.6 cores and ~1.3 GB total (measured: 632 MB per live
          session, 51 MB idle).
       5. Both press Stop. Both sessions must appear in their own Past sessions and
@@ -330,16 +434,18 @@ Supabase keep-alive: copy `deploy/github-workflow-keepalive.yml` to
 ## Tuning and troubleshooting
 
 - **Stress readout updates slowly / "N fps sent . X s round trip" in the video's corner is
-  high**: the server is CPU-bound. Raise CPU (`--cpu 4`), and/or run Pose every 3rd frame:
+  high**: the server is CPU-bound. It already has 4 vCPU (the Consumption maximum), so
+  run Pose every 3rd frame:
   set `POSE_EVERY_N_FRAMES = 3` in `code/config.py` **only after**
   `python experiment_mediapipe_tasks_parity.py --mode pose-cadence --pose-every 3`
   shows the posture signals still agree (see the result recorded in
   `models/pose_cadence_parity.txt`).
 - **Camera blocked**: the browser shows a message on the video. Click the camera icon in
   the address bar -> Allow -> "Try again". Camera access requires https (or localhost).
-- **Page loads but stays on "Please wait" / WebSocket errors behind a proxy**: add
-  `--server.enableCORS=false --server.enableXsrfProtection=false` to the `CMD` in the
-  Dockerfile (and rebuild). Only needed if the first deploy shows connection errors.
+- **Page loads but stays on "Please wait" / WebSocket errors**: on the Express deployment
+  the sign-in page loaded over the WebSocket with Streamlit's XSRF and CORS protection
+  left ON (verified 2026-10-14), so do not switch them off. Check ingress first: port
+  8501, transport HTTP/1.1, and the 404 note in 3a.
 - **Everyone is logged out after a deploy**: expected - sessions live in the container's memory.
 - **"HR BPM" shows `--`**: the heart-rate estimate needs >= 12 processed frames/second;
   it carries zero weight in the stress score either way (`W_RPPG = 0`).
@@ -360,5 +466,7 @@ Done on project `dctm****.supabase.co`, before any Azure deployment:
 | App renders hosted mode, Past sessions read from the live DB | passed |
 | SQLite fallback still works, local DBs byte-identical | passed |
 
-Not yet done: Azure deployment, the two-laptop rehearsal, and a real-webcam run
-against the hosted URL.
+Since then: deployed to Azure Container Apps (3a); on 2026-10-14 the public address
+served the sign-in page over HTTPS and the WebSocket, with no browser errors. Not yet
+done against the hosted URL: a real sign-in, the two-laptop rehearsal, and a
+real-webcam run.

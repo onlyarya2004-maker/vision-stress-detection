@@ -19,10 +19,24 @@ see another's data" requirement):
   * All data access then goes through session_store.SupabaseStore using the
     user's own JWT, so the database's RLS policies (supabase/schema.sql), not
     app code, decide what each person can see.
+  * Tokens (access, refresh) stay inside the server-side client. They are
+    never rendered, logged, or sent to the browser.
+
+Registration is open (no invite code). What limits abuse is Supabase itself:
+its password policy, its rate limits, and - when switched ON in the dashboard -
+"Confirm email", which makes people prove they own the address they register.
+The app handles both outcomes of sign-up (signed straight in, or "check your
+email"). Data isolation never depends on any of this: RLS scopes every row to
+the signed-in account.
 """
 import base64
+import hmac
 import json
 import os
+import re
+
+MIN_PASSWORD_LENGTH = 8
+_EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 
 
 class AuthFailure(Exception):
@@ -53,24 +67,26 @@ def validate_public_key(key):
     return key
 
 
+def _setting(name, secrets=None):
+    """Environment first, then Streamlit secrets; None when unset."""
+    v = os.environ.get(name)
+    if v:
+        return v
+    if secrets is not None:
+        try:
+            return secrets.get(name)
+        except Exception:
+            return None
+    return None
+
+
 def load_credentials(secrets=None):
     """(url, public_key) from the environment, falling back to Streamlit
     secrets. Raises AuthFailure when missing or when given a secret key."""
-    def get(name):
-        v = os.environ.get(name)
-        if v:
-            return v
-        if secrets is not None:
-            try:
-                return secrets.get(name)
-            except Exception:
-                return None
-        return None
-
-    url = get('SUPABASE_URL')
+    url = _setting('SUPABASE_URL', secrets)
     # Supabase renamed the public key from "anon" to "publishable"; accept both
     # names so a dashboard copy-paste works either way. The newer name wins.
-    key = get('SUPABASE_PUBLISHABLE_KEY') or get('SUPABASE_ANON_KEY')
+    key = _setting('SUPABASE_PUBLISHABLE_KEY', secrets) or _setting('SUPABASE_ANON_KEY', secrets)
     if not url:
         raise AuthFailure("SUPABASE_URL is not set.")
     if not key:
@@ -92,33 +108,30 @@ def _friendly(exc):
         return "Please confirm your email first (check your inbox), then sign in."
     if 'already registered' in low or 'already exists' in low:
         return "An account with that email already exists - use Sign in."
+    if 'signups not allowed' in low or 'signup is disabled' in low or 'signups are disabled' in low:
+        return "New account registration is currently turned off."
     if 'password' in low and ('weak' in low or 'least' in low or 'short' in low):
-        return "Password too weak - use at least 8 characters."
+        return f"Password too weak - use at least {MIN_PASSWORD_LENGTH} characters."
     if 'rate limit' in low or 'too many' in low:
         return "Too many attempts - wait a minute and try again."
-    return text or "Login failed."
+    if 'invalid' in low and 'email' in low:
+        return "Enter a valid email address."
+    return "Something went wrong. Please try again."
 
 
-def signup_code_required(secrets=None):
-    """The invite code new accounts must present, or None when sign-up is
-    open. Set STRESS_SIGNUP_CODE on the server to stop strangers who find the
-    public URL from creating accounts (the Supabase key never reaches the
-    browser, so the app's own form is the only way in)."""
-    v = os.environ.get('STRESS_SIGNUP_CODE')
-    if not v and secrets is not None:
-        try:
-            v = secrets.get('STRESS_SIGNUP_CODE')
-        except Exception:
-            v = None
-    return v or None
-
-
-def signup_code_ok(entered, required):
-    """Constant-time comparison; True whenever no code is required."""
-    if not required:
-        return True
-    import hmac
-    return hmac.compare_digest((entered or '').strip().encode(), required.strip().encode())
+def validate_registration(email, password, confirm):
+    """Checks done before anything is sent to Supabase. Returns the cleaned
+    email. Supabase still applies its own password policy afterwards."""
+    email = (email or '').strip()
+    if not email or not password:
+        raise AuthFailure("Enter an email and a password.")
+    if not _EMAIL_RE.match(email):
+        raise AuthFailure("Enter a valid email address.")
+    if len(password) < MIN_PASSWORD_LENGTH:
+        raise AuthFailure(f"Password too weak - use at least {MIN_PASSWORD_LENGTH} characters.")
+    if not hmac.compare_digest((confirm or '').encode(), password.encode()):
+        raise AuthFailure("The two passwords don't match.")
+    return email
 
 
 class AuthSession:
@@ -159,8 +172,8 @@ class AuthSession:
         email = (email or '').strip()
         if not email or not password:
             raise AuthFailure("Enter an email and a password.")
-        if len(password) < 8:
-            raise AuthFailure("Password too weak - use at least 8 characters.")
+        if len(password) < MIN_PASSWORD_LENGTH:
+            raise AuthFailure(f"Password too weak - use at least {MIN_PASSWORD_LENGTH} characters.")
         try:
             res = self.client.auth.sign_up({"email": email, "password": password})
         except Exception as e:
@@ -171,8 +184,16 @@ class AuthSession:
         return 'confirm_email'
 
     def sign_out(self):
+        """Sign out THIS browser session only (scope 'local' revokes this
+        session's refresh token; other devices stay signed in, as on any
+        normal website)."""
         try:
-            self.client.auth.sign_out()
+            self.client.auth.sign_out({"scope": "local"})
+        except TypeError:                       # clients without the options arg
+            try:
+                self.client.auth.sign_out()
+            except Exception:
+                pass
         except Exception:
             pass
         self._user = None
@@ -203,69 +224,14 @@ _PRIVACY_NOTE = (
     "can see only its own data; the database enforces that, not just the app."
 )
 
-
-def render_login_page(secrets=None):
-    """Draw the login/sign-up form. On success stores the AuthSession in
-    st.session_state['auth_session'] and reruns the script."""
-    import streamlit as st
-
-    st.markdown("## Vision-Based Behavioral Stress Detection")
-    st.caption("Camera only · no wearables · each account sees only its own data")
-
-    try:
-        url, key = load_credentials(secrets if secrets is not None else _streamlit_secrets())
-    except AuthFailure as e:
-        st.error(f"The server is not configured for login: {e}")
-        return
-
-    left, mid, right = st.columns([1, 2, 1])
-    with mid:
-        tab_in, tab_up = st.tabs(["Sign in", "Create account"])
-
-        def _session():
-            if 'auth_client_session' not in st.session_state:
-                st.session_state['auth_client_session'] = AuthSession(make_client(url, key))
-            return st.session_state['auth_client_session']
-
-        with tab_in:
-            with st.form("login_form"):
-                email = st.text_input("Email", key="login_email")
-                pw = st.text_input("Password", type="password", key="login_pw")
-                go = st.form_submit_button("Sign in", type="primary", width='stretch')
-            if go:
-                sess = _session()
-                try:
-                    sess.sign_in(email, pw)
-                except AuthFailure as e:
-                    st.error(str(e))
-                else:
-                    st.session_state['auth_session'] = sess
-                    st.rerun()
-
-        with tab_up:
-            invite = signup_code_required(secrets if secrets is not None else _streamlit_secrets())
-            with st.form("signup_form"):
-                email2 = st.text_input("Email", key="signup_email")
-                pw2 = st.text_input("Password (8+ characters)", type="password", key="signup_pw")
-                code2 = (st.text_input("Invite code", key="signup_code") if invite else None)
-                go2 = st.form_submit_button("Create account", width='stretch')
-            if go2:
-                sess = _session()
-                try:
-                    if not signup_code_ok(code2, invite):
-                        raise AuthFailure("That invite code is not valid.")
-                    outcome = sess.sign_up(email2, pw2)
-                except AuthFailure as e:
-                    st.error(str(e))
-                else:
-                    if outcome == 'signed_in':
-                        st.session_state['auth_session'] = sess
-                        st.rerun()
-                    else:
-                        st.success("Account created. Check your email for a confirmation "
-                                   "link, then use the Sign in tab.")
-        st.markdown(_PRIVACY_NOTE)
-
+_LOGIN_CSS = """
+<style>
+.auth-brand { text-align: center; margin: 2.2rem 0 1.2rem 0; }
+.auth-brand .auth-title { font-size: 1.55rem; font-weight: 700; letter-spacing: -0.01em; }
+.auth-brand .auth-sub { color: #A3B1C6; font-size: 0.92rem; margin-top: 0.3rem; }
+.auth-hint { color: #A3B1C6; font-size: 0.82rem; text-align: center; margin-top: 0.6rem; }
+</style>
+"""
 
 def _streamlit_secrets():
     try:
@@ -275,6 +241,92 @@ def _streamlit_secrets():
         return None
 
 
+def _brand(st, subtitle="Sign in to continue"):
+    st.markdown(
+        '<div class="auth-brand"><div class="auth-title">Vision-Based Behavioral '
+        'Stress Detection</div><div class="auth-sub">Camera only &middot; no wearables '
+        f'&middot; {subtitle}</div></div>', unsafe_allow_html=True)
+
+
+def render_login_page(secrets=None):
+    """Draw the sign-in / create-account page. On success stores the
+    AuthSession in st.session_state['auth_session'] and reruns the script."""
+    import streamlit as st
+
+    secrets = secrets if secrets is not None else _streamlit_secrets()
+    st.markdown(_LOGIN_CSS, unsafe_allow_html=True)
+
+    try:
+        url, key = load_credentials(secrets)
+    except AuthFailure as e:
+        _brand(st)
+        st.error(f"The server is not configured for login: {e}")
+        return
+
+    def _session():
+        if 'auth_client_session' not in st.session_state:
+            st.session_state['auth_client_session'] = AuthSession(make_client(url, key))
+        return st.session_state['auth_client_session']
+
+    _, mid, _ = st.columns([1, 1.4, 1])
+    with mid:
+        _brand(st)
+        notice = st.session_state.pop('auth_notice', None)
+        if notice:
+            st.warning(notice)
+        with st.container(border=True):
+            tab_in, tab_up = st.tabs(["Sign in", "Create account"])
+
+            with tab_in:
+                with st.form("login_form", border=False):
+                    email = st.text_input("Email", key="login_email",
+                                          placeholder="you@example.com", autocomplete="email")
+                    pw = st.text_input("Password", type="password", key="login_pw",
+                                       autocomplete="current-password")
+                    go = st.form_submit_button("Sign in", type="primary", width='stretch')
+                if go:
+                    sess = _session()
+                    try:
+                        sess.sign_in(email, pw)
+                    except AuthFailure as e:
+                        st.error(str(e))
+                    else:
+                        st.session_state['auth_session'] = sess
+                        st.rerun()
+                st.markdown('<div class="auth-hint">New here? Open the '
+                            '<b>Create account</b> tab.</div>', unsafe_allow_html=True)
+
+            with tab_up:
+                with st.form("signup_form", border=False):
+                    email2 = st.text_input("Email", key="signup_email",
+                                           placeholder="you@example.com", autocomplete="email")
+                    pw2 = st.text_input("Password", type="password", key="signup_pw",
+                                        help=f"At least {MIN_PASSWORD_LENGTH} characters.",
+                                        autocomplete="new-password")
+                    pw3 = st.text_input("Confirm password", type="password", key="signup_pw2",
+                                        autocomplete="new-password")
+                    go2 = st.form_submit_button("Create account", type="primary",
+                                                width='stretch')
+                if go2:
+                    sess = _session()
+                    try:
+                        clean = validate_registration(email2, pw2, pw3)
+                        outcome = sess.sign_up(clean, pw2)
+                    except AuthFailure as e:
+                        st.error(str(e))
+                    else:
+                        if outcome == 'signed_in':
+                            st.session_state['auth_session'] = sess
+                            st.rerun()
+                        else:
+                            st.success("Account created. We've sent you a confirmation link - "
+                                       "open it, then come back here and sign in.")
+                st.markdown('<div class="auth-hint">Already have an account? Open the '
+                            '<b>Sign in</b> tab.</div>', unsafe_allow_html=True)
+
+        st.caption(_PRIVACY_NOTE)
+
+
 def current_session():
     """The signed-in AuthSession for this browser session, or None."""
     import streamlit as st
@@ -282,12 +334,27 @@ def current_session():
     return sess if (sess is not None and sess.is_signed_in) else None
 
 
+def _clear_browser_session():
+    # Drop EVERYTHING this browser session held (baselines, history, store):
+    # the next person to use this tab must start from a blank slate.
+    import streamlit as st
+    for k in list(st.session_state.keys()):
+        del st.session_state[k]
+
+
+def expire_current(message):
+    """Forget a session whose tokens are no longer valid - with all of that
+    user's in-memory state, exactly as a sign-out does, so whoever signs in
+    next in this tab cannot inherit or save the previous user's calibration
+    or unsaved recording - and leave a notice for the login page."""
+    import streamlit as st
+    _clear_browser_session()
+    st.session_state['auth_notice'] = message
+
+
 def sign_out_current():
     import streamlit as st
     sess = st.session_state.get('auth_session')
     if sess is not None:
         sess.sign_out()
-    # Drop EVERYTHING this browser session held (baselines, history, store):
-    # the next person to use this tab must start from a blank slate.
-    for k in list(st.session_state.keys()):
-        del st.session_state[k]
+    _clear_browser_session()

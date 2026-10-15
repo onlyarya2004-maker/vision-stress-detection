@@ -871,6 +871,15 @@ def ensure_login():
     if config.STORAGE_BACKEND != 'supabase':
         return True
     sess = auth.current_session()
+    if sess is not None:
+        # Every rerun: a revoked or expired (and unrefreshable) session sends
+        # the user back to the login page instead of failing deep inside a
+        # database call. get_session() is local unless the token is expiring.
+        try:
+            sess.ensure_fresh()
+        except auth.AuthFailure as e:
+            auth.expire_current(str(e))
+            sess = None
     if sess is None:
         auth.render_login_page()
         return False
