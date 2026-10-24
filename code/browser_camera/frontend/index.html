@@ -57,7 +57,7 @@
   const octx = ov.getContext("2d");
 
   // ---- state ----
-  let cfg = { fps: 10, quality: 0.85, batch_ms: 500, proc_w: 640, proc_h: 480, test_url: "", local_box: true };
+  let cfg = { fps: 10, quality: 0.85, batch_ms: 500, proc_w: 640, proc_h: 480, test_url: "", local_box: true, max_frames: 8 };
   let mode = "idle", epoch = -1, ack = 0, overlay = {};
   let seq = 0, sentSeq = 0, inflight = false, lastSendAt = 0, tOrigin = performance.now();
   let buffer = [];
@@ -235,13 +235,24 @@
     if (buffer.length > 40) buffer.splice(0, buffer.length - 40);     // never grow unbounded
   }
 
+  // The server processes only the newest MAX_FRAMES_PROCESSED_PER_BATCH
+  // snapshots of a batch (session_pipeline.BatchGate) and discards the rest,
+  // so uploading older ones only made every round trip longer - and a longer
+  // round trip let more frames pile up for the next batch. Keep the newest
+  // `max` in their original (chronological) order; never mutates `buf`.
+  function newestFrames(buf, max) {
+    const m = Math.floor(Number(max));
+    const n = m >= 1 ? m : 8;                 // missing / invalid -> the server's default 8
+    return buf.length > n ? buf.slice(buf.length - n) : buf.slice();
+  }
+
   function maybeSend() {
     const now = performance.now();
     if (inflight && now - lastSendAt > 6000) { inflight = false; buffer.splice(0, Math.max(0, buffer.length - 10)); }
     if (mode === "idle" || inflight || buffer.length === 0) return;
     if (now - lastSendAt < cfg.batch_ms) return;
     seq += 1; sentSeq = seq; inflight = true; lastSendAt = now;
-    const frames = buffer.splice(0, buffer.length);
+    const frames = newestFrames(buffer.splice(0, buffer.length), cfg.max_frames);
     sentCount += frames.length;
     ST.setValue({ epoch: epoch, seq: seq, frames: frames, tz: -new Date().getTimezoneOffset(), ready: true });
   }

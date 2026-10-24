@@ -18,7 +18,8 @@ Protocol (see frontend/index.html):
       next batch only after this catches up: backpressure), overlay (label,
       colour, bbox in 640x480 processing coordinates, progress, note), cfg.
   Browser -> Python (return value, a dict): epoch, seq, frames
-      [{t: seconds since the run began, j: base64 JPEG}], tz (UTC offset
+      [{t: seconds since the run began, j: base64 JPEG}] - oldest first, at
+      most cfg max_frames (the newest ones captured since the last batch), tz (UTC offset
       minutes), optional err (camera error code).
 
 The returned value is the browser's LAST value and is re-delivered on every
@@ -45,6 +46,9 @@ def browser_camera(*, mode, epoch, ack, overlay=None, test_url="", key="browser_
         'batch_ms': config.BROWSER_BATCH_MS,
         'proc_w': config.PROCESS_WIDTH,
         'proc_h': config.PROCESS_HEIGHT,
+        # The browser uploads only this many newest snapshots per batch - the
+        # same number the server keeps (session_pipeline.BatchGate).
+        'max_frames': config.MAX_FRAMES_PROCESSED_PER_BATCH,
         'test_url': test_url or "",
         # Cosmetic in-browser face box (downloads ~10 MB of MediaPipe WASM from a
         # CDN on first use). STRESS_LOCAL_FACE_BOX=0 turns it off, e.g. for a
