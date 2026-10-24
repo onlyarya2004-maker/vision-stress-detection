@@ -349,3 +349,31 @@ def test_a_new_run_clears_the_previous_sessions_rating_notice(monkeypatch, temp_
     assert not at.exception
     assert 'selfrep_notice' not in at.session_state
     assert not any('rating was NOT saved' in w.value for w in at.warning)
+
+
+def test_local_mode_confirms_a_saved_recording_and_reports_an_empty_one(monkeypatch, temp_db, no_cnn):
+    """The same Stop outcomes on the local SQLite store: a saved recording
+    is confirmed with its sample count; an empty one says nothing was saved
+    instead of silently doing nothing."""
+    monkeypatch.setattr(config, 'STORAGE_BACKEND', 'sqlite')
+    monkeypatch.setattr(config, 'CAPTURE_MODE', 'browser')
+    session_history.init_db()
+    at = AppTest.from_file(APP, default_timeout=90)
+    at.session_state['history'] = _history()
+    at.session_state['history_saved'] = False
+    at.session_state['running'] = True
+    at.run()
+    _button(at, 'Stop').click().run()
+    assert not at.exception
+    assert session_history.session_count() == 1
+    assert any('Recording saved' in s.value for s in at.success)
+
+    next(b for b in at.button if b.label == 'Skip').click().run()     # clear the rating prompt
+    at.session_state['history'] = []
+    at.session_state['history_saved'] = False
+    at.session_state['running'] = True
+    at.run()
+    _button(at, 'Stop').click().run()
+    assert not at.exception
+    assert session_history.session_count() == 1                        # nothing new written
+    assert any('Nothing was saved' in i.value for i in at.info)

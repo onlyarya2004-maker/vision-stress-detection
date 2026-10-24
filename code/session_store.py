@@ -130,11 +130,15 @@ class SupabaseStore:
             for i in range(0, len(rows), _INSERT_CHUNK):
                 self._t('samples').insert(rows[i:i + _INSERT_CHUNK]).execute()
         except Exception:
-            # Don't leave a summary row that claims N samples it doesn't have.
+            # Don't leave a summary row that claims N samples it doesn't have
+            # (ON DELETE CASCADE also removes any sample chunks already in).
             try:
-                self._t('sessions').delete().eq('id', session_id).execute()
-            except Exception:
-                pass
+                (self._t('sessions').delete().eq('id', session_id)
+                 .eq('user_id', self.user_id).execute())
+            except Exception as e2:
+                # Type only: the caller reports the save as failed either way.
+                print(f"[save] could not remove the incomplete session row: "
+                      f"{type(e2).__name__}", flush=True)
             raise
         return session_id
 

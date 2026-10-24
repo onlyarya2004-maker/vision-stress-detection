@@ -817,6 +817,9 @@ def init_state():
     # CSV/PDF export stays available) can no longer write a second,
     # duplicate DB row for the same captured frames (BUG_AUDIT_2026-08-23.md #2).
     if 'history_saved' not in st.session_state: st.session_state.history_saved = False
+    # True while a stopped recording failed to save and is still held in
+    # memory for Retry/Discard (see save_current_session()).
+    if 'save_failed' not in st.session_state: st.session_state.save_failed = False
     if 'task_mode' not in st.session_state: st.session_state.task_mode = 'Default'
     # A header context button sets this on the rerun it triggers, then this
     # block (which runs before the sidebar "Context" selectbox is
@@ -928,27 +931,74 @@ def save_current_session():
     reset (e.g. a stale Stop click after a camera-failure save already ran
     this run) is a no-op rather than a duplicate DB row - see
     history_saved in init_state() and BUG_AUDIT_2026-08-23.md finding #2.
+
+    Every outcome is reported in a way that SURVIVES the st.rerun() both
+    callers make right after this returns (a plain st.warning() here used
+    to be wiped before the user could read it, so a failed save looked
+    exactly like a successful one with no rating prompt), and is written to
+    the server log as counts / error types only - never data, ids or error
+    messages. A recording that fails to save stays in memory
+    (save_failed) until the user retries or explicitly discards it.
+
+    Returns 'saved', 'empty', 'failed' or 'already'.
     """
-    if not st.session_state.history or st.session_state.history_saved:
-        return
+    ss = st.session_state
+    if ss.history_saved:
+        return 'already'
+    if not ss.history:
+        ss.save_notice = ('info', "Nothing was saved: no frames were processed during that "
+                                  "recording (no face detected, or it was stopped before any "
+                                  "result arrived). Keep your face in view and record for at "
+                                  "least 30 seconds.")
+        print("[save] nothing to save: 0 processed samples", flush=True)
+        return 'empty'
+    n = len(ss.history)
     store = get_store()
     try:
-        sid = store.save_session(
-            st.session_state.history, task_mode=st.session_state.task_mode,
-            user_id=st.session_state.active_user_id,
-        )
-        st.session_state.history_saved = True
-        # Queue the self-report prompt for this session. The user's answer -
-        # not the system's prediction - is the ground-truth label the
-        # adaptation loop trains on.
-        st.session_state.pending_self_report = sid
-        st.session_state.last_saved_session_id = sid
-        st.session_state.last_saved_self_report = None
-        ivlog = st.session_state.pop('pending_interventions', [])
-        if ivlog:
-            store.log_interventions(sid, ivlog)
+        sid = store.save_session(ss.history, task_mode=ss.task_mode,
+                                 user_id=ss.active_user_id)
+        if sid is None:
+            raise RuntimeError("the database returned no session id")
     except Exception as e:
-        st.warning(f"Could not save session to history DB: {e}")
+        ss.save_failed = True
+        ss.save_error = type(e).__name__
+        print(f"[save] FAILED to save a recording of {n} samples: {type(e).__name__}",
+              flush=True)
+        return 'failed'
+    ss.history_saved = True
+    ss.save_failed = False
+    # Queue the self-report prompt for this session. The user's answer -
+    # not the system's prediction - is the ground-truth label the
+    # adaptation loop trains on.
+    ss.pending_self_report = sid
+    ss.last_saved_session_id = sid
+    ss.last_saved_self_report = None
+    ss.save_notice = ('success', f"Recording saved ({n} samples).")
+    print(f"[save] session saved: {n} samples", flush=True)
+    # Only taken once the session exists, so a failed save keeps them for
+    # the retry. A failure HERE does not un-save the session - say so.
+    ivlog = ss.pop('pending_interventions', [])
+    if ivlog:
+        try:
+            store.log_interventions(sid, ivlog)
+        except Exception as e:
+            print(f"[save] session saved, but {len(ivlog)} coaching outcome(s) failed: "
+                  f"{type(e).__name__}", flush=True)
+            ss.save_notice = ('warning', f"Recording saved ({n} samples), but its "
+                                         f"{len(ivlog)} coaching outcome(s) could not be saved.")
+    return 'saved'
+
+
+def discard_unsaved_recording():
+    """The user's explicit choice after a failed save: drop the recording."""
+    ss = st.session_state
+    ss.history = []
+    ss.history_saved = False
+    ss.save_failed = False
+    ss.pop('save_error', None)
+    ss.pop('pending_interventions', None)
+    ss.save_notice = ('info', "Recording discarded - nothing was saved.")
+    print("[save] unsaved recording discarded by the user", flush=True)
 
 
 def apply_user_profile(ustate, user_id):
@@ -1141,6 +1191,10 @@ def make_live_run(ustate, models, store, dt0=None):
     # Refit from the database at every Start: picks up ratings given since
     # (on this or another device) and can never include this new session.
     personal = current_personalization(store, ustate, refresh=True)
+    # Server-log marker (no personal data) so a missing session can later be
+    # told apart from a recording that never started.
+    print(f"[live] recording started (personalization "
+          f"{'on' if personal.active else 'off'})", flush=True)
     return LiveRun(ustate, models, agent, task_mode=st.session_state.task_mode,
                    agent_enabled=st.session_state.agent_enabled, dt0=dt0,
                    personalization=personal)
@@ -1564,7 +1618,10 @@ def main():
                 f'{html.escape(str(st.session_state.active_user_name))}</div>',
                 unsafe_allow_html=True)
             if st.button("Sign out", width='stretch',
-                         disabled=st.session_state.running or st.session_state.calibrating):
+                         disabled=(st.session_state.running or st.session_state.calibrating
+                                   or st.session_state.save_failed),
+                         help=("Retry saving or discard the unsaved recording first."
+                               if st.session_state.save_failed else None)):
                 auth.sign_out_current()
                 st.rerun()
         else:
@@ -1654,20 +1711,27 @@ def main():
         # opportunity with no warning (unlike the explicit, visible Skip
         # button). See BUG_AUDIT_2026-08-23.md #13.
         _report_pending = st.session_state.pending_self_report is not None
+        # Likewise a recording that failed to save: starting over would
+        # overwrite it, so Retry or Discard comes first.
+        _unsaved = st.session_state.save_failed
+        _blocked_help = ("Retry saving or discard the unsaved recording below first."
+                         if _unsaved else
+                         "Answer or skip the previous session's self-report "
+                         "question below first." if _report_pending else None)
 
         col_a, col_b = st.columns(2)
         with col_a:
             if st.button("Calibrate", width='stretch',
                          disabled=(st.session_state.running or st.session_state.calibrating
-                                  or _report_pending),
-                         help=("Answer or skip the previous session's self-report "
-                              "question below first." if _report_pending else
+                                  or _report_pending or _unsaved),
+                         help=(_blocked_help if _blocked_help else
                               f"Sit naturally for {CALIBRATION_SECONDS} seconds. "
                               f"System learns your personal baseline.")):
                 st.session_state.calibrating = True
                 # The previous session's "rating saved / NOT saved" notice
                 # belongs to that session - never show it after this one.
                 st.session_state.pop('selfrep_notice', None)
+                st.session_state.pop('save_notice', None)
                 st.session_state.history = []
                 st.session_state.history_saved = False
                 st.session_state.last_saved_session_id = None
@@ -1682,12 +1746,12 @@ def main():
         with col_b:
             if st.button("Start", type="primary", width='stretch',
                          disabled=(st.session_state.running or st.session_state.calibrating
-                                  or _report_pending),
-                         help=("Answer or skip the previous session's self-report "
-                              "question below first.") if _report_pending else None):
+                                  or _report_pending or _unsaved),
+                         help=_blocked_help):
                 st.session_state.running = True
                 st.session_state.session_start = datetime.now()
                 st.session_state.pop('selfrep_notice', None)    # see Calibrate
+                st.session_state.pop('save_notice', None)
                 st.session_state.history = []
                 st.session_state.history_saved = False
                 st.session_state.last_saved_session_id = None
@@ -1716,7 +1780,8 @@ def main():
         col_c, col_d = st.columns(2)
         with col_c:
             if st.button("Clear view", width='stretch',
-                         disabled=st.session_state.running or st.session_state.calibrating,
+                         disabled=(st.session_state.running or st.session_state.calibrating
+                                   or st.session_state.save_failed),
                          help="Clears the on-screen timeline. Saved sessions in the DB are not affected."):
                 st.session_state.history = []
                 st.session_state.history_saved = False
@@ -1854,7 +1919,8 @@ def main():
                     )
                 with col_btn:
                     if st.button("View", key=f"view_{s['id']}",
-                                 disabled=st.session_state.running or st.session_state.calibrating,
+                                 disabled=(st.session_state.running or st.session_state.calibrating
+                                           or st.session_state.save_failed),
                                  help="Load this session's timeline into the main view"):
                         samples = store.load_session_samples(s['id'])
                         if samples:
@@ -2076,6 +2142,29 @@ def main():
         # Outcome of the last rating click, shown once. Kept across the
         # st.rerun() the click handler makes - a plain st.warning() there
         # vanished immediately, and a failure looked like nothing happened.
+        # ---------- Recording save outcome ----------
+        # A failed save stays on screen (not a one-run message) with a way
+        # out, and blocks starting over so the recording cannot be lost by
+        # accident. Other outcomes are shown once.
+        if st.session_state.save_failed:
+            with st.container(border=True):
+                st.error(f"Your last recording was NOT saved "
+                         f"({st.session_state.get('save_error', 'error')}). It is still held "
+                         f"in this browser tab: retry, or discard it. Reloading or closing "
+                         f"the tab will lose it.")
+                _rc, _dc = st.columns(2)
+                if _rc.button("Retry saving", key="retry_save", type="primary",
+                              width='stretch'):
+                    save_current_session()
+                    st.rerun()
+                if _dc.button("Discard this recording", key="discard_unsaved",
+                              width='stretch'):
+                    discard_unsaved_recording()
+                    st.rerun()
+        _save_notice = st.session_state.pop('save_notice', None)
+        if _save_notice is not None:
+            {'success': st.success, 'warning': st.warning,
+             'info': st.info}.get(_save_notice[0], st.info)(_save_notice[1])
         _notice = st.session_state.pop('selfrep_notice', None)
         if _notice is not None:
             (st.success if _notice[0] == 'success' else st.warning)(_notice[1])

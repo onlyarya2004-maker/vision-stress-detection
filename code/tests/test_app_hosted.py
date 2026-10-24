@@ -408,3 +408,140 @@ def test_sessions_older_than_the_accounts_current_baseline_do_not_personalize(si
     assert not at.exception
     p = at.session_state['personalization']
     assert not p.active and 'since your last calibration' in p.reason
+
+
+# ---- recording persistence: every Stop outcome is visible and logged -----
+# Regression for the silent-save defect: save_current_session() used to
+# report a failure with st.warning() and the Stop handler then called
+# st.rerun(), wiping it - a failed save looked exactly like nothing at all.
+def _ready_to_stop(at, server, history=None, samples=lambda r: [], sessions_post=None):
+    _with_one_saved_session(server)
+    if sessions_post is not None:
+        server.on('POST', 'sessions', sessions_post)
+    server.on('POST', 'samples', samples)
+    at.session_state['history'] = _history() if history is None else history
+    at.session_state['history_saved'] = False
+    at.session_state['running'] = True
+    at.run()
+
+
+def _infos(at):
+    return [e.value for e in list(at.success) + list(at.warning) + list(at.info) + list(at.error)]
+
+
+def test_a_stopped_recording_is_saved_with_all_its_samples_and_confirmed(signed_in, capfd):
+    at, server = signed_in
+    _ready_to_stop(at, server)
+    _button(at, 'Stop').click().run()
+    assert not at.exception
+    (sess,) = server.of('POST', 'sessions')
+    assert json.loads(sess.content)['sample_count'] == 10
+    rows = [r for req in server.of('POST', 'samples') for r in json.loads(req.content)]
+    assert len(rows) == 10 and all(r['session_id'] == 42 for r in rows)
+    assert any('Recording saved (10 samples)' in m for m in _infos(at))
+    assert at.session_state['pending_self_report'] == 42 and at.session_state['history_saved']
+    out = capfd.readouterr().out
+    assert '[save] session saved: 10 samples' in out
+    assert 'alice' not in out and UID not in out            # no personal data in the log
+
+
+def test_stop_with_no_processed_frames_says_nothing_was_saved(signed_in, capfd):
+    at, server = signed_in
+    _ready_to_stop(at, server, history=[])
+    _button(at, 'Stop').click().run()
+    assert not at.exception
+    assert server.of('POST', 'sessions') == [] and server.of('POST', 'samples') == []
+    assert any('Nothing was saved' in m for m in _infos(at))
+    assert at.session_state['pending_self_report'] is None
+    assert '[save] nothing to save: 0 processed samples' in capfd.readouterr().out
+
+
+def test_a_failed_sample_insert_is_rolled_back_and_the_recording_kept_for_retry(signed_in, capfd):
+    at, server = signed_in
+    boom = lambda r: httpx.Response(500, json={'message': 'internal detail XYZ'})
+    _ready_to_stop(at, server, samples=boom)
+    _button(at, 'Stop').click().run()
+    assert not at.exception
+    # The half-written session row was removed - by id AND owner.
+    (rollback,) = server.of('DELETE', 'sessions')
+    p = _params(rollback)
+    assert p['id'] == 'eq.42' and p['user_id'] == f'eq.{UID}'
+    # The user is told, persistently, and nothing claims success.
+    assert any('NOT saved' in e.value for e in at.error)
+    assert not at.success and at.session_state['pending_self_report'] is None
+    assert 'XYZ' not in ' '.join(_infos(at))                  # no server detail leaked
+    # The recording is still there, and cannot be overwritten by accident.
+    assert len(at.session_state['history']) == 10 and at.session_state['save_failed']
+    assert _button(at, 'Start').disabled and _button(at, 'Calibrate').disabled
+    assert _button(at, 'Sign out').disabled
+    assert '[save] FAILED to save a recording of 10 samples' in capfd.readouterr().out
+    # Retry once the database is back: saved, rating prompt appears.
+    server.on('POST', 'samples', lambda r: [])
+    next(b for b in at.button if b.label == 'Retry saving').click().run()
+    assert not at.exception
+    assert any('Recording saved (10 samples)' in m for m in _infos(at))
+    assert not at.session_state['save_failed'] and at.session_state['pending_self_report'] == 42
+    assert len(server.of('POST', 'sessions')) == 2            # first attempt was rolled back
+    assert not any('NOT saved' in e.value for e in at.error)
+
+
+def test_a_rejected_session_insert_is_reported_not_hidden(signed_in, capfd):
+    at, server = signed_in
+    _ready_to_stop(at, server,
+                   sessions_post=lambda r: httpx.Response(503, json={'message': 'down'}))
+    _button(at, 'Stop').click().run()
+    assert not at.exception
+    assert server.of('POST', 'samples') == []                 # nothing written after it
+    assert any('NOT saved' in e.value for e in at.error) and not at.success
+    assert at.session_state['save_failed'] and len(at.session_state['history']) == 10
+    assert '[save] FAILED' in capfd.readouterr().out
+
+
+def test_a_network_failure_during_save_is_reported(signed_in):
+    at, server = signed_in
+
+    def unreachable(r):
+        raise httpx.ConnectError("no route to host")
+    _ready_to_stop(at, server, sessions_post=unreachable)
+    _button(at, 'Stop').click().run()
+    assert not at.exception
+    assert any('NOT saved' in e.value and 'ConnectError' in e.value for e in at.error)
+    assert at.session_state['save_failed']
+
+
+def test_discarding_an_unsaved_recording_is_explicit_and_unblocks_start(signed_in, capfd):
+    at, server = signed_in
+    _ready_to_stop(at, server, samples=lambda r: httpx.Response(500, json={}))
+    _button(at, 'Stop').click().run()
+    next(b for b in at.button if b.label == 'Discard this recording').click().run()
+    assert not at.exception
+    assert at.session_state['history'] == [] and not at.session_state['save_failed']
+    assert any('Recording discarded' in m for m in _infos(at))
+    assert not _button(at, 'Start').disabled
+    assert '[save] unsaved recording discarded by the user' in capfd.readouterr().out
+
+
+def test_a_coaching_log_failure_does_not_claim_the_recording_failed(signed_in):
+    at, server = signed_in
+    _ready_to_stop(at, server)
+    server.on('POST', 'interventions', lambda r: httpx.Response(500, json={}))
+    at.session_state['pending_interventions'] = [{
+        'ts': datetime(2026, 10, 10, 9, 1), 'kind': 'break', 'trigger_signal': None,
+        'index_before': 0.6, 'index_after': 0.5, 'outcome': 'helped'}]
+    _button(at, 'Stop').click().run()
+    assert not at.exception
+    msgs = _infos(at)
+    assert any('Recording saved (10 samples)' in m and 'coaching outcome' in m for m in msgs)
+    assert not any('NOT saved' in m for m in msgs)
+    assert at.session_state['pending_self_report'] == 42 and not at.session_state['save_failed']
+
+
+def test_a_second_stop_for_the_same_recording_does_not_duplicate_it(signed_in):
+    at, server = signed_in
+    _ready_to_stop(at, server)
+    _button(at, 'Stop').click().run()
+    at.session_state['running'] = True                        # a stale second Stop
+    at.run()
+    _button(at, 'Stop').click().run()
+    assert not at.exception
+    assert len(server.of('POST', 'sessions')) == 1
