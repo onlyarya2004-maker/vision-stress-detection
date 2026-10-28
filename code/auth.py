@@ -220,8 +220,11 @@ _PRIVACY_NOTE = (
     "main page (your browser's camera light will be on), but **no images leave your "
     "computer unless you press Calibrate or Start**. While a session runs, frames are "
     "analysed in memory on the server and are **never stored**. What is saved to your "
-    "account is numbers only - stress score, signal values and timestamps. Each account "
-    "can see only its own data; the database enforces that, not just the app."
+    "account is numbers only - stress score, signal values and timestamps. If you switch "
+    "on **Auto-detect**, a few frames from your Calibrate step are also analysed in memory "
+    "to suggest a context (Studying or Hospital); no image or description of your "
+    "surroundings is saved. Each account can see only its own data; the database "
+    "enforces that, not just the app."
 )
 
 _LOGIN_CSS = """

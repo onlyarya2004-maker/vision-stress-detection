@@ -38,10 +38,12 @@ import session_report
 import session_store
 import auth
 import config
+import context_detector
+import context_hints
 # crop_face / annotate_frame used to be defined in this file; they moved to
 # frame_ops.py so session_pipeline.py can share them. Re-exported here because
 # existing tests (and anything else) call app.crop_face.
-from frame_ops import crop_face, annotate_frame, bbox_to_source
+from frame_ops import crop_face, annotate_frame, bbox_to_source, prepare_processing_frame
 from session_pipeline import UserState, CalibrationRun, LiveRun, BatchGate
 from browser_camera import browser_camera
 
@@ -859,6 +861,12 @@ def init_state():
     if 'calib_run' not in st.session_state: st.session_state.calib_run = None
     if 'live_run' not in st.session_state: st.session_state.live_run = None
     if 'live_timers' not in st.session_state: st.session_state.live_timers = {}
+    # Local-only context suggestion (context_detector.py): off by default; a
+    # probe exists only during a calibration with the toggle on, and the
+    # suggestion waits for the user to accept or keep the current mode.
+    if 'auto_context' not in st.session_state: st.session_state.auto_context = False
+    if 'context_probe' not in st.session_state: st.session_state.context_probe = None
+    if 'context_suggestion' not in st.session_state: st.session_state.context_suggestion = None
 
 
 def init_storage():
@@ -916,6 +924,7 @@ def end_live_run(ustate):
     ustate.engine._calibrating = False
     st.session_state.live_run = None
     st.session_state.calib_run = None
+    st.session_state.context_probe = None     # an abandoned calibration suggests nothing
     st.session_state.live_timers = {}
     bump_cam_epoch()
 
@@ -1165,6 +1174,15 @@ NO_FACE_HTML = ('<div class="face-status">No face detected — '
                 'please face the camera</div>')
 
 
+def render_drowsiness_banner(perclos):
+    return ('<div style="background:#2A0E12;border:1px solid #7F1D1D;border-left:4px solid #F87171;'
+            'border-radius:10px;padding:10px 14px;color:#FCA5A5;font-size:13px;">'
+            '<b style="color:#F87171;letter-spacing:.06em;">DROWSINESS WARNING</b> &mdash; your eyes have '
+            f'been closing for long stretches (PERCLOS {perclos * 100:.0f}%). Consider a break, or pull '
+            'over when it is safe. <span style="opacity:.75">Estimated from the camera; not a certified '
+            'safety device.</span></div>')
+
+
 def open_local_camera():
     """cv2 camera for CAPTURE_MODE == 'local', or None if it won't open."""
     cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
@@ -1241,6 +1259,122 @@ def finish_calibration(ustate, run):
     return 'error', "Calibration failed."
 
 
+def offer_context_frame(frame, t):
+    """Calibration frames go to the context probe when the toggle was on at
+    Calibrate (it samples ~one every 2 s and never raises)."""
+    probe = st.session_state.context_probe
+    if probe is not None:
+        # Same 4:3 640x480 view in both capture paths (a no-op for browser
+        # frames, which already arrive at that geometry).
+        probe.offer(prepare_processing_frame(frame)[0], t)
+
+
+def finish_context_probe(flash):
+    """End of a calibration: turn the probe's samples into a suggestion for
+    the user to accept or keep. Returns the calibration flash message, with a
+    pointer to the suggestion when there is one."""
+    probe = st.session_state.context_probe
+    st.session_state.context_probe = None
+    if probe is None:
+        return flash
+    suggestion = probe.result(st.session_state.task_mode)
+    st.session_state.context_suggestion = suggestion
+    print(suggestion.log_line(), flush=True)
+    return flash[0], flash[1] + " See the context suggestion in the sidebar."
+
+
+def _mode_label(mode):
+    return TASK_LABELS.get(mode, (mode, mode))[0]
+
+
+def render_auto_detect_toggle():
+    """The "Auto-detect" button beside the context buttons in the header row: a
+    click turns it on (solid blue fill, like the current context), another click
+    turns it off. Off by default; disabled while calibrating or recording. The
+    choice is kept in ss.auto_context, a plain value no widget can drop."""
+    ss = st.session_state
+    on = bool(ss.auto_context)
+    if st.button(
+        "Auto-detect", key='auto_btn', width='stretch',
+        type="primary" if on else "secondary",
+        disabled=ss.running or ss.calibrating,
+        help=("Auto-detect is ON. " if on else "Auto-detect is OFF. ")
+             + "While you press Calibrate, about 10 camera frames are analysed in memory "
+               "(a room recogniser plus a people-and-objects recogniser) to SUGGEST a context. "
+               "Frames are never saved. You decide whether to use the suggestion; "
+               "Driving is never suggested. Click to turn it " + ("off." if on else "on.")):
+        ss.auto_context = not on
+        st.rerun()
+
+
+def suggested_context():
+    """The mode to highlight in the header row, or None."""
+    ss = st.session_state
+    sug = ss.context_suggestion
+    if (ss.auto_context and sug is not None and sug.status == 'suggest' and sug.is_change
+            and sug.current_mode == ss.task_mode and not (ss.running or ss.calibrating)):
+        return sug.mode
+    return None
+
+
+def render_context_controls():
+    """'Auto-detect context' toggle and the suggestion awaiting confirmation.
+    Local mode only (context_detector.feature_available). Nothing here changes
+    the context unless the user clicks 'Use ...', which goes through the same
+    pending_task_mode path as the header context buttons."""
+    ss = st.session_state
+    busy = ss.running or ss.calibrating
+    if not ss.auto_context:
+        ss.context_suggestion = None
+        return
+    sug = ss.context_suggestion
+    if sug is not None and sug.current_mode != ss.task_mode:
+        sug = ss.context_suggestion = None       # the user picked a context by hand since
+    if ss.calibrating:
+        if ss.context_probe is not None:
+            st.caption("Checking your surroundings for a context suggestion…")
+        return
+    if sug is None or ss.running:
+        if not ss.running:
+            st.caption("A context will be suggested when you press Calibrate.")
+        return
+
+    current = _mode_label(ss.task_mode)
+    scenes = ", ".join(f"{name.replace('_', ' ')} {p:.0%}" for name, p in sug.top_scenes)
+    if sug.status == 'suggest':
+        st.markdown(f"**Suggested context: {_mode_label(sug.mode)}**")
+        agreeing = int(round(sug.agreement * sug.usable))
+        st.progress(min(1.0, sug.agreement),
+                    text=f"{agreeing} of {sug.usable} usable frames agree")
+        hint_txt = ", ".join(f"{t} {p:.0%}" for t, p in sug.top_hints)
+        st.caption(f"Evidence score {sug.confidence:.2f}"
+                   + (f" · scene: {scenes}" if scenes else "")
+                   + (f" · looks like: {hint_txt}" if hint_txt else "")
+                   + ". These are the models' own outputs, not a validated accuracy.")
+        if sug.is_change:
+            use_col, keep_col = st.columns(2)
+            if use_col.button(f"Use {_mode_label(sug.mode)}", key='ctx_accept',
+                              type='primary', width='stretch'):
+                ss.pending_task_mode = sug.mode
+                ss.context_suggestion = None
+                print(sug.log_line() + " -> accepted", flush=True)
+                st.rerun()
+            if keep_col.button(f"Keep {current}", key='ctx_keep', width='stretch'):
+                ss.context_suggestion = None
+                print(sug.log_line() + " -> kept current", flush=True)
+                st.rerun()
+            return
+        st.caption(f"Matches the current context ({current}).")
+    else:
+        (st.warning if sug.status == 'unavailable' else st.info)(sug.message)
+        hint_txt = ", ".join(f"{t} {p:.0%}" for t, p in sug.top_hints)
+        if scenes:
+            st.caption(f"Scene: {scenes}." + (f" Looks like: {hint_txt}." if hint_txt else ""))
+    if st.button("Dismiss", key='ctx_dismiss', width='stretch'):
+        ss.context_suggestion = None
+        st.rerun()
+
+
 def record_history(out):
     """Append a processed frame's history row (the run throttles these to one
     per HISTORY_INTERVAL_S). Called for EVERY frame of a browser batch, not
@@ -1259,6 +1393,9 @@ def render_live_outputs(panels, out, run, update_sidebar=True):
         panels.status.markdown(NO_FACE_HTML, unsafe_allow_html=True)
         return
     panels.status.empty()
+    dz = out.get('drowsy')
+    if dz and dz['warning']:                    # Driving mode; display only, never scored
+        panels.status.markdown(render_drowsiness_banner(dz['perclos']), unsafe_allow_html=True)
 
     iv = out['intervention']
     if iv is not None:
@@ -1339,14 +1476,16 @@ def local_calibration(panels, video_placeholder, ustate, models):
                 st.session_state.calibrating = False
                 break
             frame = cv2.flip(frame, 1)
-            info = run.process(frame, time.time())
+            t_now = time.time()
+            info = run.process(frame, t_now)
+            offer_context_frame(frame, t_now)      # before annotate_frame draws on it
             annotate_frame(frame, bbox_to_source(info['bbox'], info['geom']),
                            "LOW", 0.0, calibrating=True, scale=frame.shape[1] / 640.0)
             video_placeholder.image(
                 cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), channels="RGB", width='stretch')
             render_calibration_progress(panels, run)
             if run.done:
-                kind, text = finish_calibration(ustate, run)
+                kind, text = finish_context_probe(finish_calibration(ustate, run))
                 getattr(st, kind)(text)
                 time.sleep(1.2)
                 st.rerun()
@@ -1427,6 +1566,7 @@ def _calibration_step(frames, panels, ustate, models):
     last = None
     for t, frame in frames:
         last = run.process(frame, t)
+        offer_context_frame(frame, t)
         if run.done:
             break
     render_calibration_progress(panels, run)
@@ -1436,7 +1576,7 @@ def _calibration_step(frames, panels, ustate, models):
     if last and last['no_face']:
         overlay['note'] = 'No face detected — please face the camera'
     if run.done:
-        ss.flash = finish_calibration(ustate, run)
+        ss.flash = finish_context_probe(finish_calibration(ustate, run))
         ss.calib_run = None
         bump_cam_epoch()
         st.rerun()      # full rerun: sidebar buttons, CALIBRATED badge, flash
@@ -1704,6 +1844,9 @@ def main():
         if _selected_task != st.session_state.task_mode:
             st.session_state.task_mode = _selected_task
 
+        if context_detector.feature_available():
+            render_context_controls()
+
         # A still-unanswered self-report from the PREVIOUS session blocks
         # starting a new one - Start/Stop don't clear pending_self_report,
         # so without this a second Stop would silently overwrite it with
@@ -1741,6 +1884,13 @@ def main():
                 st.session_state.viewing_session_task_mode = None
                 st.session_state.viewing_session_self_report = None
                 st.session_state.calib_run = None
+                # Context suggestion: a fresh probe only when the user opted in
+                # (the scene model itself loads on the probe's first sample).
+                st.session_state.context_suggestion = None
+                st.session_state.context_probe = (
+                    context_detector.ContextProbe(hint_factory=context_hints.get_hints)
+                    if st.session_state.auto_context and context_detector.feature_available()
+                    else None)
                 bump_cam_epoch()
                 st.rerun()
         with col_b:
@@ -1764,6 +1914,10 @@ def main():
                 st.session_state.live_run = None
                 st.session_state.live_timers = {}
                 st.session_state.pop('pending_interventions', None)
+                # The context is locked from here on: an unanswered suggestion
+                # is dropped, never applied.
+                st.session_state.context_suggestion = None
+                st.session_state.context_probe = None
                 bump_cam_epoch()
                 st.rerun()
 
@@ -1855,7 +2009,7 @@ def main():
         with st.container(border=True):
             st.markdown(
                 f'<div class="agent-wrap">'
-                f'<div class="agent-top"><span class="agent-name">AI AGENT &mdash; ADAPTIVE COACH</span>'
+                f'<div class="agent-top"><span class="agent-name">ADAPTIVE COACH</span>'
                 f'<span class="state-pill {"active" if _on else "standby"}">'
                 f'{"ACTIVE" if _on else "STANDBY"}</span></div>'
                 f'<div class="agent-desc">Decides when an interruption is worth it, targets the '
@@ -2011,7 +2165,15 @@ def main():
     # cannot fire a Python callback - Streamlit has no way to route a click on
     # raw HTML back into the script. These are actual st.button widgets in the
     # same visual position, so clicking them actually changes task_mode.
-    _ctx_row = st.columns([1, 1, 1, 1, 2.2])
+    _ctx_row = st.columns([1, 1, 1, 1, 1.35, 1.0])
+    _suggested = suggested_context() if context_detector.feature_available() else None
+    if _suggested:
+        # The suggested button keeps its dark fill but gets a blue border, with
+        # a small red "SUGGESTED" label under it; the current context stays solid blue.
+        st.markdown(
+            f'<style>.st-key-ctxbtn_{_suggested} button {{ border:2px solid #3B82F6 !important; '
+            f'box-shadow:0 0 0 3px rgba(59,130,246,.18) !important; }}</style>',
+            unsafe_allow_html=True)
     for _i, (_k, (_label, _tag)) in enumerate(TASK_LABELS.items()):
         _is_current = (_k == st.session_state.task_mode)
         if _ctx_row[_i].button(
@@ -2024,7 +2186,14 @@ def main():
             # selectbox is instantiated - see comment there.
             st.session_state.pending_task_mode = _k
             st.rerun()
-    with _ctx_row[4]:
+        if _k == _suggested:
+            _ctx_row[_i].markdown(
+                '<div style="text-align:center;color:#F87171;font-size:11px;font-weight:700;'
+                'letter-spacing:.08em;margin-top:-6px;">SUGGESTED</div>', unsafe_allow_html=True)
+    if context_detector.feature_available():
+        with _ctx_row[4]:
+            render_auto_detect_toggle()
+    with _ctx_row[5]:
         st.markdown(f'<div style="text-align:right;padding-top:6px;">{_cal_html}</div>',
                    unsafe_allow_html=True)
 

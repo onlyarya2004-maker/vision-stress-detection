@@ -56,6 +56,7 @@ from behavioral_features import BehavioralBaseline, BehavioralFeatureEngine
 from frame_ops import crop_face, decode_jpeg, prepare_processing_frame
 from personalization import parse_local_time
 from rppg_live import LiveRPPG
+from drowsiness import DrowsinessMonitor
 from stress_fusion import (
     compute_stress_index, TemporalSmoother, HysteresisLevel, new_daisee_baseline,
 )
@@ -268,6 +269,9 @@ class LiveRun(_Run):
         # space the 0.24/0.55 cutoffs live in - after the general pipeline has
         # run unchanged; the shared models and the fusion never see it.
         self.personalization = personalization
+        # Driving mode only: a display-only drowsiness warning from PERCLOS. It
+        # reads the features, never writes to them or to the stress score.
+        self.drowsiness = DrowsinessMonitor() if task_mode == 'Driving' else None
         shift = (float(personalization.shift)
                  if personalization is not None and personalization.active else 0.0)
         if not math.isfinite(shift):
@@ -429,7 +433,10 @@ class LiveRun(_Run):
             self.last_record_t = t
 
         self.frame_idx += 1
+        drowsy = (self.drowsiness.update(t, behavioral_features.get('perclos', 0.0))
+                  if self.drowsiness is not None else None)
         out = {
+            'drowsy': drowsy,
             'no_face': False, 'bbox': bbox, 'geom': geom,
             'level': shown_level, 'smoothed': shown,             # what the user sees
             'general_level': level, 'general_smoothed': smoothed,

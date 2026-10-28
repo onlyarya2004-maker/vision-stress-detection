@@ -56,6 +56,14 @@ MODERATE_TO_HIGH_CUTOFF = 0.55
 #
 # PP2 Phase 3 replaces the hand-tuned cutoffs above with thresholds LEARNED
 # from labelled data, which is the principled fix.
+#
+# !!! PERMANENTLY OFF - NEVER SWITCH ON. INCORRECT FOR THIS MODEL. !!!
+# Measured 2026-10-27 by replaying the 3 held-out UBFC-Phys participants with
+# the JSON's 0.035 / 0.712 instead of 0.24 / 0.55: frame accuracy 78.14% ->
+# 66.63% (= always answering "stressed"), calm frames recognised 42.3% -> 0.07%,
+# recordings correct 8/9 -> 6/9, HIGH shown on 10.0% -> 0.5% of frames.
+# Nothing reads this flag; tests/test_wesad_calibration.py fails if it is
+# ever set to True, so it cannot be enabled by accident.
 USE_WESAD_CUTOFFS = False
 
 CALIBRATION_JSON_CANDIDATES = (
@@ -419,6 +427,15 @@ BLINK_RATE_LIVE_WARMUP_SECONDS = 15.0
 # same "computed and shown, not fused in" treatment as W_RPPG's heart rate.
 PERCLOS_CLOSURE_RATIO = 0.2
 PERCLOS_WINDOW_SECONDS = 60      # standard PERCLOS window
+
+# Drowsiness WARNING (drowsiness.py, Driving mode only). Separate from the stress
+# index: PERCLOS measures drowsiness, not stress, so it never enters the fusion.
+# Starting values from the PERCLOS literature (about 0.15-0.20 is the usual alert
+# range), NOT tuned or validated on Driving recordings - and not a safety device.
+DROWSY_PERCLOS_LEVEL = 0.15          # warn when PERCLOS stays at/above this...
+DROWSY_HOLD_SECONDS = 30.0           # ...for this long in a row
+DROWSY_CLEAR_SECONDS = 10.0          # clear after this long below the level
+DROWSY_MIN_SESSION_SECONDS = 30.0    # never judge the first seconds of a run
 POSE_VISIBILITY_THRESHOLD = 0.7  # both shoulders must exceed this, else
                                  # posture features report 0 rather than noise
 HAND_NEAR_FACE_DAMPING = 0.3     # posture x0.3 when a wrist is by the face

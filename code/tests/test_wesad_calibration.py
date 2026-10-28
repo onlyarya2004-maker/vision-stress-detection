@@ -272,3 +272,15 @@ def test_extract_resp_rate_recovers_a_faster_known_rate():
     resp = np.sin(2 * np.pi * freq_hz * t)
     rate = extract_resp_rate(resp)
     assert rate == pytest.approx(breaths_per_min, abs=0.5)
+
+
+def test_wesad_cutoffs_are_permanently_disabled():
+    """The WESAD 'vision_system_cutoffs' (0.035 / 0.712) are percentiles of a
+    physiological model's output, not of this system's stress index. Replayed
+    on the held-out UBFC-Phys participants they collapse frame accuracy to the
+    always-"stressed" floor (78.14% -> 66.63%) and recognise almost no calm
+    frames (42.3% -> 0.07%). See the marker above USE_WESAD_CUTOFFS in config.py."""
+    import config
+    assert config.USE_WESAD_CUTOFFS is False, (
+        "USE_WESAD_CUTOFFS must never be switched on - the WESAD cutoffs are "
+        "incorrect for this model and degrade every result (see config.py)")
