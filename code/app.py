@@ -303,6 +303,16 @@ def inject_css():
       .lvl-bar { height:7px; border-radius:5px; background:var(--track); overflow:hidden;
                  border:1px solid var(--border); }
       .lvl-bar>i { display:block; height:100%; }
+      /* Smooth display: the server pushes a new reading only once per camera batch
+         (~2.2 s online), so without this the number and bars jump in steps. The
+         bars glide to each new value over about one update interval, and the big
+         number counts there with a registered CSS number (@property) feeding a
+         counter. Purely visual - the values themselves are unchanged. If a browser
+         lacks @property the number simply steps as before. */
+      .lvl-bar>i, .sig-bar>i { transition: width 2.2s linear, background 1.2s linear; }
+      @property --num { syntax:'<number>'; inherits:false; initial-value:0; }
+      .index-num { transition: --num 2.2s linear; counter-reset: n calc(var(--num) * 100); }
+      .index-num::after { content: "0." counter(n, decimal-leading-zero); }
 
       .idle-view, .calib-view { display:flex; flex-direction:column; align-items:center;
                                 justify-content:center; gap:14px; text-align:center;
@@ -595,7 +605,7 @@ def render_signal_rows(contributions):
             f'<span class="code" style="color:{color};border-color:{color}55;">{code}</span>'
             f'<div class="sig-mid"><div class="sig-name">{label}</div>'
             f'<div class="sig-desc">{detail}</div>'
-            f'<div class="sig-bar"><i style="width:{pct:.0f}%;background:{color};"></i></div></div>'
+            f'<div class="sig-bar"><i style="width:{pct:.1f}%;background:{color};"></i></div></div>'
             f'<span class="sig-val mono" style="color:{color};">{value:.2f}</span>'
             f'</div>'
         )
@@ -693,9 +703,10 @@ def render_level_block(level, smoothed):
     pct = max(0.0, min(1.0, smoothed)) * 100
     return (
         f'<div class="level-block">'
-        f'<div class="index-row"><span class="index-num mono">{smoothed:.2f}</span>'
+        f'<div class="index-row"><span class="index-num mono" role="text" '
+        f'aria-label="stress index {smoothed:.2f}" style="--num:{min(max(smoothed, 0.0), 0.99):.4f};"></span>'
         f'<span class="level-tag" style="color:{color};">{level}</span></div>'
-        f'<div class="lvl-bar"><i style="width:{pct:.0f}%;'
+        f'<div class="lvl-bar"><i style="width:{pct:.1f}%;'
         f'background:linear-gradient(90deg,#34D399,{color});"></i></div>'
         f'</div>'
     )
