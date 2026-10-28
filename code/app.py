@@ -125,8 +125,16 @@ def inject_css():
           linear-gradient(90deg, rgba(59,130,246,.05) 1px, transparent 1px) 0 0/28px 28px,
           var(--bg);
       }
-      #MainMenu, footer, [data-testid="stToolbar"], [data-testid="stDecoration"],
-      [data-testid="stStatusWidget"], .stAppDeployButton { display:none !important; }
+      #MainMenu, footer, [data-testid="stDecoration"], [data-testid="stToolbarActions"],
+      [data-testid="stMainMenu"], [data-testid="stStatusWidget"], .stAppDeployButton { display:none !important; }
+      /* The toolbar also holds the button that REOPENS a collapsed sidebar
+         (stExpandSidebarButton). Hiding the whole toolbar made that button 0x0, so a
+         closed sidebar could not be reopened; keep the toolbar and pin the button. */
+      [data-testid="stToolbar"] { display:flex !important; visibility:visible !important; }
+      [data-testid="stExpandSidebarButton"] { position:fixed !important; top:14px; left:14px; z-index:1000002;
+        width:36px; height:36px; display:flex !important; align-items:center; justify-content:center;
+        background:var(--panel2); border:1px solid var(--border2); border-radius:9px; color:var(--text); }
+      [data-testid="stExpandSidebarButton"]:hover { border-color:var(--blue); }
       [data-testid="stHeader"] { background:transparent; height:0; }
       /* Width matters for picture quality: the camera panel gets ~2/3 of this,
          and the browser downscales the (up to 1080p) stream into exactly that

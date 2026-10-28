@@ -36,3 +36,14 @@ def test_css_animates_bars_and_number_over_about_one_update_interval(monkeypatch
     assert '.lvl-bar>i, .sig-bar>i { transition: width 2.2s linear' in css
     assert '@property --num' in css and 'transition: --num 2.2s linear' in css
     assert 'counter-reset: n calc(var(--num) * 100)' in css
+
+
+def test_the_toolbar_that_holds_the_reopen_sidebar_button_is_never_hidden(monkeypatch):
+    """The button that reopens a collapsed sidebar (stExpandSidebarButton) lives inside
+    Streamlit's toolbar. Hiding the whole toolbar made it 0x0, so a closed sidebar could
+    not be reopened (found on the live site, 2026-10-28)."""
+    css = _css(monkeypatch)
+    hidden = css.split('{ display:none !important; }')[0]          # the selector list that is hidden
+    assert '[data-testid="stToolbar"]' not in hidden
+    assert '[data-testid="stToolbarActions"]' in hidden             # only the Deploy/menu actions go
+    assert '[data-testid="stExpandSidebarButton"]' in css and 'position:fixed' in css
