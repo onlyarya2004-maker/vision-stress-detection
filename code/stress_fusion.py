@@ -333,6 +333,30 @@ class TemporalSmoother:
         self.window.clear()
 
 
+class TimeWindowSmoother:
+    """Mean of the values seen in the last `window_s` seconds of the caller's
+    clock (frame capture time), whatever the frame rate. The live app uses this
+    so smoothing means the same thing locally (~11 fps) and online (frames arrive
+    in bursts). The evaluation scripts keep the frame-based TemporalSmoother."""
+
+    def __init__(self, window_s=None):
+        self.window_s = float(config.SMOOTHING_SECONDS if window_s is None else window_s)
+        self._items = deque()
+        self._sum = 0.0
+
+    def update(self, value, t):
+        t = float(t)
+        self._items.append((t, float(value)))
+        self._sum += float(value)
+        while len(self._items) > 1 and self._items[0][0] < t - self.window_s:
+            self._sum -= self._items.popleft()[1]
+        return float(self._sum / len(self._items))
+
+    def reset(self):
+        self._items.clear()
+        self._sum = 0.0
+
+
 # ---------------- HYSTERESIS LEVEL ----------------
 class HysteresisLevel:
     def __init__(self, confirm_frames=config.HYSTERESIS_CONFIRM_FRAMES):

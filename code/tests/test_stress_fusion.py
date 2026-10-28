@@ -175,3 +175,28 @@ def test_get_daisee_baseline_roundtrips_and_resets(_clean_daisee_baseline):
     stress_fusion.reset_daisee_baseline()
     assert stress_fusion.get_daisee_baseline() is None
     assert stress_fusion.is_daisee_calibrated() is False
+
+
+def test_time_window_smoother_averages_by_seconds_not_frames():
+    sm = stress_fusion.TimeWindowSmoother(window_s=6.0)
+    # dense frames (10/s) of 0.2 for 6 s, then a calm 0.0: the window forgets by TIME
+    for i in range(60):
+        sm.update(0.2, i * 0.1)
+    assert sm.update(0.2, 6.0) == pytest.approx(0.2)
+    last = None
+    for i in range(1, 61):                      # 6 s of 0.0 at 10 fps
+        last = sm.update(0.0, 6.0 + i * 0.1)
+    assert last == pytest.approx(0.0, abs=0.04)
+
+
+def test_time_window_smoother_is_frame_rate_independent():
+    """Online the browser sends bursts of 8 frames every ~3 s; the window must
+    still cover ~6 s of real time (a frame-count window would cover ~22 s)."""
+    sm = stress_fusion.TimeWindowSmoother(window_s=6.0)
+    for burst in range(10):                     # high for the first 5 bursts, then calm
+        value = 0.6 if burst < 5 else 0.0
+        for k in range(8):
+            out = sm.update(value, burst * 3.0 + k * 0.1)
+    assert out < 0.35                           # 4 calm bursts: the old high values are gone
+    sm.reset()
+    assert sm.update(0.5, 100.0) == pytest.approx(0.5)

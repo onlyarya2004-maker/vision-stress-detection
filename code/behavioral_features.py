@@ -411,7 +411,7 @@ class BehavioralFeatureEngine:
             # Reduced gap: lips pressed together
             press = max(0.0, gap_change)
             jaw_tension = float(np.clip(
-                (compression + press) / config.JAW_TENSION_SCALE, 0.0, 1.0))
+                (compression + press) / config.JAW_TENSION_SCALE, 0.0, config.JAW_TENSION_CAP))
 
         head_instability = float(np.clip(
             head_tilt_instability / config.HEAD_INSTABILITY_SCALE, 0.0, 1.0))

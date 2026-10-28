@@ -58,7 +58,7 @@ from personalization import parse_local_time
 from rppg_live import LiveRPPG
 from drowsiness import DrowsinessMonitor
 from stress_fusion import (
-    compute_stress_index, TemporalSmoother, HysteresisLevel, new_daisee_baseline,
+    compute_stress_index, TimeWindowSmoother, HysteresisLevel, new_daisee_baseline,
 )
 from temporal_model import GRUTemporalInference
 
@@ -286,7 +286,7 @@ class LiveRun(_Run):
         # USER's local time (server clocks are UTC), so time-of-day analytics
         # reflect when the person actually recorded.
         self.dt0 = dt0 if dt0 is not None else datetime.now()
-        self.smoother = TemporalSmoother(window_size=config.SMOOTHING_WINDOW_FRAMES)
+        self.smoother = TimeWindowSmoother(config.SMOOTHING_SECONDS)
         self.hyst = HysteresisLevel(confirm_frames=config.HYSTERESIS_CONFIRM_FRAMES)
         self.last_daisee_probs = None
         self.frame_idx = 0
@@ -385,7 +385,7 @@ class LiveRun(_Run):
             daisee_baseline=s.daisee_baseline,
         )
         # General model: exactly as before. This is what gets stored.
-        smoothed = self.smoother.update(result['stress_index'])
+        smoothed = self.smoother.update(result['stress_index'], t)
         level = self.hyst.update(smoothed)
         # Personal reading (what the user sees and the coach acts on): the
         # general smoothed index + this user's validated shift. With no shift

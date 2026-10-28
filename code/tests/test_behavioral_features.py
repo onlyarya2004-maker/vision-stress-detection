@@ -438,3 +438,17 @@ def test_reset_baseline_also_clears_detection_state(monkeypatch, blank_frame):
         assert engine.baseline.calibrated is False
     finally:
         engine.close()
+
+
+def test_jaw_tension_is_capped_so_it_cannot_saturate(engine, monkeypatch, blank_frame):
+    """Jaw tension used to peg at 1.0 on ordinary closed lips and pushed every
+    score upward (config.JAW_TENSION_CAP); an extreme clench now tops out at the
+    cap, while a mild one is untouched."""
+    import config
+    _calibrated(engine)
+    extreme = _face_features(engine, monkeypatch, blank_frame,
+                             lip_width_norm=0.20, lip_gap_norm=0.0)
+    assert extreme["jaw_tension"] == pytest.approx(config.JAW_TENSION_CAP)
+    mild = _face_features(engine, monkeypatch, blank_frame,
+                          lip_width_norm=0.40, lip_gap_norm=0.011)
+    assert 0.0 < mild["jaw_tension"] < config.JAW_TENSION_CAP

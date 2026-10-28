@@ -382,6 +382,13 @@ DAISEE_DEVIATION_SCALE = 0.15    # PP1 tried 0.10; it did not help in testing
 # ===========================================================================
 # TEMPORAL STABILISATION
 # ===========================================================================
+# LIVE APP smoothing (session_pipeline.LiveRun) is time-based, not frame-based:
+# 60 processed frames is ~5.5 s locally but ~22 s online (the browser sends bursts
+# of ~8 frames every ~3 s), so a calm moment barely moved the hosted score and the
+# line only drifted (2026-10-28 recording). Replaying UBFC-Phys with a 6 s window:
+# held-out frame accuracy 78.14% -> 79.66%, 8/9 recordings unchanged, i.e. at least
+# as good as the 2 s window the evaluation uses.
+SMOOTHING_SECONDS = 6.0
 SMOOTHING_WINDOW_FRAMES = 60          # app.py — ~2s at 30fps (evaluated path)
 SMOOTHING_WINDOW_FRAMES_OPENCV = 30   # stress_detector.py — legacy value,
                                       # kept separate to preserve behaviour
@@ -448,6 +455,13 @@ EYE_STRAIN_SCALE = 0.10          # |EAR - baseline| / this
 BLINK_EXCESS_SCALE = 15.0        # blinks/min above baseline / this
 BROW_DROP_SCALE = 0.15           # relative brow-distance drop / this
 JAW_TENSION_SCALE = 0.50         # (compression + press) / this
+JAW_TENSION_CAP = 0.6            # the signal saturates (>=0.9 on 22% of CALM UBFC frames and
+                                 # ~half of a calm hosted recording, 2026-10-28), pushing every
+                                 # score upward. Capping it at 0.6 (replayed on UBFC-Phys, equal
+                                 # to capping the stored value): calm frames recognised 42.8% ->
+                                 # 47.2% held-out and 60% -> 68% on the 8 training participants,
+                                 # balanced accuracy equal or better on both, frame accuracy -1pp.
+                                 # 0.4 and x0.5 helped training participants but hurt held-out.
 HEAD_INSTABILITY_SCALE = 4.0     # std-dev of head tilt in degrees / this
 HEAD_TILT_HISTORY_FRAMES = 30
 EAR_HISTORY_FRAMES = 30
