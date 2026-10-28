@@ -84,3 +84,19 @@ scratch/
 
 # Training venv (PyTorch, kept separate from the TF stack)
 .venv-train/
+
+# ---------------------------------------------------------------------------
+# Local-only "Auto-detect context" assets (code/context_detector.py): the
+# Places365 scene model and the small environment test-image collection.
+# Downloaded/derived files stay out of git (and out of the Docker image, which
+# copies only code/ and models/); the docs describing their sources stay in.
+# ---------------------------------------------------------------------------
+local_models/**
+!local_models/**/
+!local_models/**/SOURCES.md
+!local_models/**/manifest.csv
+# Converted context-detection models (models/context/): too large for plain Git,
+# but copied into the Docker image by `COPY models`. Only the README is tracked.
+models/context/**
+!models/context/
+!models/context/README.md

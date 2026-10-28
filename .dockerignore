@@ -32,9 +32,15 @@ scripts
 *.md
 *.txt
 !requirements.txt
+!models/context/places365/categories_places365.txt
 *.log
 *.db
 *.db-*
+
+# models/ is copied whole (the context-detection models ride along); only their
+# conversion-test fixtures stay out
+models/context/**/parity_reference.npz
+models/context/README.md
 
 # code/ is copied, but not the things the running app never imports
 code/tests
