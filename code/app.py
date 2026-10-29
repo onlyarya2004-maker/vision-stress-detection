@@ -752,7 +752,8 @@ def render_calib_hud(progress, seconds_left):
         f'<div class="chud-bar">{segs}</div>'
         f'<div class="chud-note">Sit naturally, neutral expression, look at the camera &mdash; '
         f'<span class="warn">do not smile</span>: a smiling baseline skews the jaw and brow '
-        f'signals for the whole session.</div>'
+        f'signals for the whole session. For the most accurate results, remove glasses or '
+        f'sunglasses and keep hair off your eyes and brows.</div>'
         f'</div>'
     )
 
@@ -914,6 +915,9 @@ def ensure_login():
     if sess is None:
         auth.render_login_page()
         return False
+    # Keep the browser's copy of the refresh token current, so a page refresh
+    # signs the user straight back in (session_keeper / auth.restore_from_browser).
+    auth.remember_in_browser(sess)
     st.session_state.active_user_id = sess.user_id
     st.session_state.active_user_name = sess.email
     return True
@@ -1888,7 +1892,9 @@ def main():
                                   or _report_pending or _unsaved),
                          help=(_blocked_help if _blocked_help else
                               f"Sit naturally for {CALIBRATION_SECONDS} seconds. "
-                              f"System learns your personal baseline.")):
+                              f"System learns your personal baseline. "
+                              f"For the most accurate results, remove glasses or "
+                              f"sunglasses and keep hair off your eyes and brows.")):
                 st.session_state.calibrating = True
                 # The previous session's "rating saved / NOT saved" notice
                 # belongs to that session - never show it after this one.

@@ -19,8 +19,11 @@ see another's data" requirement):
   * All data access then goes through session_store.SupabaseStore using the
     user's own JWT, so the database's RLS policies (supabase/schema.sql), not
     app code, decide what each person can see.
-  * Tokens (access, refresh) stay inside the server-side client. They are
-    never rendered, logged, or sent to the browser.
+  * The access token stays inside the server-side client. The refresh token
+    is also handed to the user's OWN browser (session_keeper, localStorage on
+    the app's origin - as Supabase's own JavaScript client does) so a page
+    refresh signs them back in; sign-out and expiry delete it there. Tokens
+    are never rendered on the page or logged.
 
 Registration is open (no invite code). What limits abuse is Supabase itself:
 its password policy, its rate limits, and - when switched ON in the dashboard -
@@ -34,6 +37,7 @@ import hmac
 import json
 import os
 import re
+import secrets as _pysecrets
 
 MIN_PASSWORD_LENGTH = 8
 _EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
@@ -183,6 +187,30 @@ class AuthSession:
             return 'signed_in'
         return 'confirm_email'
 
+    def restore(self, refresh_token):
+        """Sign back in after a page refresh, with the refresh token the
+        browser kept. Raises AuthFailure when it is missing, expired or
+        revoked (for example after a sign-out elsewhere)."""
+        expired = "Your saved sign-in has expired - please sign in again."
+        if not refresh_token:
+            raise AuthFailure(expired)
+        try:
+            res = self.client.auth.refresh_session(refresh_token)
+        except Exception:
+            raise AuthFailure(expired)
+        if not getattr(res, 'session', None) or not getattr(res, 'user', None):
+            raise AuthFailure(expired)
+        self._user = res.user
+
+    @property
+    def refresh_token(self):
+        """The current refresh token (it rotates on every refresh), or None."""
+        try:
+            session = self.client.auth.get_session()
+        except Exception:
+            return None
+        return getattr(session, 'refresh_token', None) if session else None
+
     def sign_out(self):
         """Sign out THIS browser session only (scope 'local' revokes this
         session's refresh token; other devices stay signed in, as on any
@@ -224,7 +252,8 @@ _PRIVACY_NOTE = (
     "on **Auto-detect**, a few frames from your Calibrate step are also analysed in memory "
     "to suggest a context (Studying or Hospital); no image or description of your "
     "surroundings is saved. Each account can see only its own data; the database "
-    "enforces that, not just the app."
+    "enforces that, not just the app. You stay signed in on this browser, even after "
+    "a page refresh, until you press **Sign out**."
 )
 
 _LOGIN_CSS = """
@@ -329,6 +358,49 @@ def render_login_page(secrets=None):
 
         st.caption(_PRIVACY_NOTE)
 
+    # A page refresh lands here with a blank session: sign straight back in
+    # with the refresh token this browser kept, if there is a valid one.
+    # (Rendered last: the keeper is invisible and must not shift the layout.)
+    if restore_from_browser(_session):
+        st.rerun()
+
+
+def restore_from_browser(make_session):
+    """Ask the browser for its saved refresh token and, if there is one,
+    restore the session with it. True when the user is now signed in.
+
+    Tried once per browser session; a token that no longer works is deleted
+    from the browser. After a sign-out or an expiry the browser copy is
+    deleted instead of read ('clear' mode)."""
+    import streamlit as st
+    from session_keeper import session_keeper
+
+    nonce = st.session_state.setdefault('auth_keeper_nonce', _pysecrets.token_hex(8))
+    clearing = bool(st.session_state.get('auth_clear_browser'))
+    answer = session_keeper(mode='clear' if clearing else 'read', nonce=nonce)
+    if clearing or not isinstance(answer, dict) or answer.get('nonce') != nonce:
+        return False                      # nothing to restore, or no answer yet
+    token = answer.get('token') or ''
+    if not token or st.session_state.get('auth_restore_tried'):
+        return False
+    st.session_state['auth_restore_tried'] = True
+    sess = make_session()
+    try:
+        sess.restore(token)
+    except AuthFailure:
+        st.session_state['auth_clear_browser'] = True     # forget the dead token now
+        st.rerun()
+    st.session_state['auth_session'] = sess
+    return True
+
+
+def remember_in_browser(sess):
+    """Keep the browser's copy of the refresh token up to date (it rotates)."""
+    from session_keeper import session_keeper
+    token = sess.refresh_token
+    if token:
+        session_keeper(mode='write', token=token)
+
 
 def current_session():
     """The signed-in AuthSession for this browser session, or None."""
@@ -353,6 +425,7 @@ def expire_current(message):
     import streamlit as st
     _clear_browser_session()
     st.session_state['auth_notice'] = message
+    st.session_state['auth_clear_browser'] = True   # the saved token is dead too
 
 
 def sign_out_current():
@@ -361,3 +434,6 @@ def sign_out_current():
     if sess is not None:
         sess.sign_out()
     _clear_browser_session()
+    # The login page then deletes the browser's saved token, so a refresh
+    # after signing out does not sign anyone back in.
+    st.session_state['auth_clear_browser'] = True

@@ -172,3 +172,88 @@ def test_sign_out_returns_to_the_login_page(env):
     assert 'auth_session' not in at.session_state
     assert env.gt.sign_out_options == {'scope': 'local'}
     assert [t.label for t in at.tabs] == ['Sign in', 'Create account']
+
+
+# ---- staying signed in across a page refresh --------------------------------------
+# The browser side (session_keeper) is replaced by a dict that outlives each
+# AppTest, the way localStorage outlives a page refresh. Each new AppTest is a
+# refresh: a brand-new Streamlit session.
+REFRESH_SCRIPT = '''
+import streamlit as st
+import auth
+sess = auth.current_session()
+if sess is not None:
+    auth.remember_in_browser(sess)
+    st.markdown("SIGNED-IN:" + sess.user_id)
+    if st.button("Sign out"):
+        auth.sign_out_current()
+        st.rerun()
+else:
+    auth.render_login_page(secrets={})
+'''
+
+
+@pytest.fixture
+def browser(env):
+    import session_keeper
+    storage = {}
+
+    def fake_keeper(*, mode, nonce='', token='', key='session_keeper'):
+        if mode == 'write':
+            storage['token'] = token
+            return None
+        if mode == 'clear':
+            storage.pop('token', None)
+        return {'nonce': nonce, 'token': storage.get('token', '')}
+
+    env.mp.setattr(session_keeper, 'session_keeper', fake_keeper)
+    return storage
+
+
+def _refresh():
+    at = AppTest.from_string(REFRESH_SCRIPT, default_timeout=60)
+    at.run()
+    assert not at.exception, at.exception
+    return at
+
+
+def _sign_in(at):
+    at.text_input(key='login_email').input('alice@example.com')
+    at.text_input(key='login_pw').input('correct-horse-1')
+    _btn(at, 'Sign in').click().run()
+
+
+def test_a_page_refresh_keeps_the_user_signed_in(env, browser):
+    at = _refresh()
+    assert not _signed_in(at)
+    _sign_in(at)
+    assert _signed_in(at)
+    assert browser['token'] == 'rt-1'
+    at2 = _refresh()                               # the user presses F5
+    assert _signed_in(at2)
+    assert browser['token'] == 'rt-2'              # rotated token saved back
+
+
+def test_after_sign_out_a_refresh_stays_signed_out(env, browser):
+    at = _refresh()
+    _sign_in(at)
+    _btn(at, 'Sign out').click().run()
+    assert not _signed_in(at)
+    assert 'token' not in browser                  # deleted from the browser
+    assert not _signed_in(_refresh())
+
+
+def test_a_dead_saved_token_shows_the_login_page_and_is_deleted(env, browser):
+    browser['token'] = 'rt-5'
+    env.gt.revoked = True
+    at = _refresh()
+    assert not _signed_in(at)
+    assert [t.label for t in at.tabs] == ['Sign in', 'Create account']
+    assert 'token' not in browser                  # deleted straight away
+    assert not _signed_in(_refresh())              # and not tried again
+
+
+def test_no_saved_token_just_shows_the_login_page(env, browser):
+    at = _refresh()
+    assert not _signed_in(at)
+    assert [t.label for t in at.tabs] == ['Sign in', 'Create account']

@@ -79,8 +79,20 @@ class FakeGoTrue:
         if self.fail:
             raise Exception(self.fail)
         user = SimpleNamespace(id='uid-1', email=creds['email'])
-        self.session = SimpleNamespace(access_token='tok')
+        self.session = SimpleNamespace(access_token='tok', refresh_token='rt-1')
+        self.user = user
         return SimpleNamespace(session=self.session, user=user)
+
+    def refresh_session(self, refresh_token=None):
+        """Valid tokens look like 'rt-N'; each use rotates to 'rt-(N+1)'."""
+        if not (refresh_token or '').startswith('rt-') or self.revoked:
+            raise Exception('Invalid Refresh Token: Refresh Token Not Found')
+        n = int(refresh_token.split('-')[1]) + 1
+        self.session = SimpleNamespace(access_token=f'tok{n}', refresh_token=f'rt-{n}')
+        user = getattr(self, 'user', None) or SimpleNamespace(id='uid-1', email='alice@example.com')
+        return SimpleNamespace(session=self.session, user=user)
+
+    revoked = False
 
     def sign_up(self, creds):
         self.last_sign_up = creds
@@ -220,3 +232,34 @@ def test_disabled_signups_get_a_clear_message(sess):
     gt.fail = 'Signups not allowed for this instance'
     with pytest.raises(AuthFailure, match='registration is currently turned off'):
         s.sign_up('a@b.com', 'longenough1')
+
+
+# ---- staying signed in across a page refresh ---------------------------------
+def test_restore_signs_back_in_with_a_saved_refresh_token(sess):
+    s, gt = sess
+    s.restore('rt-1')
+    assert s.is_signed_in and s.user_id == 'uid-1'
+    assert s.refresh_token == 'rt-2'             # rotated: the browser copy must follow
+
+
+@pytest.mark.parametrize('token', ['', None, 'garbage'])
+def test_restore_rejects_a_missing_or_unknown_token(sess, token):
+    s, gt = sess
+    with pytest.raises(AuthFailure, match='expired'):
+        s.restore(token)
+    assert not s.is_signed_in
+
+
+def test_restore_rejects_a_revoked_token(sess):
+    s, gt = sess
+    gt.revoked = True                            # e.g. signed out on this browser earlier
+    with pytest.raises(AuthFailure, match='expired'):
+        s.restore('rt-1')
+    assert not s.is_signed_in
+
+
+def test_refresh_token_is_none_without_a_session(sess):
+    s, gt = sess
+    assert s.refresh_token is None
+    s.sign_in('a@b.com', 'pw12345678')
+    assert s.refresh_token == 'rt-1'
