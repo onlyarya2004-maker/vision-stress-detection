@@ -300,16 +300,20 @@ def test_hosted_server_error_on_rating_is_reported_without_server_details(signed
 
 
 def test_hosted_rating_cannot_target_another_users_session(signed_in):
-    """A session id that is not this user's (e.g. a tampered state value)
-    gets nothing written - the lookup as this user finds no such session."""
+    """A session id that is not this user's (e.g. a tampered state value):
+    the single update is filtered on THIS account's id (and RLS only lets it
+    touch this account's rows), so it matches nothing, and the user is told
+    the rating was not saved."""
     at, server = signed_in
     server.on('GET', 'sessions', _sessions_route(owned_ids=(42,)))
+    server.on('PATCH', 'sessions', lambda r: [])            # no row of this user's has id 999
     at.run()
     at.session_state['pending_self_report'] = 999
     at.run()
     next(b for b in at.button if b.label == RATE_4).click().run()
     assert not at.exception
-    assert server.of('PATCH', 'sessions') == []
+    for req in server.of('PATCH', 'sessions'):
+        assert _params(req)['user_id'] == f'eq.{UID}' and _params(req)['id'] == 'eq.999'
     assert any('NOT saved' in w.value for w in at.warning) and not at.success
 
 
@@ -322,7 +326,8 @@ def _with_rated_history(server, user, relaxed=0.10, stressed=0.22,
     labeled = [{'id': i, 'user_id': user, 'self_report': 1 if i <= 3 else 5,
                 'sample_count': 120, 'task_mode': 'Default',
                 'started_at': '2026-10-0%dT10:00:00' % i, 'ended_at': '2026-10-0%dT10:01:00' % i,
-                'duration_sec': 60.0, 'mean_stress': 0.3, 'max_stress': 0.4,
+                'duration_sec': 60.0, 'mean_stress': relaxed if i <= 3 else stressed,
+                'max_stress': 0.4,
                 'pct_low': 50.0, 'pct_moderate': 50.0, 'pct_high': 0.0}
                for i in range(1, 7)]
 

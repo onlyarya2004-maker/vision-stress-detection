@@ -107,7 +107,10 @@ def test_save_session_inserts_the_summary_then_samples_in_chunks(env):
 
     sample_reqs = env.server.of('POST', 'samples')
     sizes = [len(json.loads(r.content)) for r in sample_reqs]
-    assert sum(sizes) == 1000 and max(sizes) <= 400 and len(sizes) == 3
+    import session_store
+    chunk = session_store._INSERT_CHUNK
+    assert sum(sizes) == 1000 and max(sizes) <= chunk
+    assert len(sizes) == -(-1000 // chunk)            # 1 request at the current chunk size
     first = json.loads(sample_reqs[0].content)[0]
     assert first['session_id'] == 42 and first['ts'] == '2026-10-10T09:00:00'
     assert json.loads(sample_reqs[0].content)[3]['stress_index'] is None    # NaN -> null
@@ -138,16 +141,14 @@ def test_save_user_baseline_always_writes_the_authenticated_users_row(env):
 
 
 def test_set_self_report_is_validated_and_scoped_to_the_owner(env):
-    env.server.on('GET', 'sessions', lambda r: [{'id': 5}])      # it is this user's session
     env.server.on('PATCH', 'sessions', lambda r: [{'id': 5, 'self_report': 3}])
     with pytest.raises(ValueError):
         env.store.set_self_report(5, 6)
     env.store.set_self_report(5, 3)
-    (req,) = env.server.of('PATCH', 'sessions')
+    (req,) = env.server.of('PATCH', 'sessions')                  # one request, no lookup first
     assert _params(req)['id'] == 'eq.5' and _params(req)['user_id'] == f'eq.{UID}'
     assert json.loads(req.content) == {'self_report': 3}
-    (check,) = env.server.of('GET', 'sessions')                  # ownership looked up first
-    assert _params(check)['id'] == 'eq.5' and _params(check)['user_id'] == f'eq.{UID}'
+    assert env.server.of('GET', 'sessions') == []
 
 
 @pytest.mark.parametrize('bad', [0, 6, -1, 4.5, 3.0, True, '4', [4]])
@@ -158,25 +159,23 @@ def test_set_self_report_rejects_anything_off_the_1_to_5_scale(env, bad):
 
 
 def test_set_self_report_refuses_someone_elses_session(env):
-    """RLS hides other users' rows, so the ownership lookup comes back empty:
-    nothing may be written, and the caller must be told."""
-    env.server.on('GET', 'sessions', lambda r: [])
+    """The update is filtered on THIS account's id (the caller's user_id is
+    ignored) and RLS hides other users' rows, so it matches nothing: no row is
+    changed, and the caller must be told."""
+    env.server.on('PATCH', 'sessions', lambda r: [])
     with pytest.raises(LookupError):
         env.store.set_self_report(999, 4, user_id='someone-else')     # caller id ignored
-    assert env.server.of('PATCH', 'sessions') == []
-    (check,) = env.server.of('GET', 'sessions')
-    assert _params(check)['user_id'] == f'eq.{UID}'
+    (req,) = env.server.of('PATCH', 'sessions')
+    assert _params(req)['user_id'] == f'eq.{UID}' and _params(req)['id'] == 'eq.999'
 
 
 def test_set_self_report_reports_a_zero_row_update_as_a_failure(env):
-    env.server.on('GET', 'sessions', lambda r: [{'id': 5}])
     env.server.on('PATCH', 'sessions', lambda r: [])               # matched nothing
-    with pytest.raises(RuntimeError):
+    with pytest.raises(LookupError):
         env.store.set_self_report(5, 4)
 
 
 def test_set_self_report_surfaces_server_errors(env):
-    env.server.on('GET', 'sessions', lambda r: [{'id': 5}])
     env.server.on('PATCH', 'sessions', lambda r: httpx.Response(500, json={'message': 'boom'}))
     with pytest.raises(Exception):
         env.store.set_self_report(5, 4)

@@ -344,6 +344,16 @@ LEARNED_FUSION_MODEL_PATH = '../models/meta_learner.joblib'
 # as ambiguous; >= 6 such sessions with >= 2 of each class before anything
 # changes. Below that, or if validation fails, the general model runs unchanged.
 PERSONALIZATION_ENABLED = True
+
+# Adaptive Coach (intervention_agent.py). Off since 2026-11-09: it does not
+# feed the stress index, and its sidebar panel read the database on every
+# click (one of the online lag sources). True restores the panel, the
+# intervention card and the agent loop exactly as before.
+COACH_ENABLED = False
+
+# Most points drawn in a session timeline (the full history is kept; only
+# the drawing is thinned, so long sessions stay quick to render).
+TIMELINE_MAX_POINTS = 600
 # The local SQLite file holds the volunteers' historical sessions; do not
 # start personalizing from them just because the app was launched locally.
 PERSONALIZE_LOCAL_SQLITE = False

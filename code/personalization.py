@@ -442,6 +442,23 @@ def _compatible(row, task_mode, since):
     return started is not None and started >= since
 
 
+def _row_index_stats(row):
+    """(count, mean) of the session's general index straight from its
+    sessions-table row - save_session() stores sample_count and mean_stress
+    from the very same summarize_history() over the very same stress_index
+    values the samples table holds - or None when the row lacks them (older
+    rows, or a store that does not return them), in which case the samples
+    are read as before."""
+    try:
+        n = int(row.get('sample_count'))
+        m = float(row.get('mean_stress'))
+    except (TypeError, ValueError):
+        return None
+    if n <= 0 or not math.isfinite(m):
+        return None
+    return n, m
+
+
 def _attach_signals(store, examples, cache):
     """Add each example's signal means (stage 2) when there are enough
     sessions for stage 2 to run and the store can provide them. Any problem
@@ -499,7 +516,10 @@ def load(store, user_id, cache=None, *, task_mode='Default',
             if _label(r.get('self_report')) is None or not _compatible(r, task_mode, since):
                 continue                                         # skip the fetch
             sid = r['id']
-            if cache is not None and sid in cache:
+            row_stats = _row_index_stats(r)
+            if row_stats is not None:
+                n_i, mean_i = row_stats           # no request: the session row has it
+            elif cache is not None and sid in cache:
                 n_i, mean_i = cache[sid]
             else:
                 n_i, mean_i = store.session_index_stats(sid)

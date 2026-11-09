@@ -30,7 +30,8 @@ from session_history import (
 )
 
 _PAGE = 1000          # PostgREST's default max rows per response
-_INSERT_CHUNK = 400   # samples per insert request (keeps each request small)
+_INSERT_CHUNK = 2000  # samples per insert request: one request for sessions up to
+                      # ~16 min (2 rows/s); was 400, which made Stop wait on several
 
 
 def _num(x):
@@ -152,16 +153,15 @@ class SupabaseStore:
         saved. Raises LookupError (not theirs / not found) or RuntimeError
         (the write did not take)."""
         rating = validate_self_report(rating)
-        owned = (self._t('sessions').select('id')
-                 .eq('id', session_id).eq('user_id', self.user_id)
-                 .limit(1).execute().data or [])
-        if not owned:
-            raise LookupError("that session was not found for this account")
+        # One request (was a separate ownership lookup first): the update is
+        # filtered on this account's id, and RLS only lets it touch this
+        # account's rows, so a session that is not theirs matches zero rows.
         updated = (self._t('sessions').update({'self_report': rating})
                    .eq('id', session_id).eq('user_id', self.user_id)
                    .execute().data or [])
         if len(updated) != 1:
-            raise RuntimeError("the rating was not saved")
+            raise LookupError("that session was not found for this account, "
+                              "so the rating was not saved")
 
     def labeled_sessions(self, min_samples: int = 10) -> List[Dict]:
         return self._all(lambda a, b: (

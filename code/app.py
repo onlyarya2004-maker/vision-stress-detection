@@ -528,9 +528,15 @@ def render_mini_graph(values, height=110, width=250):
 
 
 def render_full_timeline(history, height=150):
-    """3-line timeline: stress_index, daisee, behavior."""
+    """3-line timeline: stress_index, daisee, behavior. Long sessions are
+    thinned to config.TIMELINE_MAX_POINTS evenly spaced points for drawing
+    (first and last kept); the history itself is untouched."""
     if len(history) < 2:
         return ""
+    cap = max(2, int(getattr(config, 'TIMELINE_MAX_POINTS', 600)))
+    if len(history) > cap:
+        last = len(history) - 1
+        history = [history[round(k * last / (cap - 1))] for k in range(cap)]
     width = 1000
     pad = 26
     n = len(history)
@@ -869,7 +875,7 @@ def init_state():
     if 'subject_id' not in st.session_state: st.session_state.subject_id = ''
     if 'condition' not in st.session_state: st.session_state.condition = 'unlabeled'
     if 'pending_self_report' not in st.session_state: st.session_state.pending_self_report = None
-    if 'agent_enabled' not in st.session_state: st.session_state.agent_enabled = True
+    if 'agent_enabled' not in st.session_state: st.session_state.agent_enabled = config.COACH_ENABLED
     if 'session_count' not in st.session_state: st.session_state.session_count = 0
     # Browser-camera run bookkeeping (CAPTURE_MODE == 'browser'). cam_epoch is
     # bumped on every Calibrate/Start/Stop so the browser restarts its frame
@@ -952,6 +958,31 @@ def end_live_run(ustate):
     bump_cam_epoch()
 
 
+def sidebar_history(store):
+    """(recent 10 sessions, total count, error or None) for the sidebar's
+    Past sessions list. Read from the database once and kept in session state
+    until something changes it (a save, a rating, a delete - see
+    invalidate_history_cache()), instead of two database round trips on every
+    click. Keyed by the active user, so switching profiles never shows another
+    user's list."""
+    key = st.session_state.get('active_user_id')
+    cached = st.session_state.get('sidebar_history')
+    if cached is not None and cached[0] == key:
+        return cached[1], cached[2], None
+    try:
+        recent = store.load_recent_sessions(n=10)
+        total = store.session_count()
+    except Exception as e:
+        return [], 0, e
+    st.session_state.sidebar_history = (key, recent, total)
+    return recent, total, None
+
+
+def invalidate_history_cache():
+    """The saved history changed: the next sidebar render re-reads it."""
+    st.session_state.pop('sidebar_history', None)
+
+
 def save_current_session():
     """
     Persist st.session_state.history to the DB and queue the self-report
@@ -987,8 +1018,9 @@ def save_current_session():
     n = len(ss.history)
     store = get_store()
     try:
-        sid = store.save_session(ss.history, task_mode=ss.task_mode,
-                                 user_id=ss.active_user_id)
+        with st.spinner("Saving your session..."):
+            sid = store.save_session(ss.history, task_mode=ss.task_mode,
+                                     user_id=ss.active_user_id)
         if sid is None:
             raise RuntimeError("the database returned no session id")
     except Exception as e:
@@ -999,6 +1031,7 @@ def save_current_session():
         return 'failed'
     ss.history_saved = True
     ss.save_failed = False
+    invalidate_history_cache()
     # Queue the self-report prompt for this session. The user's answer -
     # not the system's prediction - is the ground-truth label the
     # adaptation loop trains on.
@@ -1222,11 +1255,13 @@ def make_live_run(ustate, models, store, dt0=None):
     worked for THIS user (hosted) / install (local), and - once a task-mode
     bucket has enough evidence - what worked in this specific context. See
     InterventionAgent's own docstring for why both are passed."""
-    try:
-        known = store.intervention_stats()
-        known_by_mode = store.intervention_stats_by_mode()
-    except Exception:
-        known, known_by_mode = {}, {}
+    known, known_by_mode = {}, {}
+    if st.session_state.agent_enabled:          # coach off: no database reads for it
+        try:
+            known = store.intervention_stats()
+            known_by_mode = store.intervention_stats_by_mode()
+        except Exception:
+            known, known_by_mode = {}, {}
     agent = InterventionAgent(stats=known, mode_stats=known_by_mode,
                               task_mode=st.session_state.task_mode)
     # Refit from the database at every Start: picks up ratings given since
@@ -2022,53 +2057,51 @@ def main():
                 st.caption("Unlabelled — set both fields or this recording "
                            "will not be picked up by the evaluation harness.")
 
-        # ---------- AI Intervention Agent ----------
-        # A real switch: when off, the agent's decision loop does not run at
-        # all. Disabled mid-session so the capture loop is not interrupted.
-        st.divider()
-        _on = st.session_state.agent_enabled
-        try:
-            _mem = InterventionAgent(stats=store.intervention_stats()).learned_summary()
-        except Exception:
-            _mem = "learning memory unavailable"
-        with st.container(border=True):
-            st.markdown(
-                f'<div class="agent-wrap">'
-                f'<div class="agent-top"><span class="agent-name">ADAPTIVE COACH</span>'
-                f'<span class="state-pill {"active" if _on else "standby"}">'
-                f'{"ACTIVE" if _on else "STANDBY"}</span></div>'
-                f'<div class="agent-desc">Decides when an interruption is worth it, targets the '
-                f'signal driving the stress, then measures whether it helped and learns what '
-                f'works for you. '
-                f'{"What it learns is kept per account - never shared with other users." if hosted else "Runs entirely on this device."}'
-                f'</div>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-            # The big circle IS the toggle. A marker element immediately
-            # precedes the real button so CSS can style that specific button
-            # as a large spinning core (blue + rotating = on, grey + still =
-            # off) without touching every other button on the page.
-            st.markdown(f'<div class="agent-core-marker {"on" if _on else "off"}"></div>',
-                       unsafe_allow_html=True)
-            if st.button("ACTIVE" if _on else "STANDBY", key="agent_core_btn",
-                         disabled=st.session_state.running or st.session_state.calibrating,
-                         help="Click to power the agent down" if _on else
-                              "Click to power the agent up"):
-                st.session_state.agent_enabled = not _on
-                st.rerun()
-            st.markdown(render_agent_core_caption(_on) + f'<div class="mem">{_mem}</div>',
-                       unsafe_allow_html=True)
+        if config.COACH_ENABLED:
+            # ---------- AI Intervention Agent ----------
+            # A real switch: when off, the agent's decision loop does not run at
+            # all. Disabled mid-session so the capture loop is not interrupted.
+            st.divider()
+            _on = st.session_state.agent_enabled
+            try:
+                _mem = InterventionAgent(stats=store.intervention_stats()).learned_summary()
+            except Exception:
+                _mem = "learning memory unavailable"
+            with st.container(border=True):
+                st.markdown(
+                    f'<div class="agent-wrap">'
+                    f'<div class="agent-top"><span class="agent-name">ADAPTIVE COACH</span>'
+                    f'<span class="state-pill {"active" if _on else "standby"}">'
+                    f'{"ACTIVE" if _on else "STANDBY"}</span></div>'
+                    f'<div class="agent-desc">Decides when an interruption is worth it, targets the '
+                    f'signal driving the stress, then measures whether it helped and learns what '
+                    f'works for you. '
+                    f'{"What it learns is kept per account - never shared with other users." if hosted else "Runs entirely on this device."}'
+                    f'</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+                # The big circle IS the toggle. A marker element immediately
+                # precedes the real button so CSS can style that specific button
+                # as a large spinning core (blue + rotating = on, grey + still =
+                # off) without touching every other button on the page.
+                st.markdown(f'<div class="agent-core-marker {"on" if _on else "off"}"></div>',
+                           unsafe_allow_html=True)
+                if st.button("ACTIVE" if _on else "STANDBY", key="agent_core_btn",
+                             disabled=st.session_state.running or st.session_state.calibrating,
+                             help="Click to power the agent down" if _on else
+                                  "Click to power the agent up"):
+                    st.session_state.agent_enabled = not _on
+                    st.rerun()
+                st.markdown(render_agent_core_caption(_on) + f'<div class="mem">{_mem}</div>',
+                           unsafe_allow_html=True)
 
         # ---------- Past Sessions ----------
         st.divider()
         st.markdown('<div class="label">Past sessions</div>', unsafe_allow_html=True)
-        try:
-            recent = store.load_recent_sessions(n=10)
-            total  = store.session_count()
-        except Exception as e:
-            recent, total = [], 0
-            st.caption(f"Could not read history DB: {e}")
+        recent, total, _hist_err = sidebar_history(store)
+        if _hist_err:
+            st.caption(f"Could not read history DB: {_hist_err}")
 
         if total == 0:
             st.caption("No saved sessions yet. Stop a session to save it.")
@@ -2135,6 +2168,7 @@ def main():
                                "accounts are not affected. Cannot be undone." if hosted else
                                "Deletes every saved session from the local DB. Cannot be undone.")):
                 store.clear_all_sessions()
+                invalidate_history_cache()
                 st.session_state.pop('personalization', None)    # learned from deleted data
                 st.session_state.pop('personal_cache', None)
                 st.session_state.history = []
@@ -2420,6 +2454,7 @@ def main():
                             st.session_state.selfrep_notice = (
                                 'success', "Thanks - your rating was saved with that session.")
                             st.session_state.pop('personalization', None)   # refit on next view
+                            invalidate_history_cache()
                         st.rerun()
                 if _cols[5].button("Skip", key="selfrep_skip"):
                     st.session_state.pending_self_report = None
