@@ -12,8 +12,12 @@ Scope and honesty:
   - A scene label says where the camera is, not what the person is doing. A
     desk with a laptop is not proof of studying, a hospital room is not proof
     of being a patient, a car interior is not proof of driving. So this only
-    SUGGESTS, abstains whenever the frames disagree, and never suggests
-    Driving (MANUAL_ONLY_MODES).
+    SUGGESTS, abstains whenever the frames disagree, and the user always
+    confirms. Driving used to be manual-only, on the grounds that a car
+    interior does not prove the person is driving; it is suggested since
+    2026-11-09, because a driver stopped at a red light sees exactly the same
+    stationary car interior, so the scene cannot tell "driving" from "sitting
+    in a parked car" either way - the user's confirmation is what decides.
   - The confidence shown is the scene model's own output plus frame agreement.
     It is not a validated accuracy for choosing application modes.
   - The stress pipeline is untouched: an accepted suggestion just sets
@@ -61,9 +65,11 @@ SCENE_TO_MODE = {
                                                         # a white close-up looked like them (2026-10-28)
     'Driving': ('car_interior',),
 }
-# Recognised, but never suggested: seeing a car interior does not show that
-# the person is the driver.
-MANUAL_ONLY_MODES = ('Driving',)
+# Modes that are recognised but never suggested. Empty since 2026-11-09:
+# Driving is suggested like the others (a driver waiting at a red light looks
+# exactly like someone sitting in a parked car, so refusing to suggest it
+# helped nobody); the user still confirms every suggestion.
+MANUAL_ONLY_MODES = ()
 
 # Sampling during calibration (config.CALIBRATION_SECONDS = 20 s -> 10 frames).
 SAMPLE_INTERVAL_S = 2.0

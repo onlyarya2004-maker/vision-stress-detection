@@ -58,6 +58,30 @@ saved before it was recorded - nothing is pooled until the next calibration.
 
 Passing (3) means "agreed better with this user's own past ratings", which is
 evidence on a handful of sessions - not a demonstrated accuracy improvement.
+
+Stage 2: which of YOUR signals rise when you are stressed (2026-11-09)
+-------------------------------------------------------------------
+The rule above can only slide a user's whole reading up or down; it cannot
+help a user whose overall score does not rise when they feel stressed. Stage 2
+looks at the seven behaviour signals of each rated session (their session
+means, x) and fits, for this user only, a per-frame adjustment
+
+  a(x) = d + sum_j beta_j * (x_j - r_j),     clipped to +/- PERSONAL_MAX_ADJUST
+
+added to the general smoothed index, where r is the user's own calm-session
+mean of each signal. It is a weighted logistic model in final-index units
+(fixed slope PERSONAL_LOGIT_SLOPE: a session is stressed when g + a(x) >=
+cutoff), fitted as a MAP estimate with Gaussian priors that pull d and every
+beta towards 0 - with little evidence it stays close to "no change". Newer
+sessions count more (half-life PERSONAL_RECENCY_HALF_LIFE sessions) and so do
+clear ratings (1 or 5 count more than 2 or 4).
+
+Stage 2 needs more evidence than stage 1 (PERSONAL_SIGNAL_MIN_SESSIONS, with
+PERSONAL_SIGNAL_MIN_PER_CLASS of each class) and is used ONLY if its
+leave-one-session-out balanced accuracy beats both the general model and stage
+1 by at least PERSONAL_SIGNAL_MIN_GAIN. Otherwise stage 1's result stands
+(including "general model"). Live, a(x) is computed from the same seven
+signals every frame and smoothed over the same window as the index.
 """
 import dataclasses
 import math
@@ -65,7 +89,14 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
+import numpy as np
+
 import config
+
+# Same order and names as the samples table's signal columns
+# (session_history.SIGNAL_COLUMNS) and the fusion's contributions dict.
+SIGNALS = ('eye_strain', 'blink_stress', 'brow_tension', 'jaw_tension',
+           'head_instability', 'neck_strain', 'slouch')
 
 
 def parse_local_time(value):
@@ -94,14 +125,50 @@ class Personalization:
     reason: str            # one line for the UI / logs (no personal data)
     loo_general: Optional[float] = None    # session-level balanced accuracy,
     loo_personal: Optional[float] = None   # leave-one-session-out
+    model: str = 'shift'                   # 'shift' (stage 1) or 'signals' (stage 2)
+    weights: Optional[tuple] = None        # stage 2: ((signal, beta), ...)
+    reference: Optional[tuple] = None      # stage 2: ((signal, calm mean), ...)
+    confidence: str = ''                   # 'low' | 'medium' | 'high' when active
+
+    def adjustment(self, contributions) -> float:
+        """The amount added to the general smoothed index for one frame's
+        signal values (a dict like the fusion's 'contributions'). Stage 1:
+        the constant shift. Stage 2: d + sum beta_j (x_j - r_j), bounded.
+        A missing or non-finite signal counts as the user's calm level."""
+        if not self.active:
+            return 0.0
+        if self.model != 'signals' or not self.weights:
+            return float(self.shift)
+        ref = dict(self.reference or ())
+        a = float(self.shift)
+        for name, beta in self.weights:
+            v = (contributions or {}).get(name)
+            try:
+                v = float(v)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(v):
+                a += float(beta) * (v - ref.get(name, 0.0))
+        lim = config.PERSONAL_MAX_ADJUST
+        return max(-lim, min(lim, a)) if math.isfinite(a) else 0.0
 
     def describe(self) -> str:
+        conf = f"; confidence {self.confidence}" if self.confidence else ""
+        if self.active and self.model == 'signals':
+            top = sorted(self.weights or (), key=lambda kv: -abs(kv[1]))[:2]
+            names = " and ".join(k.replace('_', ' ') for k, b in top if abs(b) > 1e-3)
+            return (f"Personal calibration on: your live reading is adjusted using the "
+                    f"signals that rise when YOU feel stressed"
+                    f"{' (mainly ' + names + ')' if names else ''}, learned from "
+                    f"{self.n_sessions} of your rated sessions (held-out agreement with "
+                    f"your ratings {self.loo_personal:.0%} vs {self.loo_general:.0%} for "
+                    f"the general model{conf}). Saved history keeps the general reading.")
         if self.active:
             return (f"Personal calibration on: your live reading is shifted by "
                     f"{self.shift:+.3f}, learned from {self.n_sessions} of your rated "
                     f"sessions (held-out agreement with your ratings "
                     f"{self.loo_personal:.0%} vs {self.loo_general:.0%} for the general "
-                    f"model). Saved history keeps the general reading.")
+                    f"model{conf}). Saved history keeps the general reading.")
         return f"General model - {self.reason}"
 
 
@@ -188,9 +255,26 @@ def _balanced_accuracy(pts, shifts):
 def fit(examples) -> Personalization:
     """
     examples: iterable of dicts with 'self_report', 'n_index' and
-    'mean_index' (one per saved session of ONE user, newest first).
+    'mean_index' (one per saved session of ONE user, newest first), and
+    optionally 'signals' ({signal: session mean}) for stage 2.
     Pure function - no I/O - so it is easy to test and reason about.
     """
+    examples = list(examples)
+    p1 = _fit_stage1(examples)
+    p2 = _fit_stage2(examples, p1)
+    return p2 if p2 is not None else p1
+
+
+def _confidence(n, loo_personal, loo_general):
+    margin = (loo_personal or 0.0) - (loo_general or 0.0)
+    if n >= 15 and margin >= 0.15:
+        return 'high'
+    if n >= 10 and margin >= 0.10:
+        return 'medium'
+    return 'low'
+
+
+def _fit_stage1(examples) -> Personalization:
     pts = _points(examples)
     n = len(pts)
     n_s = sum(1 for s, _ in pts if s)
@@ -221,7 +305,129 @@ def fit(examples) -> Personalization:
             f"with your ratings ({ba_personal:.0%} vs {ba_general:.0%}), so the general "
             f"model is kept.", n, n_r, n_s, ba_general, ba_personal)
     return Personalization(float(full), True, n, n_r, n_s, "validated",
-                           ba_general, ba_personal)
+                           ba_general, ba_personal, model='shift',
+                           confidence=_confidence(n, ba_personal, ba_general))
+
+
+# ---------------------------------------------------------------------------
+# Stage 2: per-user signal weighting
+# ---------------------------------------------------------------------------
+def _signal_vector(ex):
+    """The session's seven signal means as an array, or None if unusable."""
+    sig = ex.get('signals')
+    if not isinstance(sig, dict):
+        return None
+    out = []
+    for name in SIGNALS:
+        try:
+            v = float(sig.get(name))
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(v) or not -0.01 <= v <= 1.01:
+            return None
+        out.append(min(1.0, max(0.0, v)))
+    return np.array(out, dtype=float)
+
+
+def _points2(examples):
+    """[(is_stressed, mean_index, signals, weight)] for stage 2 - the same
+    eligible sessions as stage 1 (newest first, capped), each weighted by
+    recency and by how clear its rating is."""
+    pts = []
+    for ex in examples:
+        lab = _label(ex.get('self_report'))
+        m = _usable_mean(ex)
+        if lab is None or m is None:
+            continue
+        x = _signal_vector(ex)
+        if x is None:
+            continue
+        rank = len(pts)                                # 0 = newest
+        w = (0.5 ** (rank / config.PERSONAL_RECENCY_HALF_LIFE)
+             * config.PERSONAL_RATING_WEIGHT.get(int(ex['self_report']), 0.6))
+        pts.append((lab == 'stressed', m, x, w))
+        if len(pts) >= config.PERSONAL_MAX_SESSIONS:
+            break
+    return pts
+
+
+def _fit_signals(pts):
+    """MAP fit of (d, beta) on these points, or None when a class is under
+    the stage-2 minimum. Returns (d, beta array, reference array)."""
+    y = np.array([1.0 if s else 0.0 for s, _, _, _ in pts])
+    if (y.sum() < config.PERSONAL_SIGNAL_MIN_PER_CLASS
+            or (1 - y).sum() < config.PERSONAL_SIGNAL_MIN_PER_CLASS):
+        return None
+    g = np.array([m for _, m, _, _ in pts])
+    X = np.vstack([x for _, _, x, _ in pts])
+    w = np.array([wt for _, _, _, wt in pts])
+    calm = y == 0
+    ref = (w[calm, None] * X[calm]).sum(axis=0) / w[calm].sum()
+    Z = np.hstack([np.ones((len(pts), 1)), X - ref])           # [1, x - r]
+    k = config.PERSONAL_LOGIT_SLOPE
+    off = k * (g - config.LOW_TO_MODERATE_CUTOFF)
+    prec = np.array([1.0 / config.PERSONAL_SHIFT_PRIOR_SD ** 2]
+                    + [1.0 / config.PERSONAL_SIGNAL_PRIOR_SD ** 2] * len(SIGNALS))
+    theta = np.zeros(Z.shape[1])
+    for _ in range(50):                                        # Newton (convex)
+        eta = off + k * (Z @ theta)
+        p = 1.0 / (1.0 + np.exp(-np.clip(eta, -40, 40)))
+        grad = k * (Z.T @ (w * (p - y))) + prec * theta
+        hess = k * k * (Z.T * (w * p * (1 - p))) @ Z + np.diag(prec)
+        step = np.linalg.solve(hess, grad)
+        theta -= step
+        if np.max(np.abs(step)) < 1e-9:
+            break
+    if not np.all(np.isfinite(theta)):
+        return None
+    return float(theta[0]), theta[1:], ref
+
+
+def _adjust(d, beta, ref, x):
+    a = d + float(beta @ (x - ref))
+    lim = config.PERSONAL_MAX_ADJUST
+    return max(-lim, min(lim, a))
+
+
+def _fit_stage2(examples, p1):
+    """A stage-2 Personalization if it clearly beats the general model and
+    stage 1 on held-out sessions, else None (stage 1's result stands)."""
+    if not config.PERSONAL_SIGNALS_ENABLED:
+        return None
+    pts = _points2(examples)
+    n = len(pts)
+    n_s = sum(1 for s, _, _, _ in pts if s)
+    n_r = n - n_s
+    per = config.PERSONAL_SIGNAL_MIN_PER_CLASS
+    if n < config.PERSONAL_SIGNAL_MIN_SESSIONS or n_s < per or n_r < per:
+        return None
+    full = _fit_signals(pts)
+    if full is None:
+        return None
+    # Leave-one-session-out, as in stage 1: the held-out session is scored
+    # with (d, beta, r) fitted WITHOUT it; an unfittable fold scores it with
+    # the general model.
+    loo_adj = []
+    for i in range(n):
+        f = _fit_signals(pts[:i] + pts[i + 1:])
+        loo_adj.append(0.0 if f is None else _adjust(f[0], f[1], f[2], pts[i][2]))
+    pairs = [(s, m) for s, m, _, _ in pts]
+    ba_general = _balanced_accuracy(pairs, [0.0] * n)
+    ba_signals = _balanced_accuracy(pairs, loo_adj)
+    best_simpler = ba_general
+    if p1.active and p1.loo_personal is not None:
+        best_simpler = max(best_simpler, p1.loo_personal)
+    if not (ba_signals > ba_general
+            and ba_signals >= best_simpler + config.PERSONAL_SIGNAL_MIN_GAIN):
+        return None
+    d, beta, ref = full
+    return Personalization(
+        float(max(-config.PERSONAL_MAX_ADJUST, min(config.PERSONAL_MAX_ADJUST, d))),
+        True, n, n_r, n_s, "validated (signal weighting)", ba_general, ba_signals,
+        model='signals',
+        weights=tuple((name, float(b)) for name, b in zip(SIGNALS, beta)),
+        reference=tuple((name, float(r)) for name, r in zip(SIGNALS, ref)),
+        confidence=_confidence(n, ba_signals, ba_general))
 
 
 def _compatible(row, task_mode, since):
@@ -234,6 +440,32 @@ def _compatible(row, task_mode, since):
         return False
     started = parse_local_time(row.get('started_at'))
     return started is not None and started >= since
+
+
+def _attach_signals(store, examples, cache):
+    """Add each example's signal means (stage 2) when there are enough
+    sessions for stage 2 to run and the store can provide them. Any problem
+    here only disables stage 2 - stage 1 still runs on the index means."""
+    if (not config.PERSONAL_SIGNALS_ENABLED
+            or len(examples) < config.PERSONAL_SIGNAL_MIN_SESSIONS
+            or not hasattr(store, 'session_signal_means')):
+        return
+    try:
+        for ex in examples:
+            sid = ex['_sid']
+            key = ('signals', sid)
+            if cache is not None and key in cache:
+                ex['signals'] = cache[key]
+                continue
+            sig = store.session_signal_means(sid)
+            ex['signals'] = sig
+            if cache is not None:
+                cache[key] = sig
+    except Exception as e:
+        print(f"[personalization] signal history unavailable ({type(e).__name__}); "
+              f"stage 1 only")
+        for ex in examples:
+            ex.pop('signals', None)
 
 
 def load(store, user_id, cache=None, *, task_mode='Default',
@@ -273,12 +505,14 @@ def load(store, user_id, cache=None, *, task_mode='Default',
                 n_i, mean_i = store.session_index_stats(sid)
                 if cache is not None:
                     cache[sid] = (n_i, mean_i)
-            ex = {'self_report': r.get('self_report'), 'n_index': n_i, 'mean_index': mean_i}
+            ex = {'self_report': r.get('self_report'), 'n_index': n_i, 'mean_index': mean_i,
+                  '_sid': sid}
             if _usable_mean(ex) is None:
                 continue                  # an unusable session must not take a slot
             examples.append(ex)
             if len(examples) >= config.PERSONAL_MAX_SESSIONS:
                 break
+        _attach_signals(store, examples, cache)
     except Exception as e:
         # Type only - never the message, which could carry request details.
         print(f"[personalization] history unavailable ({type(e).__name__}); general model")

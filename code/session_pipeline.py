@@ -278,6 +278,20 @@ class LiveRun(_Run):
             shift = 0.0
         self.personal_shift = max(-config.PERSONAL_MAX_SHIFT,
                                   min(config.PERSONAL_MAX_SHIFT, shift))
+        # Stage 2 (signal weighting): the adjustment depends on this frame's
+        # seven signals, so it is computed per frame and smoothed over the
+        # same window as the index (the fit used session means of the same
+        # signals). It replaces the constant shift; still added only to the
+        # general smoothed index, never fed back into the fusion.
+        self.personal_signals = (
+            personalization if (personalization is not None and personalization.active
+                                and getattr(personalization, 'model', 'shift') == 'signals'
+                                and getattr(personalization, 'weights', None))
+            else None)
+        if self.personal_signals is not None:
+            self.personal_shift = 0.0
+            self.adj_smoother = TimeWindowSmoother(config.SMOOTHING_SECONDS)
+        self.personal_adjust = 0.0
         # The personal reading needs its own hysteresis state; the general
         # one (self.hyst) keeps producing the stored level untouched.
         self.hyst_personal = HysteresisLevel(confirm_frames=config.HYSTERESIS_CONFIRM_FRAMES)
@@ -390,7 +404,15 @@ class LiveRun(_Run):
         # Personal reading (what the user sees and the coach acts on): the
         # general smoothed index + this user's validated shift. With no shift
         # it IS the general reading, level included.
-        if self.personal_shift:
+        if self.personal_signals is not None:
+            adj = self.adj_smoother.update(
+                self.personal_signals.adjustment(result.get('contributions')), t)
+            lim = config.PERSONAL_MAX_ADJUST
+            self.personal_adjust = max(-lim, min(lim, adj))
+            shown = float(np.clip(smoothed + self.personal_adjust, 0.0, 1.0))
+            shown_level = self.hyst_personal.update(shown)
+        elif self.personal_shift:
+            self.personal_adjust = self.personal_shift
             shown = float(np.clip(smoothed + self.personal_shift, 0.0, 1.0))
             shown_level = self.hyst_personal.update(shown)
         else:
@@ -440,7 +462,8 @@ class LiveRun(_Run):
             'no_face': False, 'bbox': bbox, 'geom': geom,
             'level': shown_level, 'smoothed': shown,             # what the user sees
             'general_level': level, 'general_smoothed': smoothed,
-            'personal_shift': self.personal_shift, 'result': result,
+            'personal_shift': self.personal_shift, 'personal_adjust': self.personal_adjust,
+            'result': result,
             'behavioral_features': behavioral_features,
             'intervention': intervention, 'hr_bpm': hr_bpm,
             'rppg_status': s.rppg.status(), 'record': record,

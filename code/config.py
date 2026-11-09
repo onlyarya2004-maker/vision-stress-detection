@@ -356,6 +356,29 @@ PERSONAL_MAX_SESSIONS = 30              # newest eligible sessions used
 PERSONAL_PRIOR_SESSIONS = 6             # shrinkage: n/(n+6) of the full shift
 PERSONAL_MAX_SHIFT = 0.10               # hard bound on the final-index shift
 
+# --- Stage 2: per-user signal weighting (personalization.py, 2026-11-09) ---
+# Stage 1 above can only move a user's whole reading up or down. Stage 2 also
+# learns WHICH of the seven behaviour signals rise when THIS user feels
+# stressed: a bounded per-frame adjustment  d + sum_j beta_j * (signal_j -
+# calm_mean_j)  added to the general smoothed index, fitted by a weighted,
+# MAP (ridge-shrunk) logistic model on the user's own session means, in
+# final-index units (fixed slope). Newer sessions and clearer ratings (1 or 5
+# rather than 2 or 4) count more. Used ONLY when leave-one-session-out on the
+# user's own sessions beats both the general model and stage 1 by at least
+# PERSONAL_SIGNAL_MIN_GAIN; otherwise stage 1 (or the general model) is kept.
+# Shared models, fusion and the saved (general) history are never touched.
+PERSONAL_SIGNALS_ENABLED = True
+PERSONAL_SIGNAL_MIN_SESSIONS = 10       # more parameters -> more evidence needed
+PERSONAL_SIGNAL_MIN_PER_CLASS = 3
+PERSONAL_SIGNAL_MIN_GAIN = 0.10         # balanced-accuracy margin over the best simpler model (0.05 let 2% of
+                                        # random-rating synthetic users through; 0.10: 0 of 150)
+PERSONAL_LOGIT_SLOPE = 25.0             # logit per unit of final index (0.1 -> 2.5)
+PERSONAL_SHIFT_PRIOR_SD = 0.06          # prior sd of the offset d (index units)
+PERSONAL_SIGNAL_PRIOR_SD = 0.08         # prior sd of each beta (index per unit signal)
+PERSONAL_MAX_ADJUST = 0.15              # hard bound on the per-frame adjustment
+PERSONAL_RECENCY_HALF_LIFE = 15         # sessions; the 15th-newest counts half
+PERSONAL_RATING_WEIGHT = {1: 1.0, 2: 0.6, 4: 0.6, 5: 1.0}
+
 # ===========================================================================
 # FUSION TUNING
 # ===========================================================================

@@ -1324,8 +1324,8 @@ def render_auto_detect_toggle():
         help=("Auto-detect is ON. " if on else "Auto-detect is OFF. ")
              + "While you press Calibrate, about 10 camera frames are analysed in memory "
                "(a room recogniser plus a people-and-objects recogniser) to SUGGEST a context. "
-               "Frames are never saved. You decide whether to use the suggestion; "
-               "Driving is never suggested. Click to turn it " + ("off." if on else "on.")):
+               "Frames are never saved. You decide whether to use the suggestion. "
+               "Click to turn it " + ("off." if on else "on.")):
         ss.auto_context = not on
         st.rerun()
 

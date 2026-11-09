@@ -74,9 +74,9 @@ def test_mapping_targets_only_real_application_modes():
     assert len(MAPPED) == len(set(MAPPED)), "a scene may map to one mode only"
 
 
-def test_driving_is_recognised_but_manual_only():
+def test_driving_is_recognised_and_suggestable():
     assert cd.SCENE_TO_MODE['Driving'] == ('car_interior',)
-    assert cd.MANUAL_ONLY_MODES == ('Driving',)
+    assert 'Driving' not in cd.MANUAL_ONLY_MODES
 
 
 def test_task_ambiguous_scenes_are_deliberately_unmapped():
@@ -179,11 +179,23 @@ def test_suggesting_the_current_mode_is_not_a_change():
     assert s.status == 'suggest' and not s.is_change
 
 
-def test_a_car_interior_is_never_suggested():
+def test_a_clear_car_interior_suggests_driving():
+    # a driver stopped at a red light sees the same still car interior as a
+    # parked one, so a clear car interior is suggested; the user confirms
     s = cd.decide([obs(driving=0.9)] * 10, 'Default')
-    assert s.status == 'manual_only'
-    assert s.mode is None and not s.is_change
-    assert 'never chosen automatically' in s.message
+    assert (s.status, s.mode) == ('suggest', 'Driving')
+    assert s.is_change
+
+
+def test_a_weak_car_interior_is_still_not_suggested():
+    s = cd.decide([obs(driving=0.40)] * 10, 'Default')
+    assert s.status != 'suggest' or s.mode != 'Driving'
+
+
+def test_a_manual_only_mode_is_still_honoured_if_configured(monkeypatch):
+    monkeypatch.setattr(cd, 'MANUAL_ONLY_MODES', ('Driving',))
+    s = cd.decide([obs(driving=0.9)] * 10, 'Default')
+    assert s.status == 'manual_only' and s.mode is None and not s.is_change
 
 
 def test_too_few_usable_frames_is_unclear_and_names_the_reason():
@@ -359,9 +371,15 @@ def test_hospital_needs_both_a_scene_trace_and_a_strong_hint():
     assert (s.status, s.mode) == ('suggest', 'Hospital')
 
 
-def test_a_vehicle_hint_never_suggests_driving():
+def test_a_vehicle_hint_with_a_car_scene_suggests_driving():
     s = cd.decide([hobs(scene_d=0.6, vehicle=0.9)] * 10, 'Default')
-    assert s.status == 'manual_only' and s.mode is None
+    assert (s.status, s.mode) == ('suggest', 'Driving')
+
+
+def test_a_vehicle_hint_alone_does_not_suggest_driving():
+    # the scene floor: CLIP saying "car" is not enough without any car-interior trace
+    s = cd.decide([hobs(scene_d=0.0, vehicle=0.9)] * 10, 'Default')
+    assert s.mode != 'Driving'
 
 
 def test_without_hints_the_scene_rules_apply_unchanged():

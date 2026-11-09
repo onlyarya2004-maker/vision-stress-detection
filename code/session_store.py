@@ -210,6 +210,21 @@ class SupabaseStore:
                 if r.get('stress_index') is not None and math.isfinite(float(r['stress_index']))]
         return len(vals), (sum(vals) / len(vals) if vals else None)
 
+    def session_signal_means(self, session_id: int):
+        """{signal: mean} of one of this user's sessions' seven per-frame
+        behaviour signals, or None when a signal has no stored value. Only
+        those columns are fetched; the means are taken here (PostgREST
+        aggregates are off by default)."""
+        rows = self.load_session_signal_rows(session_id)
+        out = {}
+        for c in SIGNAL_COLUMNS:
+            vals = [float(r[c]) for r in rows
+                    if r.get(c) is not None and math.isfinite(float(r[c]))]
+            if not vals:
+                return None
+            out[c] = sum(vals) / len(vals)
+        return out
+
     def load_session_signal_rows(self, session_id: int) -> List[Dict]:
         return self._all(lambda a, b: (
             self._t('samples').select(','.join(SIGNAL_COLUMNS))

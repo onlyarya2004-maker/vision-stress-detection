@@ -531,6 +531,23 @@ def session_index_stats(session_id: int):
         conn.close()
 
 
+def session_signal_means(session_id: int):
+    """{signal: mean} over one saved session's seven per-frame behaviour
+    signals (SIGNAL_COLUMNS), or None when any of them has no stored value
+    (legacy rows from before schema v5a). Stage 2 of personalization.py learns
+    from these alongside session_index_stats()."""
+    conn = _get_conn()
+    try:
+        row = conn.execute(
+            "SELECT " + ", ".join(f"AVG({c})" for c in SIGNAL_COLUMNS)
+            + " FROM samples WHERE session_id = ?", (session_id,)).fetchone()
+    finally:
+        conn.close()
+    if row is None or any(v is None for v in row):
+        return None
+    return {c: float(v) for c, v in zip(SIGNAL_COLUMNS, row)}
+
+
 def log_interventions(session_id: Optional[int], records: List[Dict]):
     """
     Persist the intervention agent's action log for a session.
